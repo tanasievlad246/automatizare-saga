@@ -29,7 +29,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import __version__, backup, demo, journal, update
+from . import __version__, backup, journal, update
 from .config import PAGE_HOSTNAME, Config, load_config
 from .errors import (
     ANAF_ERROR,
@@ -247,7 +247,7 @@ def create_app(
     ui_dir: Path | None = None,
 ) -> FastAPI:
     cfg.require_api_key()
-    make_service = service_factory or (demo.service if cfg.demo else Service)
+    make_service = service_factory or Service  # on demo settings it takes the stand-ins by itself
     # The demo's login address is opened in a new tab, which carries no key.
     open_paths = OPEN_PATHS | {DEMO_LOGIN_PATH} if cfg.demo else OPEN_PATHS
     expected_key = cfg.api_key.encode()

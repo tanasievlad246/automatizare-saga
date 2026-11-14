@@ -291,4 +291,4 @@ def client(cfg: Config, now=None) -> httpx.Client:
 
 
 def service(cfg: Config) -> Service:
-    return Service(cfg, http=client(cfg))
+    return Service(cfg)  # on the demo's settings, a Service takes the stand-ins by itself

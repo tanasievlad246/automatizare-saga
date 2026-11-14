@@ -53,7 +53,7 @@ OPEN_DELAY = 1.5  # seconds: the server has to be listening before the browser a
 
 # The functions below are replaced in tests.
 def build_service(cfg: Config) -> Service:
-    return demo.service(cfg) if cfg.demo else Service(cfg)
+    return Service(cfg)  # on demo settings it takes the stand-ins by itself
 
 
 def open_browser(url: str) -> None:

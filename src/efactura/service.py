@@ -116,6 +116,12 @@ class Service:
     ):
         self._file_cfg = cfg  # as config.toml gives it
         self.cfg = _with_saved_settings(cfg)
+        if http is None and cfg.demo:
+            # Chosen here, so no caller can forget it: demo settings never reach the real ANAF
+            # or OpenRouter. Imported here because the demo module imports this one.
+            from . import demo
+
+            http = demo.client(cfg, now)
         self._http = http or httpx.Client(timeout=httpx.Timeout(60.0))
         self._now = now or (lambda: datetime.now().astimezone())
         journal.configure(self.cfg.db_path)  # the journal lives in the same database

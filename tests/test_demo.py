@@ -1,3 +1,4 @@
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -80,6 +81,23 @@ def test_every_download_brings_one_or_two_new_invoices_and_they_are_remembered(c
 
     assert (first["new_count"], second["new_count"]) == (1, 2)
     assert (cfg.data_dir / "standin.json").is_file()
+
+
+@pytest.fixture
+def no_network(monkeypatch):
+    """A request that would leave this computer fails the test instead of being sent."""
+    def refuse(self, request):
+        raise AssertionError(f"the real network was reached: {request.url}")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", refuse)
+
+
+def test_any_service_on_demo_settings_talks_to_the_stand_ins_by_itself(cfg, no_network):
+    desk = Service(cfg)  # no client given, as any new caller would write it
+
+    assert desk._http.get("https://example.com/").status_code == 404
+    assert desk.sync(CLIENT)["new_count"] == 1
+    assert demo.service(cfg).sync(CLIENT)["new_count"] == 2  # the old way still works
 
 
 def test_demo_never_reaches_past_its_three_hosts(cfg):
