@@ -29,7 +29,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import __version__, backup, journal, update
+from . import __version__, backup, demo, journal, update
 from .config import PAGE_HOSTNAME, Config, load_config
 from .errors import (
     ANAF_ERROR,
@@ -82,6 +82,7 @@ OPEN_PATHS = {"/", "/health", "/api/health", "/openapi.json"}
 NO_FRAMING = {"X-Frame-Options": "DENY", "Content-Security-Policy": "frame-ancestors 'none'"}
 PAGE_PREFIX = "/ui"  # the built page and its files: no data in them
 PAGE_API_PREFIX = "/api"
+DEMO_LOGIN_PATH = "/api/demo/anaf-login"
 BUILT_PAGE = Path(__file__).parent / "ui"  # written there by `pnpm --dir frontend build`
 
 
@@ -222,7 +223,9 @@ def create_app(
     ui_dir: Path | None = None,
 ) -> FastAPI:
     cfg.require_api_key()
-    make_service = service_factory or Service
+    make_service = service_factory or (demo.service if cfg.demo else Service)
+    # The demo's login address is opened in a new tab, which carries no key.
+    open_paths = OPEN_PATHS | {DEMO_LOGIN_PATH} if cfg.demo else OPEN_PATHS
     expected_key = cfg.api_key.encode()
     port = port or cfg.api_port
     own_hosts = _own_hosts(port)
@@ -251,7 +254,7 @@ def create_app(
     @app.middleware("http")
     async def require_key(request: Request, call_next):
         path = request.url.path
-        is_open = path in OPEN_PATHS or path == PAGE_PREFIX or path.startswith(PAGE_PREFIX + "/")
+        is_open = path in open_paths or path == PAGE_PREFIX or path.startswith(PAGE_PREFIX + "/")
         allowed = is_open or _from_own_page(request, own_hosts) or hmac.compare_digest(
             request.headers.get("x-api-key", "").encode(), expected_key
         )
@@ -624,6 +627,13 @@ def create_app(
 
     app.include_router(router)  # for other programs, with the key
     app.include_router(router, prefix=PAGE_API_PREFIX, include_in_schema=False)  # for the page
+
+    if cfg.demo:
+
+        @app.get(DEMO_LOGIN_PATH, include_in_schema=False)
+        def demo_anaf_login():
+            """What ANAF's login page would send the browser back with, for the demo."""
+            return RedirectResponse(f"{cfg.redirect_uri}?code=demo-{int(time.time())}")
 
     # --- the page ---
 

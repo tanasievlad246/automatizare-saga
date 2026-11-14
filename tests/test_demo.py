@@ -1,6 +1,8 @@
 import pytest
+from fastapi.testclient import TestClient
 
 from efactura import demo, standins
+from efactura.api import create_app
 from efactura.config import load_config
 from efactura.errors import EfacturaError
 from efactura.service import Service
@@ -46,3 +48,70 @@ def test_settings_that_ask_for_demo_over_a_real_data_folder_are_refused(tmp_path
         load_config(real)
 
     assert refused.value.code == "config_error" and "efactura demo" in refused.value.message
+
+
+KEY = {"X-API-Key": "EXEMPLU-cheie-locala"}
+CLIENT = "12345674"
+
+
+@pytest.fixture
+def cfg(tmp_path):
+    return demo.build(tmp_path / "demo")
+
+
+def test_every_download_brings_one_or_two_new_invoices_and_they_are_remembered(cfg):
+    first = demo.service(cfg).sync(CLIENT)
+    second = demo.service(cfg).sync(CLIENT)  # a new Service each time, as each request makes one
+
+    assert (first["new_count"], second["new_count"]) == (1, 2)
+    assert (cfg.data_dir / "standin.json").is_file()
+
+
+def test_demo_never_reaches_past_its_three_hosts(cfg):
+    with demo.client(cfg) as http:
+        assert http.get("https://example.com/").status_code == 404
+        assert http.post("https://api.openai.com/v1/chat").status_code == 404
+
+
+def test_the_demo_login_takes_a_demo_code_and_nothing_else(cfg):
+    assert demo.service(cfg).login_finish("https://localhost/callback?code=demo-7")["state"] == "valid"
+    with pytest.raises(EfacturaError):
+        demo.service(cfg).login_finish("https://localhost/callback?code=abc")
+
+
+def test_jev_in_the_demo_answers_whatever_key_is_set(cfg):
+    demo.service(cfg).sync(CLIENT)  # the new invoices go through the rules and then to the stand-in Jev
+
+    waiting = [each for each in demo.service(cfg).invoices(cui=CLIENT)["invoices"] if each["classification_status"] == "pending"]
+    assert waiting == []  # none was left unanswered for want of a real key
+
+
+def test_the_demo_app_uses_the_stand_ins_and_says_it_is_a_demo(cfg):
+    api = TestClient(create_app(cfg))
+
+    assert api.get("/settings", headers=KEY).json()["demo"] is True
+    assert api.post("/auth/login/start", headers=KEY).json()["authorize_url"] == "/api/demo/anaf-login"
+    sent = api.get("/api/demo/anaf-login", follow_redirects=False)  # no key: the browser opens it in a new tab
+    assert sent.status_code == 307 and sent.headers["location"].startswith("https://localhost/callback?code=demo-")
+    assert api.post("/sync", headers=KEY, json={"cui": CLIENT}).json()["new_count"] == 1
+
+
+def test_an_ordinary_app_has_no_demo_address(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(f'[api]\nkey = "k"\n[anaf]\ntoken_file = \'{tmp_path / "tokens.json"}\'\n', encoding="utf-8")
+    api = TestClient(create_app(load_config(path)))
+
+    assert api.get("/settings", headers={"X-API-Key": "k"}).json()["demo"] is False
+    assert api.get("/api/demo/anaf-login", headers={"X-API-Key": "k"}).status_code == 404
+
+
+def test_two_words_make_the_demo_jev_decline_or_fail(cfg):
+    from efactura import jev
+
+    def asked(word):
+        with demo.client(cfg) as http:
+            request = {"model": "m", "state": {"linii": [{"descriere": f"Servicii {word}"}]}, "questions": {}}
+            return jev.ask(http, "any key", request)
+
+    assert asked("nimic").response["answers"]["cont"]["type"] == "refusal"
+    assert asked("eroare").ok is False

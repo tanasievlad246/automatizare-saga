@@ -129,7 +129,8 @@ class Service:
     def login_start(self) -> dict:
         return {
             "ok": True,
-            "authorize_url": auth.authorize_url(self.cfg),
+            # The demo has no ANAF page to send the person to: its own address answers instead.
+            "authorize_url": "/api/demo/anaf-login" if self.cfg.demo else auth.authorize_url(self.cfg),
             "redirect_uri": self.cfg.redirect_uri,
         }
 
@@ -605,7 +606,7 @@ class Service:
     # --- settings and keys changed on screen ----------------------------------
 
     def app_settings(self) -> dict:
-        return {"ok": True, "saga_folder": str(self.cfg.saga_dir)}
+        return {"ok": True, "saga_folder": str(self.cfg.saga_dir), "demo": self.cfg.demo}
 
     def set_saga_folder(self, folder: str) -> dict:
         """Where the files for SAGA are written from now on. Files already written stay

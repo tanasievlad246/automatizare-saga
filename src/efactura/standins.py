@@ -101,15 +101,15 @@ class FakeAnaf:
     # -- setting up what ANAF "has" --
 
     def add(self, message_id, tip="FACTURA PRIMITA", xml=None, created="202611101415",
-            upload_index=None, with_zip=True):
+            upload_index=None, with_zip=True, cui=VALID_CUI):
         upload_index = upload_index or f"50{message_id}"
         self.entries.append(
             {
                 "data_creare": created,
-                "cif": VALID_CUI,
+                "cif": cui,
                 "id_solicitare": upload_index,
                 "detalii": f"Factura cu id_incarcare={upload_index} emisa de cif_emitent=87654321 "
-                           f"pentru cif_beneficiar={VALID_CUI}",
+                           f"pentru cif_beneficiar={cui}",
                 "tip": tip,
                 "id": str(message_id),
             }
@@ -218,8 +218,8 @@ _RICH_INVOICE = """<?xml version="1.0" encoding="UTF-8"?>
         xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
         xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
   <cbc:ID>{number}</cbc:ID>
-  <cbc:IssueDate>2026-11-09</cbc:IssueDate>
-  <cbc:DueDate>2026-12-09</cbc:DueDate>
+  <cbc:IssueDate>{issue_date}</cbc:IssueDate>
+  <cbc:DueDate>{due_date}</cbc:DueDate>
   <cbc:{root}TypeCode>{type_code}</cbc:{root}TypeCode>
   <cbc:Note>Contract 15/2026</cbc:Note>
   <cbc:DocumentCurrencyCode>{currency}</cbc:DocumentCurrencyCode>
@@ -255,7 +255,7 @@ _RICH_INVOICE = """<?xml version="1.0" encoding="UTF-8"?>
         <cac:Country><cbc:IdentificationCode>RO</cbc:IdentificationCode></cac:Country>
       </cac:PostalAddress>
       <cac:PartyTaxScheme>
-        <cbc:CompanyID>RO12345674</cbc:CompanyID>
+        <cbc:CompanyID>RO{customer_cui}</cbc:CompanyID>
         <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme>
       </cac:PartyTaxScheme>
       <cac:PartyLegalEntity>
@@ -309,7 +309,8 @@ def adjustment(amount, charge=False, reason="Discount comercial", percent="19", 
 
 def rich_invoice_xml(lines=None, number="FV-1042", supplier_cui="RO87654321",
                      supplier_name="Furnizor SRL", currency="RON", adjustments=(),
-                     vat_total=None, credit_note=False, vat_on_collection=False) -> bytes:
+                     vat_total=None, credit_note=False, vat_on_collection=False,
+                     issue_date="2026-11-09", due_date="2026-12-09", customer_cui=VALID_CUI) -> bytes:
     """A UBL invoice (or credit note) with addresses, a bank account and lines."""
     lines = [line("Servicii diverse", "1000.00")] if lines is None else lines
     root = "CreditNote" if credit_note else "Invoice"
@@ -363,7 +364,8 @@ def rich_invoice_xml(lines=None, number="FV-1042", supplier_cui="RO87654321",
     vat = _Decimal(vat_total) if vat_total is not None else vat.quantize(_Decimal("0.01"))
 
     return _RICH_INVOICE.format(
-        root=root, number=number, type_code="381" if credit_note else "380", currency=currency,
+        root=root, number=number, issue_date=issue_date, due_date=due_date,
+        customer_cui=customer_cui, type_code="381" if credit_note else "380", currency=currency,
         supplier_cui=supplier_cui, supplier_name=supplier_name,
         period=("<cac:InvoicePeriod><cbc:DescriptionCode>432</cbc:DescriptionCode></cac:InvoicePeriod>"
                 if vat_on_collection else ""),

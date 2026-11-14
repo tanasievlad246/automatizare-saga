@@ -14,7 +14,7 @@ import threading
 import webbrowser
 from pathlib import Path
 
-from . import __version__, backup, background, journal, update
+from . import __version__, backup, background, demo, journal, update
 from .anaf import TYPE_PREFIXES
 from .config import Config, load_config, page_address
 from .errors import (
@@ -53,7 +53,7 @@ OPEN_DELAY = 1.5  # seconds: the server has to be listening before the browser a
 
 # The functions below are replaced in tests.
 def build_service(cfg: Config) -> Service:
-    return Service(cfg)
+    return demo.service(cfg) if cfg.demo else Service(cfg)
 
 
 def open_browser(url: str) -> None:
