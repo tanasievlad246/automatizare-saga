@@ -20,7 +20,7 @@
 - Do not run `pnpm --dir frontend build` before Task 9: the built page is committed (`src/efactura/ui/`) and is rebuilt once.
 - Do not edit `demo/` by hand (it is ignored by git and made by code), `install.ps1`, or the files of release 0.3.0's journal/backup code unless a task names them.
 - Commit at the end of each task, on the branch the work is on. End each commit message with the line `Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>`. Never push.
-- Task 10 is gated: it is not started until the owner has run the helper script of Task 8 on the Windows PC and says it printed an address containing `code=`.
+- Task 10 was gated on the owner's run of the helper's steps on the Windows PC. The gate was passed on 2026-11-15; Task 10 rebuilds the page at its end.
 
 ## Review Focus
 
@@ -755,69 +755,251 @@ and what each answer means (`location` with `code=`: it works, and the address c
 - [ ] **Step 4: Try it.** `uv run efactura demo --port 8765` in the background; open `http://127.0.0.1:8765/ui/`; check: the label "Date de probă"; "Descarcă facturile" brings one or two invoices; "Conectați-vă la ANAF" ends connected with a pasted `…code=demo-…` address; "Testează regulile" answers for both buttons and for the two examples; the menu's foot shows the version, the button and the author line. Stop it.
 - [ ] **Step 5: Commit** — `git commit -m "Version 0.4.0: demo command, rule test, menu foot"`
 
-### Task 10 (gated): Connecting to ANAF with the Windows certificate
+### Task 10: Connecting to ANAF with the Windows certificate
 
-Not started until the owner has run the script of Task 8 on the Windows PC and says it printed an address containing `code=`.
+**The gate was passed on 2026-11-15.** The owner ran the helper's steps by hand on the Windows PC (Windows PowerShell 5.1, the token in) and ANAF answered with an address containing `code=`. This task is built on what that run showed:
+
+- ANAF's login address answers in several hops on its own host before it sends the request to the callback: `302 /anaf-oauth2/v1/authorize -> 302 /my.policy -> 302 /my.policy -> 302 /my.policy_nonce -> the callback`. The cookies have to be kept from hop to hop and the certificate offered at each. The helper of Task 8 stopped at the first hop and printed `/my.policy`; it is rewritten here.
+- With no certificate ANAF ends on `<callback>?error=access_denied`, after three hops. That is what the browser on that PC gets: it never shows its certificate window.
+- A wrong Client ID is answered at once with HTTP 400 and `{"error":"invalid_client","error_description":"Invalid client_id <the id>"}`. A callback that differs from the registered one is answered with HTTP 400 and `{"error":"invalid_request","error_description":"Redirect-URI (<the address>) does not match with client app configuration."}`.
+- With the certificate, the first run in a PowerShell window ends in `error=access_denied` and the second brings a code. The owner saw this twice. The first run is the one during which the token's PIN is typed; ANAF's last hop is named `/my.policy_nonce`. The reading this task is built on: ANAF does not wait for the PIN, and once the token is open a login goes through. So the helper opens the token first (it signs a few bytes, which makes the token ask for its PIN before ANAF is contacted) and, if ANAF still refuses, tries once more by itself. Whether the first step alone is enough is not known; the second covers it either way.
+- The steps were started as `powershell -NoProfile -ExecutionPolicy Bypass -File <script>` from a PowerShell window. Started by the program itself, without a window, they have not been tried: that is the owner's check at the end.
 
 **Files:**
-- Create: `src/efactura/certificate_login.py`
-- Modify: `src/efactura/errors.py` (`LOGIN_CANCELLED = "login_cancelled"`, HTTP 409), `src/efactura/service.py` (`login_with_certificate`, `auth_status`), `src/efactura/api.py`, `frontend/src/layout/AnafLoginDialog.tsx`, `frontend/src/errorMessages.ts`, `frontend/src/api.ts`, `frontend/src/types.ts` (`AuthStatus`), `README.md`
-- Test: `tests/test_certificate_login.py`
+- Rewrite: `src/efactura/certificate_login.ps1`
+- Create: `src/efactura/certificate_login.py`, `tests/test_certificate_login.py`, `frontend/src/layout/certificateLogin.ts`, `frontend/src/layout/certificateLogin.test.ts`
+- Modify: `src/efactura/errors.py` (`LOGIN_CANCELLED = "login_cancelled"`), `src/efactura/service.py` (`login_with_certificate`, `auth_status`), `src/efactura/api.py` (the route; `LOGIN_CANCELLED` is HTTP 409), `frontend/src/layout/AnafLoginDialog.tsx`, `frontend/src/errorMessages.ts`, `frontend/src/api.ts`, `frontend/src/types.ts` (`AuthStatus`), `frontend/src/journal/eventTexts.ts` and its test, `README.md`, `README-ANAF.md`, `pyproject.toml`, `src/efactura/__init__.py`, `uv.lock` (version 0.5.0), and the built page in `src/efactura/ui/`.
+- The window may be split into more components under `frontend/src/layout/` if it reads better. No two file names may differ only by upper and lower case.
 
 **Interfaces:**
-- Consumes: `certificate_login.ps1` and `LOGIN_REFUSED` (Task 8); `Config.demo` (Task 2).
+- Consumes: `LOGIN_REFUSED` and `auth.code_from_redirect` (Task 8), `Config.demo` (Task 2), `Service.login_finish`, `auth.authorize_url`.
 - Produces:
-  - `certificate_login.available(cfg: Config) -> bool` — `os.name == "nt"`, Windows PowerShell is found, and `cfg.demo` is false.
-  - `certificate_login.ask_windows(authorize_url: str) -> str` — runs the helper (`_run_helper(authorize_url) -> dict`, the one function that starts a process, replaced in tests) and returns the address ANAF sent the request to. Raises `EfacturaError(LOGIN_CANCELLED, …)` when no certificate was chosen and `EfacturaError(ANAF_ERROR, …)` when the helper failed or printed nothing usable.
-  - `_run_helper`: `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File <the .ps1 beside this module>`, the address in the environment variable (never on the command line), no console window, a timeout of 300 seconds, the output read as UTF-8 and its last non-empty line parsed as JSON.
-  - `Service.login_with_certificate() -> dict` — the same dict `login_finish` returns. `auth_status()` gains `"certificate_login": bool`.
-  - `POST /auth/login/certificate`.
+  - `certificate_login.HELPER` — the path of the `.ps1` beside the module. `certificate_login.TIMEOUT = 300` — seconds allowed for choosing the certificate and typing the PIN.
+  - `certificate_login.available(cfg: Config, system: str | None = None) -> bool` — true when `system` (by default `os.name`) is `"nt"`, `_powershell()` finds Windows PowerShell, and `cfg.demo` is false. The system is a parameter, as in `cli.started_through_the_launcher`, because replacing `os.name` in a test breaks `pathlib` on a Mac.
+  - `certificate_login._powershell() -> str | None` — where `powershell.exe` is (`shutil.which`), replaced in tests.
+  - `certificate_login.ask_windows(authorize_url: str) -> str` — runs the helper and returns the address ANAF ended on. Raises `EfacturaError(LOGIN_CANCELLED, …)` when no certificate was chosen, and `EfacturaError(ANAF_ERROR, …)` carrying the helper's own words when it failed or printed nothing usable. Each call leaves one journal line, `journal.record("anaf", "anaf.certificate_asked", "Windows was asked for the certificate.", duration_ms=…, outcome=…, tries=…, opened_first=…)`: `outcome` is `"answered"` (ANAF sent the login somewhere, a refusal included), `"cancelled"` or `"failed"`; `tries` and `opened_first` are the helper's `tries` and `opened`, each left out when the helper printed none (the names avoid the words the journal hides, such as key, token and pin). How long Windows took and how many tries ANAF needed is what explains a refusal later. The address and the code are never recorded.
+  - `certificate_login._run_helper(authorize_url: str) -> dict` — the one function that starts a process. It runs `[<powershell>, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(HELPER)]`, exactly as the owner started it by hand (no `-NonInteractive`), with the address in the environment variable `AUTOSAGA_AUTHORIZE_URL` (never on the command line), `stdin` closed, the output captured, `timeout=TIMEOUT` and no console window (`creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)`). The output is read as UTF-8, with bytes that are not UTF-8 replaced, and its last non-empty line is parsed as JSON. It returns that object (the helper prints `location` or `error` together with `tries` and `opened`, or `cancelled` alone); `{}` when nothing readable was printed or the line is not a JSON object; `{"cancelled": True}` when the time ran out (`subprocess.run` ends the helper itself then); `{"error": <the failure, through errors.said_by>}` when PowerShell could not be started.
+  - `Service.login_with_certificate() -> dict` — the same dict `login_finish` returns. It refuses with `EfacturaError(INVALID_INPUT, …)` where `available` is false. It does not hold the program's lock while Windows asks; `login_finish` takes it for the exchange as it does today.
+  - `Service.auth_status()` gains `"certificate_login": bool`, which follows `available`.
+  - `POST /auth/login/certificate`. The call can last minutes, so it must not run on the event loop: declare it the way the other routes that wait on the service are declared.
+- No guard against two tries at once: the page disables its button while it waits, and a second helper window is harmless (whichever finishes is saved).
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Rewrite the helper.** Replace the whole of `src/efactura/certificate_login.ps1` with exactly this. It cannot be run on the development machine, and every step in it is one the owner ran by hand, so change nothing in it. ASCII only, as the file is today.
+
+```powershell
+# Asks ANAF for a login with a certificate Windows holds, and prints one line of JSON:
+#   {"location": "...", "tries": 1, "opened": true}   the address ANAF sent the login to in the end
+#   {"cancelled": true}                               no certificate was chosen
+#   {"error": "...", "tries": 1, "opened": true}      it did not go through; the text is what Windows or ANAF said
+# "tries" is how many times ANAF was asked; "opened" says whether using the key first worked.
+# The address to ask is read from AUTOSAGA_AUTHORIZE_URL. ANAF answers in several hops on
+# its own host: each is followed with the same cookies and the same certificate. The
+# address it ends on is printed, never asked, and the certificate goes to no other host.
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$tries = 0
+$opened = $false
+try {
+    $first = $env:AUTOSAGA_AUTHORIZE_URL
+    if (-not $first) { throw 'AUTOSAGA_AUTHORIZE_URL is not set.' }
+    $anaf = ([Uri]$first).Host
+    Add-Type -AssemblyName System.Security
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $now = Get-Date
+    $mine = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2Collection
+    Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.HasPrivateKey -and $_.NotAfter -gt $now } | ForEach-Object { [void]$mine.Add($_) }
+    $picked = [System.Security.Cryptography.X509Certificates.X509Certificate2UI]::SelectFromCollection(
+        $mine, 'AutoSaga', 'Alegeti certificatul cu care intrati in SPV.',
+        [System.Security.Cryptography.X509Certificates.X509SelectionFlag]::SingleSelection)
+    if ($picked.Count -eq 0) { '{"cancelled": true}'; exit 0 }
+    $certificate = $picked[0]
+
+    # The token asks for its PIN the first time its key is used, and ANAF does not wait for
+    # that: a login during which the PIN was typed came back refused, and the next one, with
+    # the token already open, went through. So the key is used once here, before ANAF is
+    # asked. If this cannot be done, the second try below covers it.
+    try {
+        $key = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($certificate)
+        if ($key) {
+            [void]$key.SignData([byte[]](1..32), [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+            $opened = $true
+        }
+    } catch { }
+
+    $location = $null
+    while ($tries -lt 2) {
+        if ($tries -gt 0) { Start-Sleep -Milliseconds 1500 }
+        $tries++
+        $location = $null
+        $url = $first
+        $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+        for ($hop = 0; $hop -lt 12 -and -not $location; $hop++) {
+            $answer = $null
+            $answer = Invoke-WebRequest -Uri $url -Certificate $certificate -WebSession $session -MaximumRedirection 0 -UseBasicParsing -ErrorAction SilentlyContinue
+            if (-not $answer) { throw 'ANAF did not answer.' }
+            $next = [string]$answer.Headers.Location
+            if (-not $next) { throw ('ANAF stopped on a page instead of sending the login on (status ' + [int]$answer.StatusCode + ').') }
+            $next = [Uri]::new([Uri]$url, $next)
+            if ($next.Host -ne $anaf) { $location = $next.AbsoluteUri }
+            elseif ($next.Scheme -ne 'https') { throw 'ANAF sent the login to an address that is not https.' }
+            else { $url = $next.AbsoluteUri }
+        }
+        if (-not $location) { throw 'ANAF kept sending the login on, without an end.' }
+        # Only a refusal is worth a second try; a code, or any other answer, ends it.
+        if ($location -notmatch '[?&]error=access_denied') { break }
+    }
+    @{ location = $location; tries = $tries; opened = $opened } | ConvertTo-Json -Compress
+} catch {
+    $said = [string]$_.Exception.Message
+    if ($_.ErrorDetails) { $said += ' | ' + $_.ErrorDetails.Message }
+    @{ error = ($said -replace '\s+', ' '); tries = $tries; opened = $opened } | ConvertTo-Json -Compress
+}
+```
+
+- [ ] **Step 2: Write the failing tests** in `tests/test_certificate_login.py`.
 
 ```python
 """Connecting to ANAF with the certificate Windows holds, without the browser."""
+
+import subprocess
 
 import pytest
 
 from efactura import certificate_login
 from efactura.errors import EfacturaError
 
+LOGIN = "https://logincert.anaf.ro/anaf-oauth2/v1/authorize?client_id=abc"
+ENDED_ON = "https://localhost/callback?code=good-code"
 
-def test_the_address_anaf_answers_with_is_handed_back(monkeypatch):
+
+def test_the_address_anaf_ends_on_is_handed_back(monkeypatch):
     asked = []
-    monkeypatch.setattr(certificate_login, "_run_helper", lambda url: asked.append(url) or {"location": "https://localhost/callback?code=good-code"})
+    monkeypatch.setattr(certificate_login, "_run_helper", lambda url: asked.append(url) or {"location": ENDED_ON})
 
-    assert certificate_login.ask_windows("https://logincert.anaf.ro/x") == "https://localhost/callback?code=good-code"
-    assert asked == ["https://logincert.anaf.ro/x"]
+    assert certificate_login.ask_windows(LOGIN) == ENDED_ON
+    assert asked == [LOGIN]
 
 
 @pytest.mark.parametrize("printed, code", [
     ({"cancelled": True}, "login_cancelled"),
-    ({"error": "The request was aborted"}, "anaf_error"),
+    ({"error": "The remote server returned an error: (400) Bad Request."}, "anaf_error"),
     ({"location": ""}, "anaf_error"),
+    ({"location": None}, "anaf_error"),
     ({}, "anaf_error"),
 ])
 def test_what_the_helper_can_come_back_with(monkeypatch, printed, code):
     monkeypatch.setattr(certificate_login, "_run_helper", lambda url: printed)
 
     with pytest.raises(EfacturaError) as failed:
-        certificate_login.ask_windows("https://logincert.anaf.ro/x")
+        certificate_login.ask_windows(LOGIN)
 
     assert failed.value.code == code
+
+
+def _printing(text: bytes):
+    """Stands in for subprocess.run: prints `text` and remembers how the helper was started."""
+    started = {}
+
+    def run(command, **how):
+        started["command"], started["how"] = command, how
+        return subprocess.CompletedProcess(command, 0, stdout=text, stderr=b"")
+
+    return run, started
+
+
+def test_the_helper_gets_the_address_in_its_environment_never_on_the_command_line(monkeypatch):
+    run, started = _printing(b'{"location":"https://localhost/callback?code=good-code"}\r\n')
+    monkeypatch.setattr(certificate_login.subprocess, "run", run)
+    monkeypatch.setattr(certificate_login, "_powershell", lambda: "powershell.exe")
+
+    assert certificate_login._run_helper(LOGIN) == {"location": ENDED_ON}
+    assert started["command"] == ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(certificate_login.HELPER)]
+    assert started["how"]["env"]["AUTOSAGA_AUTHORIZE_URL"] == LOGIN
+    assert started["how"]["timeout"] == certificate_login.TIMEOUT
 ```
 
-and, in the style of the login tests that exist (a `Service` on `FakeAnaf().client()`, whose stand-in accepts the code `good-code`):
-- `available(cfg)` is false when `os.name` is not `"nt"`, and false for a demo `Config` even on Windows (both with `os.name` replaced);
-- `login_with_certificate()` with `ask_windows` replaced to return `…?code=good-code` ends with `state == "valid"` and a saved login;
-- replaced to return `…?error=access_denied` it raises `login_refused` and saves nothing;
-- `auth_status()["certificate_login"]` follows `available`;
-- `POST /auth/login/certificate` answers 409 with `login_refused` in that case;
-- after a successful login neither the address nor the code is anywhere in the journal table or the log file.
+and, in the same file and the same style:
 
-- [ ] **Step 2: Run** `uv run pytest tests/test_certificate_login.py -q`. Expected: FAIL, no module `efactura.certificate_login`.
-- [ ] **Step 3: Implement** the module, the error code, the service method and the route.
-- [ ] **Step 4: The window**, as the artboard "Fereastra: Conectare la ANAF cu certificatul": the certificate way first when `auth.certificate_login` is true, the three browser steps behind "Nu merge așa? Conectare prin browser" (and shown directly when it is false). `errorMessages.ts`: `login_cancelled` → "Nu a fost ales niciun certificat." "Renunță" only stops the page waiting.
-- [ ] **Step 5: README**: the login section and "Not yet confirmed" (never run here; needs Windows and the token; whether Windows shows its windows from a program started without one).
-- [ ] **Step 6: Run** every suite, build the page, commit — `git commit -m "Connect to ANAF with the Windows certificate, without the browser"`
-- [ ] **Step 7: Hand to the owner** for a real try on the Windows PC: the three states of the window, and that the PIN prompt is the token's own.
+- the helper's last non-empty line is the one read: lines of other text before it and blank lines after it change nothing;
+- Windows PowerShell 5.1 prints an ampersand inside JSON as a backslash, the letter u and `0026`; an address printed that way comes back with the ampersand. Build that text in the test with `chr(92) + "u0026"`: typed directly, the editing tools turn it into a plain ampersand and the test proves nothing;
+- nothing printed gives `{}`; a last line that is not JSON gives `{}`; a last line that is JSON but not an object (`[]`, `"x"`) gives `{}`; output that is not UTF-8 raises nothing;
+- `subprocess.TimeoutExpired` gives `{"cancelled": True}`; `OSError` gives a dict with `"error"`;
+- ANAF's own words reach whoever helps: with `_run_helper` returning `{"error": "(400) Bad Request. | Invalid client_id abc"}`, the raised error's message contains `Invalid client_id abc`;
+- each call of `ask_windows` leaves exactly one journal line with the event `anaf.certificate_asked` and a duration: `outcome` is `answered`, `tries` is 2 and `opened_first` is false for `{"location": ENDED_ON, "tries": 2, "opened": False}`; `outcome` is `answered` for an address carrying `error=access_denied`; `cancelled` for `{"cancelled": True}`; `failed` for `{"error": …}` and for `{}`; and the line holds neither the address nor the code;
+- `available(cfg, system="posix")` is false; `available(cfg, system="nt")` is true with `_powershell` replaced to return a path and false with it returning `None`; for a demo `Config` it is false even with `system="nt"`;
+- the helper file exists beside the module, is ASCII only, and contains none of the words `Write-Host`, `Start-Process` or `Invoke-Expression`;
+- `ask_windows` hands back the address when the helper's answer also carries `tries` and `opened`.
+
+For the service and the route, in the style of the login tests in `tests/test_auth.py` and the API tests (a `Service` on the stand-in ANAF, whose token call accepts the code `good-code`), with `certificate_login.available` replaced to return true:
+
+- `login_with_certificate()` with `ask_windows` replaced to return `…/callback?code=good-code` ends with `state == "valid"` and a saved login;
+- replaced to return `…/callback?error=access_denied` it raises `login_refused` and saves nothing;
+- replaced to raise `login_cancelled`, that error comes out and nothing is saved;
+- with `available` false it raises `invalid_input` and `ask_windows` is not called;
+- `auth_status()["certificate_login"]` follows `available`;
+- `POST /auth/login/certificate` answers 200 with the login, 409 with `login_refused`, and 409 with `login_cancelled`;
+- after a successful login neither the address nor the code `good-code` is anywhere in the journal table or in the log file.
+
+- [ ] **Step 3: Run** `uv run pytest tests/test_certificate_login.py -q`. Expected: FAIL, no module `efactura.certificate_login`.
+- [ ] **Step 4: Implement** the module, the error code, the service method and the route. Run the file again until it passes, then `uv run pytest -q` (863 pass before this task).
+
+- [ ] **Step 5: The window's logic, test first.** The page's tests are for plain functions (there is no component test library, and none is to be added), so what the window shows is decided by a function in `frontend/src/layout/certificateLogin.ts`, tested in `certificateLogin.test.ts`, and `AnafLoginDialog.tsx` only draws the result. Whatever its shape, the tests must pin down:
+
+| When | The window shows |
+|---|---|
+| it opens and `certificate_login` is true | the certificate way |
+| it opens and `certificate_login` is false, or the login state has not been read yet | the three browser steps there are today, exactly as today |
+| "Conectează-mă cu certificatul" or "Încearcă din nou" is pressed | the waiting view |
+| the answer is `login_cancelled` | the certificate way again, with the sentence "Nu a fost ales niciun certificat." |
+| the answer is any other failure | the failure view, holding that error |
+| "Renunță" is pressed while waiting | the certificate way; an answer that arrives afterwards changes nothing on screen |
+| "Nu merge așa? Conectare prin browser" or "Conectare prin browser" is pressed | the three browser steps |
+
+Run `pnpm --dir frontend test` and see the new tests fail before the function exists (94 pass before this task).
+
+- [ ] **Step 6: The window**, as the artboard "Fereastra: Conectare la ANAF cu certificatul". The artboard is saved at the path the controller gives you; its three cards are the certificate way, the waiting view and the failure view. Texts, to be used as written:
+
+  - The certificate way: title "Conectare la ANAF"; "Aveți nevoie de tokenul USB și de PIN-ul lui. Se face cam o dată pe an."; the numbered steps "Introduceți tokenul USB în calculator.", "Apăsați butonul de mai jos. Windows vă arată certificatele: alegeți-l pe al dumneavoastră.", "Scrieți PIN-ul în fereastra tokenului."; the button "Conectează-mă cu certificatul"; the link "Nu merge așa? Conectare prin browser".
+  - Waiting: title "Se așteaptă certificatul…"; "Alegeți certificatul în fereastra Windows, apoi scrieți PIN-ul."; in the quieter colour "Fereastra poate fi în spatele browserului. Dacă nu o vedeți, uitați-vă în bara de jos a ecranului."; a bar that shows work going on without a percentage; the button "Renunță".
+  - Failure, for `login_refused`: the attention notice "ANAF nu a acceptat certificatul."; under it "Verificați că este certificatul cu care intrați în SPV și că nu a expirat."; then, small, "Detalii tehnice: " and the program's own words; the buttons "Încearcă din nou" and "Conectare prin browser". For any other failure the same view with that error's own sentence from `errorMessages.ts` (use `ErrorNotice`) and the same two buttons.
+  - `errorMessages.ts`: `login_cancelled` → "Nu a fost ales niciun certificat."
+  - `journal/eventTexts.ts`: `anaf.certificate_asked` → "Programul a cerut certificatul de la Windows."
+
+  Behaviour: a login that succeeds does what a pasted address does today (refreshes the `auth` and `secrets` queries, says "Conectat la ANAF.", closes the window). "Renunță" only stops the page waiting: if the certificate is chosen afterwards the login is still saved, and when that answer arrives the top bar's ANAF chip must still refresh, with no message and no change to the window. Closing the window and opening it again starts from the first view. Where `certificate_login` is false the window is exactly today's.
+
+- [ ] **Step 7: The two READMEs.**
+
+  `README.md` (English, for whoever installs and maintains): in "How the login works", the certificate way on Windows and what it does (Windows' own certificate window, the token's own PIN prompt, the key never leaves the token, the program never sees the PIN, the one-time code is never shown or recorded); rewrite "Trying the certificate login by hand" for the helper as it is now (it follows ANAF's hops and prints the address ANAF ends on, which holds a one-time code: use it within a minute and send it to nobody); in "Local API" the route `POST /auth/login/certificate` and `certificate_login` in the login status; `login_cancelled` in the "Error code | Meaning" table; in "Not yet confirmed", replace the line saying the helper has never been run with what the run of 2026-11-15 confirmed (the five points at the top of this task, in a few lines) and what is still open: the script file as rewritten here, the program starting it by itself without a window, where Windows puts the certificate and PIN windows then, and the one refusal nobody could explain.
+
+  `README-ANAF.md` (Romanian, for the accountant). Replace "Pasul 5" up to, and not including, the paragraph that starts "După aceasta programul rămâne conectat" with exactly:
+
+```markdown
+## Pasul 5 — Vă conectați la ANAF
+
+1. Introduceți tokenul USB în calculator.
+2. În bara de sus a programului apăsați **Conectați-vă la ANAF**.
+3. Apăsați **Conectează-mă cu certificatul**. Windows vă arată certificatele: alegeți-l pe al dumneavoastră, apoi scrieți PIN-ul în fereastra tokenului. Fereastra poate apărea în spatele browserului; dacă nu o vedeți, uitați-vă în bara de jos a ecranului.
+
+Atât: programul primește singur răspunsul de la ANAF.
+
+**Dacă butonul „Conectează-mă cu certificatul” lipsește sau nu merge**, alegeți **Conectare prin browser** și urmați cei trei pași din fereastră: se deschide pagina ANAF, alegeți certificatul și scrieți PIN-ul. Browserul arată apoi o pagină de eroare („nu se poate accesa pagina”). **Este normal.** Copiați toată adresa din bara de adrese și lipiți-o în program, **în cel mult un minut**. Butonul cu certificatul există doar pe Windows.
+```
+
+  Under "Dacă ceva nu merge", replace the whole entry that starts "**ANAF a refuzat certificatul („access_denied”).**" (it and its four numbered lines) with exactly:
+
+```markdown
+- **ANAF a refuzat certificatul („access_denied”).** ANAF răspunde așa când nu primește niciun certificat. De obicei browserul nu a arătat fereastra de alegere a certificatului, deci nu a trimis nimic. Ce faceți:
+  1. Verificați că tokenul USB este introdus în calculator.
+  2. Pe Windows, folosiți **Conectează-mă cu certificatul** din fereastra „Conectare la ANAF”. Programul cere certificatul direct de la Windows, fără browser.
+  3. Dacă ANAF refuză și așa, apăsați **Încearcă din nou**. La o probă, a doua încercare a mers fără nicio altă schimbare.
+  4. Dacă tot nu merge, intrați în SPV cu același certificat. Dacă nici acolo nu merge, problema este la certificat sau la token, nu la program.
+- **ANAF răspunde cu `invalid_client`.** Client ID-ul scris în program nu este cel dat de ANAF. Copiați-l din nou de la ANAF (Pasul 3) și scrieți-l în program (Pasul 4).
+- **ANAF răspunde cu `invalid_request` și cu textul „Redirect-URI … does not match”.** Callback URL de la ANAF diferă de adresa pe care o trimite programul, `https://localhost/callback`. Vedeți mai sus „Ați greșit Callback URL sau serviciul”.
+```
+
+  and at the end of "De unde sunt acești pași" add the paragraph: "Răspunsurile ANAF de la „Dacă ceva nu merge” sunt cele primite la o probă pe un calculator cu Windows, la 15 noiembrie 2026."
+
+- [ ] **Step 8: Version 0.5.0** in `pyproject.toml`, `src/efactura/__init__.py` and `uv.lock`, the way commit `a367834` set 0.4.1.
+- [ ] **Step 9: Run every suite and build the page.** `uv run pytest -q`, `pnpm --dir frontend test`, `pnpm --dir frontend exec tsc -b --noEmit` (clean), `pnpm --dir frontend lint` (exactly the 3 old `only-export-components` warnings), then `pnpm --dir frontend build` (this task rebuilds the committed page in `src/efactura/ui/`).
+- [ ] **Step 10: Commit** — `git commit -m "Connect to ANAF with the Windows certificate, without the browser (0.5.0)"`.
+- [ ] **Step 11: Hand to the owner** for a real try on the Windows PC. The controller does this, not the implementer.
