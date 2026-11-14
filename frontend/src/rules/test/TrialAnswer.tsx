@@ -1,7 +1,7 @@
 import { TriangleAlert } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { RuleTestResult, TrialAsk } from '../../types'
-import { describeAnswer } from './trialAnswer'
+import { describeAnswer } from './describeAnswer'
 
 const TONES = {
   done: 'border-done-foreground/30 bg-done text-done-foreground',
