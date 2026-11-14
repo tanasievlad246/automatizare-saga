@@ -158,7 +158,7 @@ def test_a_development_copy_cannot_be_updated(installed):
     with pytest.raises(EfacturaError) as refused:
         update.update(installed.cfg, project=installed.project, now=NOW)
 
-    assert (found["can_update"], found["update_available"], found["latest_release"]) == (False, False, None)
+    assert (found["can_update"], found["update_available"], found["latest_release"]) == (False, False, "v0.2.0")
     assert "main" in found["why_not"]
     assert refused.value.code == "update_error"
     assert held(installed) == "v0.1.0"
@@ -393,3 +393,34 @@ def test_an_update_is_not_called_failed_because_the_program_did_not_start_again(
 
     assert (result["updated"], result["restarted"], held(installed)) == (True, False, "v0.2.0")
     assert update.status(installed.cfg, project=installed.project, now=NOW)["last_update"]["ok"] is True
+
+
+def test_a_development_copy_can_still_look_for_the_newest_release(installed):
+    installed.release("0.2.0")
+    git(installed.project, "checkout", "-q", "-b", "work")
+
+    found = update.status(installed.cfg, check=True, project=installed.project, now=NOW)
+
+    assert (found["can_update"], found["update_available"]) == (False, False)
+    assert (found["latest_release"], found["why_not_kind"], found["check_error"]) == ("v0.2.0", "development", None)
+
+
+def test_a_development_copy_that_cannot_reach_the_remote_says_so(installed):
+    git(installed.project, "checkout", "-q", "-b", "work")
+    git(installed.project, "remote", "set-url", "origin", str(installed.remote.parent / "gone"))
+
+    found = update.status(installed.cfg, check=True, project=installed.project, now=NOW)
+
+    assert found["why_not_kind"] == "development" and found["check_error"]
+
+
+def test_a_folder_that_is_not_a_clone_says_so(tmp_path):
+    (tmp_path / "config.toml").write_text('[api]\nkey = "k"\n', encoding="utf-8")
+
+    found = update.status(load_config(tmp_path / "config.toml"), check=True, project=tmp_path, now=NOW)
+
+    assert (found["why_not_kind"], found["latest_release"], found["check_error"]) == ("not_a_clone", None, None)
+
+
+def test_an_installed_copy_has_no_reason_not_to_update(installed):
+    assert update.status(installed.cfg, project=installed.project, now=NOW)["why_not_kind"] is None

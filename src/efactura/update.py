@@ -47,12 +47,14 @@ def status(cfg: Config, check: bool = False, project: Path | None = None, now: d
     """
     project, now = project or PROJECT, now or datetime.now().astimezone()
     why_not = _why_not_updatable(project)
+    is_clone = (project / ".git").exists()
     installed = _installed_release(project)
     store = Store(cfg.db_path)
     try:
         latest, checked_at, check_error = store.get_setting(LATEST), store.get_setting(CHECKED_AT), None
         stale = checked_at is None or now - datetime.fromisoformat(checked_at) >= CHECK_EVERY
-        if why_not is None and (check or stale):
+        # A development copy looks too, so the page can name the newest release; it just never updates.
+        if is_clone and (check or stale):
             try:
                 latest = latest_release(project) or ""
                 store.set_setting(LATEST, latest)
@@ -71,6 +73,8 @@ def status(cfg: Config, check: bool = False, project: Path | None = None, now: d
         "update_available": why_not is None and bool(latest) and latest != installed,
         "can_update": why_not is None,
         "why_not": why_not,
+        # For the page to decide on without reading the English sentence above.
+        "why_not_kind": None if why_not is None else ("development" if is_clone else "not_a_clone"),
         "checked_at": checked_at,
         "check_error": check_error,
         "last_update": _last_record(cfg),

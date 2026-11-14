@@ -11,6 +11,7 @@ import type { UpdateStatus } from '../types'
 import { AnafConnectionBadge } from './AnafConnectionBadge'
 import { Brand } from './Brand'
 import { DemoLabel } from './DemoLabel'
+import { Credits } from './Credits'
 import { ProgramVersion } from './ProgramVersion'
 import { SagaFolderChip } from './SagaFolderChip'
 import { UpdateDialog } from './UpdateDialog'
@@ -87,7 +88,8 @@ export function AppShell() {
               </span>
             </NavLink>
           ))}
-          {update && <ProgramVersion status={update} />}
+          {update && <ProgramVersion status={update} onUpdate={() => setUpdating(update)} />}
+          {update && <Credits />}
         </nav>
         <main className="min-w-0 flex-1 px-8 pt-7 pb-12">
           {/* Wide enough for tables on a large monitor; screens of text set a narrower width themselves. */}

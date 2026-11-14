@@ -4,7 +4,7 @@ import type { UpdateStatus } from '../types'
 
 const status = (last: UpdateStatus['last_update']): UpdateStatus => ({
   version: 'v0.1.1', installed_release: 'v0.1.1', latest_release: 'v0.2.0', update_available: true,
-  can_update: true, checked_at: null, check_error: null, last_update: last,
+  can_update: true, why_not_kind: null, checked_at: null, check_error: null, last_update: last,
 })
 const earlier = { at: '2026-11-01T10:00:00+02:00', ok: true, from: 'v0.1.0', to: 'v0.1.1', error: null }
 
@@ -20,6 +20,17 @@ describe('what looking for a newer version found', () => {
   it('is said from the status the whole page shows, so it cannot contradict the notice on top', () => {
     expect(whatTheLookFound(status(null))).toBe('Există versiunea 0.2.0.')
     expect(whatTheLookFound({ ...status(null), latest_release: 'v0.1.1', update_available: false })).toBe('Aveți cea mai nouă versiune.')
+  })
+
+  it('says what a look found, for every kind of copy', () => {
+    const copy = (over: Partial<UpdateStatus>): UpdateStatus => ({ ...status(null), update_available: false, ...over })
+    expect(whatTheLookFound(copy({ latest_release: 'v0.3.0', installed_release: 'v0.3.0' }))).toBe('Aveți cea mai nouă versiune.')
+    expect(whatTheLookFound(copy({ update_available: true, latest_release: 'v0.4.0' }))).toBe('Există versiunea 0.4.0.')
+    expect(whatTheLookFound(copy({ can_update: false, why_not_kind: 'development', latest_release: 'v0.3.0' })))
+      .toBe('Ultima versiune publicată este 0.3.0. O copie de dezvoltare se actualizează cu git, nu de aici.')
+    expect(whatTheLookFound(copy({ can_update: false, why_not_kind: 'not_a_clone', latest_release: null })))
+      .toBe('Această copie nu a fost instalată cu programul de instalare, așa că nu are de unde căuta.')
+    expect(whatTheLookFound(copy({ check_error: 'no network' }))).toBe('Nu am putut căuta. Verificați conexiunea la internet.')
   })
 
   it('says so when GitHub could not be asked', () => {

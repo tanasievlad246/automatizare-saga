@@ -206,6 +206,7 @@ export type UpdateStatus = {
   latest_release: string | null
   update_available: boolean
   can_update: boolean // false for a copy the installer did not make
+  why_not_kind: 'development' | 'not_a_clone' | null // why not, for the page to decide on
   checked_at: string | null
   check_error: string | null
   last_update: { at: string; ok: boolean; from: string | null; to: string; error: string | null } | null

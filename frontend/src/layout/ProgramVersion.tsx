@@ -5,7 +5,7 @@ import type { UpdateStatus } from '../types'
 import { COULD_NOT_LOOK, shownVersion, whatTheLookFound } from './programUpdate'
 
 /** At the foot of the menu: the version installed, and a way to look for a newer one now. */
-export function ProgramVersion({ status }: { status: UpdateStatus }) {
+export function ProgramVersion({ status, onUpdate }: { status: UpdateStatus; onUpdate: () => void }) {
   const queryClient = useQueryClient()
   const look = useMutation({
     mutationFn: () => api.updateStatus(true),
@@ -14,17 +14,22 @@ export function ProgramVersion({ status }: { status: UpdateStatus }) {
   })
 
   return (
-    <div className="mt-6 flex flex-col gap-1 px-3.5 text-[0.95rem]">
-      <span className="text-muted-foreground">Versiunea {shownVersion(status.version)}</span>
-      {status.can_update && (
-        <Button variant="link" className="h-auto min-h-10 self-start px-0" disabled={look.isPending} onClick={() => look.mutate()}>
+    <div className="mt-6 flex flex-col gap-2 px-3.5 text-[0.95rem]">
+      <span className="font-medium">AutoSaga {shownVersion(status.version)}</span>
+      {status.update_available ? (
+        <>
+          <span className="text-muted-foreground">Există versiunea {shownVersion(status.latest_release)}.</span>
+          <Button className="min-h-10 self-start" onClick={onUpdate}>Actualizează programul</Button>
+        </>
+      ) : (
+        <Button variant="outline" className="min-h-10 self-start" disabled={look.isPending} onClick={() => look.mutate()}>
           {look.isPending ? 'Se caută…' : 'Caută o versiune nouă'}
         </Button>
       )}
       {/* Said from the status the page has now, not from what this look found: read again
           later, the status may know of a newer version, and the notice on top would say so. */}
       <span aria-live="polite" className="text-muted-foreground">
-        {look.isError ? COULD_NOT_LOOK : look.isSuccess && whatTheLookFound(status)}
+        {look.isError ? COULD_NOT_LOOK : look.isSuccess && !status.update_available && whatTheLookFound(status)}
       </span>
     </div>
   )

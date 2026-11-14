@@ -11,6 +11,10 @@ export const COULD_NOT_LOOK = 'Nu am putut căuta. Verificați conexiunea la int
 /** What looking for a newer release found, as the foot of the menu says it. */
 export function whatTheLookFound(status: UpdateStatus): string {
   if (status.check_error) return COULD_NOT_LOOK
+  if (status.why_not_kind === 'development')
+    return `Ultima versiune publicată este ${shownVersion(status.latest_release)}. O copie de dezvoltare se actualizează cu git, nu de aici.`
+  if (status.why_not_kind === 'not_a_clone')
+    return 'Această copie nu a fost instalată cu programul de instalare, așa că nu are de unde căuta.'
   return status.update_available ? `Există versiunea ${shownVersion(status.latest_release)}.` : 'Aveți cea mai nouă versiune.'
 }
 
