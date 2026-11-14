@@ -21,10 +21,11 @@ const EMPTY: RuleFields = {
 /**
  * Writing a rule, or changing one. Lists are typed with commas between the entries.
  * A new rule can start from a `draft`, such as a proposed rule the person wants to adjust.
+ * `onSaved` is for a caller that must know the rule now exists.
  */
 export function RuleDialog({
-  rule, draft, clients, onClose,
-}: { rule: Rule | 'new'; draft?: RuleFields; clients: Client[]; onClose: () => void }) {
+  rule, draft, clients, onClose, onSaved,
+}: { rule: Rule | 'new'; draft?: RuleFields; clients: Client[]; onClose: () => void; onSaved?: () => void }) {
   const queryClient = useQueryClient()
   const existing = rule === 'new' ? null : rule
   const [fields, setFields] = useState<RuleFields>(existing ?? draft ?? EMPTY)
@@ -40,7 +41,10 @@ export function RuleDialog({
   }
   const save = useMutation({
     mutationFn: () => (existing ? api.changeRule(existing.id, fields) : api.addRule(fields)),
-    ...afterChange,
+    onSuccess: () => {
+      onSaved?.()
+      afterChange.onSuccess()
+    },
   })
   const remove = useMutation({ mutationFn: () => api.deleteRule(existing!.id), ...afterChange })
 

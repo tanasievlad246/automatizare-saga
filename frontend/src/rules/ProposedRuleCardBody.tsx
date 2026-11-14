@@ -20,7 +20,8 @@ type LooksFor = 'words' | 'supplier'
  * (words of the largest line, or the supplier) and creates it. It knows no saved invoice, so
  * what "Nu acum" does is the caller's: remember the refusal, or only hide the card.
  * `chosenBy` says who chose the account, when that is known; `onCreated` is for a caller that
- * must stop showing the card once its rule exists.
+ * must stop showing the card once its rule exists, made by "Creează regula" or saved from
+ * "Modifică regula întâi".
  */
 export function ProposedRuleCardBody({
   suggestion, onNotNow, chosenBy, onCreated,
@@ -130,7 +131,7 @@ export function ProposedRuleCardBody({
         </Button>
       </div>
       {changing && (
-        <RuleDialog rule="new" draft={ruleFromProposal(proposal)} clients={clients} onClose={() => setChanging(false)} />
+        <RuleDialog rule="new" draft={ruleFromProposal(proposal)} clients={clients} onClose={() => setChanging(false)} onSaved={onCreated} />
       )}
     </section>
   )
