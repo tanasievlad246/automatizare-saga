@@ -89,7 +89,7 @@ export function AppShell() {
             </NavLink>
           ))}
           {update && <ProgramVersion status={update} onUpdate={() => setUpdating(update)} />}
-          {update && <Credits />}
+          <Credits />
         </nav>
         <main className="min-w-0 flex-1 px-8 pt-7 pb-12">
           {/* Wide enough for tables on a large monitor; screens of text set a narrower width themselves. */}
