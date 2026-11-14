@@ -10,7 +10,7 @@ import { SavedInvoicePicker } from './SavedInvoicePicker'
 import { TrialAnswer } from './TrialAnswer'
 import { TrialInvoiceForm } from './TrialInvoiceForm'
 import type { StartFrom } from './TrialInvoiceForm'
-import { EXAMPLES, fromDocument, startedFrom, toRequest } from './trialInvoice'
+import { EXAMPLES, REFUSED_HERE, fromDocument, startedFrom, toRequest } from './trialInvoice'
 
 /** A made-up invoice put through the path a real one takes, to see which account it would get. */
 export function RuleTestPage() {
@@ -71,7 +71,7 @@ export function RuleTestPage() {
             }}
             onStartFrom={startFrom}
           />
-          {ask.error && <ErrorNotice error={ask.error} />}
+          {ask.error && <ErrorNotice error={ask.error} here={REFUSED_HERE} />}
         </div>
         {answer && (
           <div className="flex flex-col gap-4">

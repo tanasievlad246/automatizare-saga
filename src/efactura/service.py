@@ -79,10 +79,12 @@ MAX_LISTED_CALLS = 1000
 # invoices given an account in the same days. Older ones no longer say how things are booked.
 RECENT_DAYS = 90
 MAX_LISTED_SUGGESTIONS = 20
-# A failure that may pass (no connection, rate limit, server error) is tried once more.
 MAX_TRIAL_LINES = 50
 MAX_TRIAL_TEXT = 500
+MAX_TRIAL_DIGITS = 15  # before the decimal point, in a number of a trial invoice
+MAX_TRIAL_DECIMALS = 20
 TRIAL_ASKS = ("rules_then_jev", "jev_only")
+# A failure that may pass (no connection, rate limit, server error) is tried once more.
 JEV_ATTEMPTS = 2
 JEV_RETRY_DELAY = 2.0
 # An account as SAGA writes it: 628, 6022, or an analytic account such as 371.01.
@@ -1726,14 +1728,29 @@ def _rulebook_for(store: Store, cui: str) -> Rulebook:
     )
 
 
-def _trial_number(value, what: str, number: int) -> Decimal:
-    """A number as people type it: spaces around it, a decimal comma."""
+def _trial_number(value, what: str, number: int) -> Decimal | None:
+    """A number as Romanians write it, or None when nothing was written. Spaces between the
+    digits are dropped ("12 000"); with a comma, the comma is the decimal point and the dots
+    group thousands ("1.234,50"); without one, a dot is the decimal point ("28.50")."""
+    text = "".join(str(value if value is not None else "").split())
+    if not text:
+        return None
+    if "," in text:
+        text = text.replace(".", "").replace(",", ".")
     try:
-        parsed = Decimal(str(value if value is not None else "").strip().replace(",", "."))
+        parsed = Decimal(text)
     except InvalidOperation:
         parsed = None
     if parsed is None or not parsed.is_finite():
         raise EfacturaError(INVALID_INPUT, f"The {what} of line {number} must be a number.")
+    # Far beyond any invoice. Past it, multiplying overflows, or writing the number out for
+    # Jev takes a million digits. Read from the digits and the exponent, so nothing is computed.
+    if parsed.adjusted() >= MAX_TRIAL_DIGITS or parsed.as_tuple().exponent < -MAX_TRIAL_DECIMALS:
+        raise EfacturaError(
+            INVALID_INPUT,
+            f"The {what} of line {number} must be a number with at most {MAX_TRIAL_DIGITS} digits "
+            f"before the decimal point and {MAX_TRIAL_DECIMALS} after it.",
+        )
     return parsed
 
 
@@ -1760,13 +1777,15 @@ def _trial_invoice(
         description = _trial_text(item.get("description"), "description", number)
         if description is None:
             continue  # an empty row on the screen
+        # A row with a description alone is the most natural first try of a rule on a word,
+        # which looks at neither number: one, at no price.
         quantity = _trial_number(item.get("quantity"), "quantity", number)
+        quantity = Decimal(1) if quantity is None else quantity
         unit_price = _trial_number(item.get("unit_price"), "unit price", number)
+        unit_price = Decimal(0) if unit_price is None else unit_price
         # Carried from a saved invoice, whose value may not be quantity × price (a line
         # discount, a price per several units). It decides which line counts, as it did there.
-        carried = item.get("value")
-        value = _trial_number(carried, "value", number) if str(carried or "").strip() else quantity * unit_price
-        vat = item.get("vat_percent")
+        value = _trial_number(item.get("value"), "value", number)
         codes = item.get("commodity_codes") or []
         built.append(Line(
             number=number,
@@ -1777,8 +1796,8 @@ def _trial_invoice(
             unit=_trial_text(item.get("unit"), "unit", number),
             quantity=quantity,
             unit_price=unit_price,
-            value=value,
-            vat_percent=_trial_number(vat, "VAT rate", number) if str(vat or "").strip() else None,
+            value=quantity * unit_price if value is None else value,
+            vat_percent=_trial_number(item.get("vat_percent"), "VAT rate", number),
             vat_category=None,
         ))
     cui = str(supplier_cui or "").strip()

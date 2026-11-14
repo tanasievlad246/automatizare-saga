@@ -22,9 +22,22 @@ export const EXAMPLES: { materiale: TrialInvoice; combustibil: TrialInvoice } = 
 }
 
 const blank = (value: string | null) => !value || value.trim() === ''
-// The program reads a point as the decimal separator; the person types a comma.
-const number = (text: string) => text.trim().replace(',', '.')
+/**
+ * A number as Romanians write it, with a decimal point, as the program reads it best. The spaces
+ * between digits go ("12 000"); with a comma, the dots group thousands ("1.234,50"); without
+ * one, a dot is the decimal point ("28.50"). The program reads them the same way.
+ */
+const number = (text: string) => {
+  const compact = text.replace(/\s/g, '')
+  return compact.includes(',') ? compact.replaceAll('.', '').replaceAll(',', '.') : compact
+}
 const orNull = (text: string) => (text.trim() === '' ? null : text.trim())
+
+/**
+ * What a refusal means on this screen: nearly always a number the program cannot read. The
+ * other limits (50 rows, 500 characters in a text) are seldom reached by typing.
+ */
+export const REFUSED_HERE = { invalid_input: 'Cantitatea și prețul se scriu ca numere, de exemplu 20 și 28,50.' }
 
 /** The JSON of `POST /rules/test`. Rows nothing was written on are left out. */
 export function toRequest(trial: TrialInvoice, ask: TrialAsk) {

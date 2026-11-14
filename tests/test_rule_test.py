@@ -202,7 +202,6 @@ def test_numbers_as_people_type_them(desk):
 
     for bad in (
         [{"description": "Ciment", "quantity": "abc", "unit_price": "1"}],
-        [{"description": "Ciment", "quantity": "", "unit_price": "1"}],
         [{"description": "x" * 501, "quantity": "1", "unit_price": "1"}],
         CIMENT * 51,
     ):
@@ -211,6 +210,60 @@ def test_numbers_as_people_type_them(desk):
         assert refused.value.code == "invalid_input"
     with pytest.raises(EfacturaError):
         desk.test_rules(lines=CIMENT, ask="something else")
+
+
+def test_a_row_with_only_a_description_is_one_at_no_price_and_a_rule_on_a_word_decides_it(cfg, desk, openrouter):
+    desk.save_rule(name="telefon", cont="628", keywords=["telefon"])
+
+    by_rule = desk.test_rules(lines=[{"description": "abonament telefon", "quantity": "", "unit_price": ""}])
+    desk.test_rules(lines=[{"description": "Ciment", "quantity": " ", "unit_price": ""}], ask="jev_only")
+    asked = openrouter.requests[-1]["state"]["linii"][0]
+    # From another program, the numbers may be left out altogether.
+    api = TestClient(create_app(cfg, service_factory=lambda cfg: desk))
+    reply = api.post("/rules/test", headers=KEY, json={"lines": [{"description": "abonament telefon"}]})
+
+    assert (by_rule["decided_by"], by_rule["rule"]["name"]) == ("rule", "telefon")
+    assert (asked["cantitate"], asked["valoare_fara_tva"]) == ("1", "0")
+    assert reply.status_code == 200 and reply.json()["decided_by"] == "rule"
+
+
+@pytest.mark.parametrize("typed, read", [
+    ("12 000", "12000"),
+    ("12 000", "12000"),  # the space a copied number often carries
+    ("1.234,50", "1234.50"),
+    ("28,50", "28.50"),
+    ("28.50", "28.50"),
+    (" 20 ", "20"),
+])
+def test_numbers_are_read_as_romanians_write_them(desk, openrouter, typed, read):
+    desk.test_rules(lines=[{"description": "Ciment", "quantity": typed, "unit_price": typed}], ask="jev_only")
+
+    (asked,) = openrouter.requests[-1]["state"]["linii"]
+    assert asked["cantitate"] == read
+
+
+@pytest.mark.parametrize("quantity, price", [
+    ("abc", "1"),
+    ("1,234,50", "1"),
+    ("NaN", "1"),
+    ("1e999999", "28,50"),  # too large to compute with: once a 500 with decimal.Overflow
+    ("2", "1e999999"),
+    ("1e-999999", "1"),  # a million digits to write out
+])
+def test_a_number_that_cannot_be_read_or_computed_with_is_bad_input(cfg, desk, quantity, price):
+    api = TestClient(create_app(cfg, service_factory=lambda cfg: desk))
+
+    reply = api.post("/rules/test", headers=KEY, json={"lines": [{"description": "Ciment", "quantity": quantity, "unit_price": price}]})
+
+    assert (reply.status_code, reply.json()["error"]["code"]) == (400, "invalid_input")
+
+
+def test_a_negative_quantity_is_accepted_as_a_return(cfg, desk):
+    api = TestClient(create_app(cfg, service_factory=lambda cfg: desk))
+
+    reply = api.post("/rules/test", headers=KEY, json={"lines": [{"description": "Retur motorina", "quantity": "-10", "unit_price": "7,20"}]})
+
+    assert reply.status_code == 200 and (reply.json()["decided_by"], reply.json()["deciding_line"]) == ("rule", "Retur motorina")
 
 
 def test_the_route_and_the_journal(cfg, desk):

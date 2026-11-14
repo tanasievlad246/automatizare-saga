@@ -149,8 +149,8 @@ class RulePreviewRequest(BaseModel):
 
 class TrialLine(BaseModel):
     description: str
-    quantity: Union[str, int, float]
-    unit_price: Union[str, int, float]
+    quantity: Union[str, int, float, None] = None  # missing or blank: 1
+    unit_price: Union[str, int, float, None] = None  # missing or blank: 0
     seller_code: str | None = None
     barcode: str | None = None
     commodity_codes: list[str] = []

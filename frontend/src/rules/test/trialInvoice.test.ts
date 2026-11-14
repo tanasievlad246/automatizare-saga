@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { EMPTY, EXAMPLES, changeLine, fromDocument, hasCodes, toRequest } from './trialInvoice'
+import { ApiError } from '../../api'
+import { errorMessage } from '../../errorMessages'
+import { EMPTY, EXAMPLES, REFUSED_HERE, changeLine, fromDocument, hasCodes, toRequest } from './trialInvoice'
 
 const line = (description: string, quantity: string, unitPrice: string) =>
   ({ description, quantity, unitPrice, sellerCode: '', barcode: '', commodityCodes: '', unit: null, vatPercent: null, value: null })
@@ -18,6 +20,24 @@ describe('a trial invoice', () => {
       client_cui: '12345674', supplier_name: 'Dedeman SRL', supplier_cui: '2816464', currency: 'RON', credit_note: false, ask: 'rules_then_jev',
       lines: [{ description: 'Ciment', quantity: '20', unit_price: '28.50', seller_code: null, barcode: null, commodity_codes: [], unit: null, vat_percent: null, value: null }],
     })
+  })
+
+  it.each([
+    ['12 000', '12000'],
+    ['12 000', '12000'],
+    ['1.234,50', '1234.50'],
+    ['28,50', '28.50'],
+    ['28.50', '28.50'],
+    ['', ''], // the program reads a blank quantity as 1 and a blank price as 0
+    ['1,234,50', '1.234.50'], // still not a number: the program refuses it
+  ])('sends %j, written as Romanians write numbers, as %j', (typed, sent) => {
+    const [row] = toRequest({ ...EMPTY, lines: [line('Ciment', typed, typed)] }, 'rules_then_jev').lines
+    expect([row.quantity, row.unit_price]).toEqual([sent, sent])
+  })
+
+  it('says, when a number is refused, how numbers are written', () => {
+    const refused = new ApiError('invalid_input', 'The quantity of line 1 must be a number.')
+    expect(errorMessage(refused, REFUSED_HERE)).toBe('Cantitatea și prețul se scriu ca numere, de exemplu 20 și 28,50.')
   })
 
   it('leaves out the rows nothing was written on, and splits the codes', () => {
