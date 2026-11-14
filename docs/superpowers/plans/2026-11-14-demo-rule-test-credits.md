@@ -809,7 +809,7 @@ try {
     $mine = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2Collection
     Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.HasPrivateKey -and $_.NotAfter -gt $now } | ForEach-Object { [void]$mine.Add($_) }
     $picked = [System.Security.Cryptography.X509Certificates.X509Certificate2UI]::SelectFromCollection(
-        $mine, 'AutoSaga', 'Alegeti certificatul cu care intrati in SPV.',
+        $mine, 'AutoSaga', ('Alege' + [char]0x021B + 'i certificatul cu care intra' + [char]0x021B + 'i ' + [char]0x00EE + 'n SPV.'),
         [System.Security.Cryptography.X509Certificates.X509SelectionFlag]::SingleSelection)
     if ($picked.Count -eq 0) { '{"cancelled": true}'; exit 0 }
     $certificate = $picked[0]
@@ -1003,3 +1003,14 @@ Atât: programul primește singur răspunsul de la ANAF.
 - [ ] **Step 9: Run every suite and build the page.** `uv run pytest -q`, `pnpm --dir frontend test`, `pnpm --dir frontend exec tsc -b --noEmit` (clean), `pnpm --dir frontend lint` (exactly the 3 old `only-export-components` warnings), then `pnpm --dir frontend build` (this task rebuilds the committed page in `src/efactura/ui/`).
 - [ ] **Step 10: Commit** — `git commit -m "Connect to ANAF with the Windows certificate, without the browser (0.5.0)"`.
 - [ ] **Step 11: Hand to the owner** for a real try on the Windows PC. The controller does this, not the implementer.
+
+**After the review (2026-11-15).** The review approved the task; one round of fixes followed, and where it differs from the text above, it is what was built:
+
+- The sentence in Windows' certificate window is written with its diacritics, through `[char]` codes, so the file stays ASCII (the script above already shows it).
+- One helper at a time: `certificate_login.one_at_a_time` makes a second request wait for the first and share its answer. This replaces "no guard against two tries at once".
+- ANAF's answers to a wrong Client ID or a callback that differs come out as `config_error`, with a sentence of their own in the window, instead of `anaf_error`.
+- A helper that prints nothing readable reports its exit code and the first line of its standard error, instead of `{}`.
+- A download in progress refuses the login before Windows is asked (`busy`), not after the PIN.
+- An end address with neither a code nor an error is `anaf_error`, not `invalid_input`.
+- A login that succeeds is always announced ("Conectat la ANAF.", the window closed), also for a try the person gave up on. Only a failure that arrives late changes nothing on screen.
+- Closing the window keeps a pasted address.
