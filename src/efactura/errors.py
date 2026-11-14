@@ -5,6 +5,7 @@ Codes are part of the contract with the Power Automate flow; do not rename them.
 
 LOGIN_NEEDED = "login_needed"
 LOGIN_CODE_EXPIRED = "login_code_expired"
+LOGIN_REFUSED = "login_refused"
 INVALID_INPUT = "invalid_input"
 INVALID_CUI = "invalid_cui"
 NO_SPV_RIGHTS = "no_spv_rights"

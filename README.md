@@ -246,6 +246,25 @@ Notes:
 
 After the certificate and PIN step, ANAF sends the browser to `https://localhost/callback?code=...`. Nothing listens there, so the browser shows "can't reach this page". That is expected: the address bar now holds the one-time code. Copy the whole address and hand it back (paste it into `login`, or pass it to `login-finish`). The code is reported to last about a minute and works once; if it is too late you get `login_code_expired` and repeat the login.
 
+### Trying the certificate login by hand
+
+When ANAF answers `error=access_denied` and the browser never showed the certificate window, this small script presents a certificate to ANAF itself, without a browser, and prints what ANAF answers. Run these three lines in Windows PowerShell, with the token in:
+
+```powershell
+cd $env:LOCALAPPDATA\AutoSaga
+$env:AUTOSAGA_AUTHORIZE_URL = (uv run efactura login-start | Out-String | ConvertFrom-Json).authorize_url
+powershell -NoProfile -ExecutionPolicy Bypass -File src\efactura\certificate_login.ps1
+```
+
+A window lists the certificates; pick the one used for SPV. The script prints one line of JSON:
+
+- `{"location": "...code=..."}`: it works. ANAF accepts the certificate when a program presents it. The address can be pasted into the program's window within a minute.
+- `{"location": "...error=access_denied..."}`: ANAF refuses this certificate.
+- `{"cancelled": true}`: the window was closed without a choice.
+- `{"error": "..."}`: the script could not finish; the text says why.
+
+The script is run from the program's own folder, so no installation step is needed. It was written without being run on a Windows PC.
+
 ## Output
 
 Success (from `sync`):
@@ -372,7 +391,7 @@ Routes that exist for the screen and have no command:
 | `GET /events?details=true&problems=true&area=...&q=...&since=...&trace=...&before=...&limit=...` | The journal, newest line first, 200 at a time (`before` is the `id` of the last line read; `has_more` says whether older ones exist). `problems` keeps warnings and errors; `trace` gives one whole operation |
 | `GET /events/export` with the same filters | Every line that matches, as a text file. `details` is true here unless `details=false` is sent |
 
-The body is the same JSON the command prints. Every answer carries an `X-Trace-Id` header: the number under which the journal holds what that request did. HTTP status: 200 success; 400 bad input; 401 missing or wrong key; 404 unknown id or route; 409 `login_needed`, `login_code_expired`, `busy`, `not_classifiable`, `update_error` or `backup_error`; 502 ANAF or OpenRouter refused or was unreachable; 500 a bug or a settings problem.
+The body is the same JSON the command prints. Every answer carries an `X-Trace-Id` header: the number under which the journal holds what that request did. HTTP status: 200 success; 400 bad input; 401 missing or wrong key; 404 unknown id or route; 409 `login_needed`, `login_code_expired`, `login_refused`, `busy`, `not_classifiable`, `update_error` or `backup_error`; 502 ANAF or OpenRouter refused or was unreachable; 500 a bug or a settings problem.
 
 ## Classification and SAGA
 

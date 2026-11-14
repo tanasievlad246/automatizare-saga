@@ -27,6 +27,7 @@ from .errors import (
     INVALID_INPUT,
     LOGIN_CODE_EXPIRED,
     LOGIN_NEEDED,
+    LOGIN_REFUSED,
     NETWORK_ERROR,
     EfacturaError,
     said_by,
@@ -190,6 +191,10 @@ def code_from_redirect(address: str) -> str:
     parts = urlsplit(cleaned)
     params = parse_qs(parts.query) or parse_qs(parts.fragment)
     if "error" in params:
+        # access_denied with no certificate window is not a passing fault: waiting does not
+        # help, the person has to check the certificate. It gets its own code and sentence.
+        if params["error"][0] == "access_denied":
+            raise EfacturaError(LOGIN_REFUSED, "ANAF refused the login: access_denied")
         description = params.get("error_description", params["error"])[0]
         raise EfacturaError(ANAF_ERROR, f"ANAF refused the login: {description}")
     if "code" not in params:

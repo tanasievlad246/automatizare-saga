@@ -65,6 +65,11 @@ După aceasta programul rămâne conectat și își reînnoiește singur accesul
 
 - **Ați greșit Callback URL sau serviciul.** Procedura ANAF nu descrie modificarea unei aplicații, doar ștergerea ei. În „Editare profil Oauth” alegeți **Renunțare Oauth**, selectați aplicația și apăsați **Șterge aplicația**. Apoi înregistrați-o din nou la Pasul 3 și scrieți în program cheile noi.
 - **ANAF spune că nu aveți drepturi pentru o firmă.** Certificatul cu care v-ați conectat nu are drepturi în SPV pentru acea firmă. Cheile sunt bune; lipsește împuternicirea în SPV.
+- **ANAF a refuzat certificatul („access_denied”).** Programul vă spune că ANAF nu a acceptat certificatul, de obicei fără ca browserul să fi arătat fereastra de alegere a certificatului. Verificați, pe rând:
+  1. Tokenul USB este introdus în calculator.
+  2. Închideți complet browserul (toate ferestrele lui) și apăsați din nou **Conectați-vă la ANAF**. Uneori fereastra cu certificatul apare abia la a doua încercare.
+  3. Certificatul este cel cu care intrați în SPV și nu a expirat.
+  4. Încercați să intrați în SPV cu același certificat, în același browser. Dacă nici acolo nu merge, problema este la certificat sau la token, nu la program.
 - **Ați lipit adresa prea târziu.** Codul din adresă ține cam un minut și merge o singură dată. Apăsați din nou **Conectați-vă la ANAF** și repetați Pasul 5.
 - **Aveți nevoie de ajutor de la ANAF.** Folosiți Formularul de contact de pe anaf.ro, categoria „Asistență tehnică servicii informatice”, subcategoria „OAUTH”.
 
