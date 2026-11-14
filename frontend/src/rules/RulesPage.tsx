@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { Link } from 'react-router'
 import { Notice } from '@/components/Notice'
 import { PageTitle } from '@/components/PageTitle'
 import { Button } from '@/components/ui/button'
@@ -27,9 +28,14 @@ export function RulesPage() {
 
   return (
     <div className="flex max-w-[66rem] flex-col gap-9">
-      <PageTitle title="Reguli de clasificare">
-        O regulă alege contul singură, fără Jev. Întâi se verifică regulile clientului, apoi cele pentru toți clienții, fiecare grup de sus în jos. Prima care se potrivește câștigă.
-      </PageTitle>
+      <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
+        <div className="min-w-0 flex-[1_1_28rem]">
+          <PageTitle title="Reguli de clasificare">
+            O regulă alege contul singură, fără Jev. Întâi se verifică regulile clientului, apoi cele pentru toți clienții, fiecare grup de sus în jos. Prima care se potrivește câștigă.
+          </PageTitle>
+        </div>
+        <Button asChild variant="outline" size="lg"><Link to="/reguli/test">Testează regulile</Link></Button>
+      </div>
       {error && <Notice tone="attention">{errorMessage(error)}</Notice>}
 
       <ProposedRulesSection onChangeFirst={(draft) => setEditing({ rule: 'new', draft })} />

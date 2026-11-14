@@ -8,6 +8,7 @@ import { InvoicePage } from './invoices/InvoicePage'
 import { JournalPage } from './journal/JournalPage'
 import { AppShell } from './layout/AppShell'
 import { RulesPage } from './rules/RulesPage'
+import { RuleTestPage } from './rules/test/RuleTestPage'
 import { SecretsPage } from './secrets/SecretsPage'
 
 // Everything lives on this one computer, so a failed request is not worth retrying
@@ -33,6 +34,8 @@ export default function App() {
             <Route path="clienti/:cui" element={<ClientInvoicesPage />} />
             <Route path="clienti/:cui/facturi/:id" element={<InvoicePage />} />
             <Route path="reguli" element={<RulesPage />} />
+            {/* The menu keeps "Reguli de clasificare" marked here: its address starts with /reguli. */}
+            <Route path="reguli/test" element={<RuleTestPage />} />
             <Route path="costuri" element={<CostsPage />} />
             <Route path="copii" element={<BackupsPage />} />
             <Route path="jurnal" element={<JournalPage />} />

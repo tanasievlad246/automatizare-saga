@@ -26,6 +26,15 @@ describe('a line of the journal, in Romanian', () => {
       .toBe('Factura MC 5521 este de verificat: trebuie să îi alegeți contul.')
   })
 
+  it('tells what a trial invoice got', () => {
+    expect(describeEvent(line('rule.tested', { decided_by: 'jev', cont: '302', asked_jev: true, cost_usd: 0.00002 })))
+      .toBe('A fost încercată o factură de probă: contul 302, ales de Jev.')
+    expect(describeEvent(line('rule.tested', { decided_by: 'rule', cont: '6022', asked_jev: false, cost_usd: null })))
+      .toBe('A fost încercată o factură de probă: contul 6022, ales de o regulă.')
+    expect(describeEvent(line('rule.tested', { decided_by: 'nobody', cont: null, asked_jev: true, cost_usd: 0.00002 })))
+      .toBe('A fost încercată o factură de probă: nu a primit niciun cont.')
+  })
+
   it('never shows which key was changed as anything but its name', () => {
     expect(describeEvent(line('settings.secret_changed', { name: 'openrouter_api_key' })))
       .toBe('A fost schimbată o cheie: cheia OpenRouter.')

@@ -155,8 +155,8 @@ export type Costs = CostTotals & {
 
 export type JevCall = {
   called_at: string
-  message_id: string
-  cui: string
+  message_id: string // "rule-test" for a question put by the rule test, not for an invoice
+  cui: string | null // missing for a rule test with no client chosen
   client_name: string | null
   supplier_name: string | null
   invoice_number: string | null
@@ -209,4 +209,52 @@ export type UpdateStatus = {
   checked_at: string | null
   check_error: string | null
   last_update: { at: string; ok: boolean; from: string | null; to: string; error: string | null } | null
+}
+
+/** One line of a trial invoice as the form holds it: everything typed, nothing converted yet. */
+export type TrialLine = {
+  description: string
+  quantity: string
+  unitPrice: string
+  sellerCode: string
+  barcode: string
+  commodityCodes: string // typed with commas between the codes
+  unit: string | null // carried from a saved invoice, not shown
+  vatPercent: string | null // carried from a saved invoice, not shown
+}
+
+export type TrialInvoice = {
+  clientCui: string | null
+  supplierName: string
+  supplierCui: string
+  currency: string // carried from a saved invoice, not shown
+  creditNote: boolean // carried from a saved invoice, not shown
+  startedFrom: string | null // the number of the saved invoice the form started from
+  lines: TrialLine[]
+}
+
+export type TrialAsk = 'rules_then_jev' | 'jev_only'
+
+/** What Jev said about a trial invoice. `error` is the program's English line. */
+export type TrialJev = {
+  choice: string | null
+  confidence: number | null
+  threshold: number
+  refused: boolean
+  probabilities: Record<string, number>
+  cost_usd: number | null
+  duration_ms: number | null
+  error: string | null
+}
+
+export type RuleTestResult = {
+  decided_by: 'rule' | 'jev' | 'nobody'
+  cont: string | null
+  account_description: string | null
+  deciding_line: string | null
+  rule: { name: string; line: number } | null
+  jev: TrialJev | null // missing too when Jev failed because the request was too large to send
+  why_not: 'no_lines' | 'no_key' | 'no_accounts' | 'jev_failed' | 'jev_declined' | 'below_threshold' | null
+  reason: string // the program's English line
+  suggestion: RuleSuggestion | null
 }

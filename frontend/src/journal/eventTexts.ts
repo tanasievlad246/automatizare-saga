@@ -78,6 +78,10 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
     `Jev a răspuns${line.duration_ms === null ? '' : ` în ${formatDuration(line.duration_ms)}`}. Cost: ${typeof data.cost_usd === 'number' ? formatUsd(data.cost_usd) : 'necunoscut'}.`,
   'jev.failed': () => 'Jev nu a dat un răspuns care să poată fi folosit.',
 
+  'rule.tested': (data) =>
+    data.decided_by === 'rule' || data.decided_by === 'jev'
+      ? `A fost încercată o factură de probă: contul ${text(data.cont)}, ales de ${data.decided_by === 'rule' ? 'o regulă' : 'Jev'}.`
+      : 'A fost încercată o factură de probă: nu a primit niciun cont.',
   'rule.added': (data) => `A fost adăugată regula „${text(data.name)}”, pentru contul ${text(data.cont)}.`,
   'rule.changed': (data) => `A fost modificată regula „${text(data.name)}”, pentru contul ${text(data.cont)}.`,
   'rule.removed': () => 'A fost ștearsă o regulă.',

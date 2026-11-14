@@ -29,11 +29,15 @@ export function JevCallsTable({ calls, loading }: { calls: JevCall[]; loading: b
           {calls.map((call, index) => (
             <TableRow key={`${call.message_id}-${index}`}>
               <TableCell className="whitespace-nowrap">{formatWhen(call.called_at)}</TableCell>
-              <TableCell>{call.client_name ?? `CUI ${call.cui}`}</TableCell>
+              <TableCell>{call.client_name ?? (call.cui ? `CUI ${call.cui}` : '—')}</TableCell>
               <TableCell>
-                <Link to={`/clienti/${call.cui}/facturi/${call.message_id}`} className="font-semibold">
-                  {call.supplier_name} · {call.invoice_number}
-                </Link>
+                {call.message_id === 'rule-test' ? (
+                  <span className="font-semibold">Probă de reguli</span>
+                ) : (
+                  <Link to={`/clienti/${call.cui}/facturi/${call.message_id}`} className="font-semibold">
+                    {call.supplier_name} · {call.invoice_number}
+                  </Link>
+                )}
               </TableCell>
               <TableCell className="font-heading text-lg font-bold">{call.choice}</TableCell>
               <TableCell><Sureness call={call} /></TableCell>

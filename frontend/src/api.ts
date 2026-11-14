@@ -3,7 +3,7 @@
 import type {
   AuthStatus, BackupStatus, Client, CostGroup, Costs, ImportResult, Invoice, InvoiceView, JevCall, JournalLine,
   ProposedRules,
-  RuleEvidence, RuleFields, RulesOverview, Secret, SyncResult, UpdateStatus,
+  RuleEvidence, RuleFields, RuleTestResult, RulesOverview, Secret, SyncResult, UpdateStatus,
 } from './types'
 
 /** What the program answers when it refuses: a stable code and an English explanation. */
@@ -98,6 +98,8 @@ export const api = {
   /** Tries a rule on the invoices given an account lately. Saves nothing. */
   tryRule: (conditions: { keywords: string[]; supplier_cuis: string[] }) =>
     call<RuleEvidence & { days: number }>('POST', '/rules/preview', conditions),
+  /** Puts a made-up invoice through the path a real one takes. Saves nothing but what asking Jev cost. */
+  testRules: (body: unknown) => call<RuleTestResult>('POST', '/rules/test', body),
   /** "Nu acum": no rule is proposed for these invoices again, unless their account changes. */
   turnDownProposal: (invoiceIds: string[]) =>
     call('POST', '/rules/suggestions/dismiss', { invoice_ids: invoiceIds }),
