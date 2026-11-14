@@ -1,17 +1,16 @@
-import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import type { Client, TrialAsk, TrialInvoice, TrialLine } from '../../types'
-import { EMPTY, changeLine, hasCodes } from './trialInvoice'
+import { EMPTY, changeLine } from './trialInvoice'
 
 /** Where the trial invoice starts from: one of the four choices the person is given. */
 export type StartFrom = 'empty' | 'saved' | 'materiale' | 'combustibil'
 
 /** The trial invoice written out, and the two buttons that put it through the program. */
 export function TrialInvoiceForm({
-  trial, onChange, clients, asking, onAsk, onStartFrom,
+  trial, onChange, clients, asking, onAsk, onStartFrom, codesShown, onCodesShown,
 }: {
   trial: TrialInvoice
   onChange: (trial: TrialInvoice) => void
@@ -20,16 +19,10 @@ export function TrialInvoiceForm({
   asking: TrialAsk | null
   onAsk: (ask: TrialAsk) => void
   onStartFrom: (start: StartFrom) => void
+  /** Whether the codes of the lines are unfolded. The caller opens them when a start brings codes. */
+  codesShown: boolean
+  onCodesShown: (shown: boolean) => void
 }) {
-  // The codes are rarely there; they stay folded away unless a line has one. They open by
-  // themselves when codes arrive (a saved invoice picked); folding them again is the person's choice.
-  const withCodes = hasCodes(trial)
-  const [codesShown, setCodesShown] = useState(withCodes)
-  const [hadCodes, setHadCodes] = useState(withCodes)
-  if (withCodes !== hadCodes) {
-    setHadCodes(withCodes)
-    if (withCodes) setCodesShown(true)
-  }
   const set = (changed: Partial<TrialInvoice>) => onChange({ ...trial, ...changed })
   const setLine = (index: number, changed: Partial<TrialLine>) =>
     set({ lines: trial.lines.map((line, at) => (at === index ? changeLine(line, changed) : line)) })
@@ -111,7 +104,7 @@ export function TrialInvoiceForm({
         )}
       </div>
 
-      <Button variant="link" className="self-start px-0" aria-expanded={codesShown} onClick={() => setCodesShown(!codesShown)}>
+      <Button variant="link" className="self-start px-0" aria-expanded={codesShown} onClick={() => onCodesShown(!codesShown)}>
         {codesShown ? '⌄' : '›'} Coduri de pe factură (codul furnizorului, cod de bare, cod CPV sau NC)
       </Button>
 

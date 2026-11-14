@@ -10,12 +10,19 @@ import { SavedInvoicePicker } from './SavedInvoicePicker'
 import { TrialAnswer } from './TrialAnswer'
 import { TrialInvoiceForm } from './TrialInvoiceForm'
 import type { StartFrom } from './TrialInvoiceForm'
-import { EXAMPLES, REFUSED_HERE, fromDocument, startedFrom, toRequest } from './trialInvoice'
+import { EXAMPLES, REFUSED_HERE, fromDocument, hasCodes, startedFrom, toRequest } from './trialInvoice'
 
 /** A made-up invoice put through the path a real one takes, to see which account it would get. */
 export function RuleTestPage() {
   const clients = useQuery({ queryKey: ['clients'], queryFn: api.clients }).data?.clients ?? []
   const [trial, setTrial] = useState<TrialInvoice>(EXAMPLES.materiale)
+  // The codes are rarely there, so they stay folded away, but they open by themselves when a
+  // start brings some (a saved invoice picked). Folding them again is the person's choice.
+  const [codesShown, setCodesShown] = useState(false) // the example the screen opens with has none
+  const start = (next: TrialInvoice) => {
+    setTrial(next)
+    if (hasCodes(next)) setCodesShown(true)
+  }
   const [choosing, setChoosing] = useState(false)
   const [answer, setAnswer] = useState<{ result: RuleTestResult; ask: TrialAsk; number: number } | null>(null)
   const answers = useRef(0)
@@ -32,17 +39,17 @@ export function RuleTestPage() {
   const pick = useMutation({
     mutationFn: (invoiceId: string) => api.invoiceView(invoiceId),
     onSuccess: (view) => {
-      setTrial(fromDocument(view))
+      start(fromDocument(view))
       setChoosing(false)
     },
   })
 
   const client = clients.find((entry) => entry.cui === trial.clientCui)
-  const startFrom = (start: StartFrom) => {
-    if (start === 'saved') {
+  const startFrom = (from: StartFrom) => {
+    if (from === 'saved') {
       pick.reset()
       setChoosing(true)
-    } else setTrial(startedFrom(start, trial.clientCui))
+    } else start(startedFrom(from, trial.clientCui))
   }
   const suggestion = answer?.result.suggestion
 
@@ -70,6 +77,8 @@ export function RuleTestPage() {
               ask.mutate(how)
             }}
             onStartFrom={startFrom}
+            codesShown={codesShown}
+            onCodesShown={setCodesShown}
           />
           {ask.error && <ErrorNotice error={ask.error} here={REFUSED_HERE} />}
         </div>
