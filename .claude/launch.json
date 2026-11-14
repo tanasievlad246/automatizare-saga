@@ -4,14 +4,14 @@
     {
       "name": "efactura-demo",
       "runtimeExecutable": "uv",
-      "runtimeArgs": ["run", "efactura", "--config", "demo/config.toml", "dev"],
+      "runtimeArgs": ["run", "efactura", "demo"],
       "port": 5173
     },
     {
       "name": "efactura-demo-built",
       "runtimeExecutable": "uv",
       "runtimeArgs": ["run", "efactura", "--config", "demo/config.toml", "serve"],
-      "port": 8765
+      "port": 8770
     }
   ]
 }
