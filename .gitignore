@@ -1,0 +1,15 @@
+# Secrets and local data: never commit these.
+config.toml
+data/
+tokens.json
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+dist/
+
+# The page's dependencies, and the made-up database for trying it
+frontend/node_modules/
+demo/

@@ -1,0 +1,46 @@
+# Copy this file to config.toml and fill it in. config.toml is ignored by git.
+
+[anaf]
+# From the ANAF portal:
+# Servicii Online > Inregistrare utilizatori > Dezvoltatori aplicatii > Profil OAuth > "Generare Client ID"
+client_id = ""
+client_secret = ""
+# Must match the callback registered with ANAF exactly.
+redirect_uri = "https://localhost/callback"
+# "prod" for real data. "test" only lists what was uploaded to ANAF's test system.
+environment = "prod"
+# Optional: where the saved login is kept.
+# Default: the Windows user's private app-data folder (%LOCALAPPDATA%\efactura\tokens.json).
+# A relative path is relative to this file.
+# token_file = "C:\\Users\\me\\AppData\\Local\\efactura\\tokens.json"
+
+[storage]
+# Database, log and invoice folders. A relative path is relative to this file. Use a local disk.
+data_dir = "data"
+# Name of the per-day invoice folder: DD-MM-YYYY or YYYY-MM-DD.
+folder_date_format = "DD-MM-YYYY"
+
+[sync]
+# How many days back to ask ANAF for when --days is not given (1-60).
+default_days = 7
+
+[api]
+# Required to start the local API. Any long random text; send it in the X-API-Key header.
+key = ""
+port = 8765
+
+# The SAGA folder, the OpenRouter key and the ANAF client ID and secret can also be changed on
+# the screen. What is changed there is kept in the database and wins over this file.
+
+[openrouter]
+# The Jev model decides the invoices the rules cannot. Create a key at
+# https://openrouter.ai/settings/keys and add credit to the account.
+# Leave empty to run on the rules alone: what they cannot decide then goes to review.
+api_key = ""
+# A fixed version on purpose: the confidence level is tuned to one model's answers.
+model = "typesafe/jev-1.14"
+
+[saga]
+# Optional: where the files for SAGA are written. Default: "SAGA Import" inside data_dir.
+# A relative path is relative to this file.
+# import_dir = "C:\\SAGA Import"

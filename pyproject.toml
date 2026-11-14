@@ -1,0 +1,33 @@
+[project]
+name = "efactura"
+version = "0.1.0"
+description = "Fetch ANAF e-Factura invoices, give each an account and write files SAGA can import; with a local screen, commands and a REST API."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "openpyxl>=3.1",
+]
+
+[project.scripts]
+efactura = "efactura.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/efactura"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    # Test-only: Starlette's test client now prefers the httpx2 package. The tool itself
+    # uses httpx for its calls to ANAF, which is unaffected.
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated:starlette.exceptions.StarletteDeprecationWarning",
+]

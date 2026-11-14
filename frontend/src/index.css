@@ -1,0 +1,108 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/space-grotesk";
+
+/* There is no dark mode. This keeps the components' dark: styles tied to a class that is
+   never set, instead of following the computer's own dark setting. */
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+    --font-sans: 'Inter Variable', system-ui, sans-serif;
+    --font-heading: 'Space Grotesk Variable', 'Inter Variable', system-ui, sans-serif;
+    --font-mono: ui-monospace, Menlo, Consolas, monospace;
+
+    --color-background: var(--background);
+    --color-foreground: var(--foreground);
+    --color-card: var(--card);
+    --color-card-foreground: var(--card-foreground);
+    --color-popover: var(--popover);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-primary: var(--primary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-secondary: var(--secondary);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-muted: var(--muted);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-accent: var(--accent);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-destructive: var(--destructive);
+    --color-border: var(--border);
+    --color-input: var(--input);
+    --color-ring: var(--ring);
+
+    /* What an invoice's state looks like. Each always comes with its word. */
+    --color-fresh: var(--fresh);
+    --color-fresh-foreground: var(--fresh-foreground);
+    --color-attention: var(--attention);
+    --color-attention-foreground: var(--attention-foreground);
+    --color-attention-border: var(--attention-border);
+    --color-done: var(--done);
+    --color-done-foreground: var(--done-foreground);
+
+    --radius-sm: calc(var(--radius) * 0.6);
+    --radius-md: calc(var(--radius) * 0.8);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) * 1.4);
+    --radius-2xl: calc(var(--radius) * 1.8);
+    --radius-3xl: calc(var(--radius) * 2.2);
+    --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* The palette of the design canvas. */
+:root {
+    --background: #f3f5f7;
+    --foreground: #15202e;
+    --card: #ffffff;
+    --card-foreground: #15202e;
+    --popover: #ffffff;
+    --popover-foreground: #15202e;
+    --primary: #1b55c5;
+    --primary-foreground: #ffffff;
+    --secondary: #15202e;
+    --secondary-foreground: #ffffff;
+    --muted: #e9edf2;
+    --muted-foreground: #4b5868;
+    --accent: #e4edfc;
+    --accent-foreground: #123e94;
+    --destructive: #b3261e;
+    --border: #d5dbe3;
+    --input: #8793a3;
+    --ring: #1b55c5;
+    --radius: 0.625rem;
+
+    --fresh: #e4edfc;
+    --fresh-foreground: #123e94;
+    --attention: #ffe9cc;
+    --attention-foreground: #5c2e00;
+    --attention-border: #e0a85c;
+    --done: #ddf1e7;
+    --done-foreground: #0b5a3c;
+}
+
+@layer base {
+    * {
+        @apply border-border outline-ring/50;
+    }
+    html {
+        /* Everything is sized in rem, so this one value sets the scale of the whole page. */
+        font-size: 17px;
+        @apply font-sans;
+    }
+    body {
+        @apply bg-background text-foreground;
+        line-height: 1.45;
+    }
+    h1,
+    h2 {
+        @apply font-heading font-bold;
+    }
+    a {
+        @apply text-primary;
+    }
+    button:not(:disabled),
+    [role='button']:not(:disabled) {
+        cursor: pointer;
+    }
+}

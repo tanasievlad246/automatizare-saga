@@ -1,0 +1,641 @@
+import sqlite3
+
+import pytest
+
+from efactura.errors import EfacturaError
+from efactura.store import Store
+
+from helpers import OTHER_VALID_CUI, VALID_CUI, make_row
+
+
+@pytest.fixture
+def store(tmp_path):
+    s = Store(tmp_path / "data" / "efactura.db")
+    yield s
+    s.close()
+
+
+def test_existing_ids_reports_only_saved_messages(store):
+    store.insert_message(make_row(id="3001"))
+
+    assert store.existing_ids(["3001", "3002"]) == {"3001"}
+
+
+def test_existing_ids_handles_more_ids_than_one_query_allows(store):
+    store.insert_message(make_row(id="7"))
+
+    assert store.existing_ids(str(n) for n in range(5000)) == {"7"}
+
+
+def test_same_message_id_cannot_be_saved_twice(store):
+    store.insert_message(make_row(id="3001"))
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.insert_message(make_row(id="3001", invoice_number="OTHER"))
+
+    assert len(store.list_messages()) == 1
+
+
+def test_upload_flag_starts_cleared(store):
+    store.insert_message(make_row())
+
+    saved = store.get_message("3001")
+
+    assert saved["uploaded_to_accounting"] is False
+    assert saved["uploaded_at"] is None
+
+
+def test_marking_uploaded_sets_flag_and_time(store):
+    store.insert_message(make_row())
+
+    store.set_uploaded(["3001"], True, "2026-11-11T10:00:00+02:00")
+
+    saved = store.get_message("3001")
+    assert saved["uploaded_to_accounting"] is True
+    assert saved["uploaded_at"] == "2026-11-11T10:00:00+02:00"
+
+
+def test_undoing_clears_flag_and_time(store):
+    store.insert_message(make_row())
+    store.set_uploaded(["3001"], True, "2026-11-11T10:00:00+02:00")
+
+    store.set_uploaded(["3001"], False, "2026-11-11T11:00:00+02:00")
+
+    saved = store.get_message("3001")
+    assert saved["uploaded_to_accounting"] is False
+    assert saved["uploaded_at"] is None
+
+
+def test_marking_an_unknown_id_changes_nothing(store):
+    store.insert_message(make_row(id="3001"))
+
+    with pytest.raises(EfacturaError) as info:
+        store.set_uploaded(["3001", "9999"], True, "2026-11-11T10:00:00+02:00")
+
+    assert info.value.code == "not_found"
+    assert "9999" in info.value.message
+    assert store.get_message("3001")["uploaded_to_accounting"] is False
+
+
+def test_listing_leaves_out_xml_bodies(store):
+    store.insert_message(make_row())
+
+    (listed,) = store.list_messages()
+
+    assert "invoice_xml" not in listed
+    assert "signature_xml" not in listed
+    assert listed["invoice_number"] == "FV-1042"
+
+
+def test_single_message_includes_xml_only_on_request(store):
+    store.insert_message(make_row())
+
+    assert "invoice_xml" not in store.get_message("3001")
+    with_xml = store.get_message("3001", include_xml=True)
+    assert with_xml["invoice_xml"] == "<Invoice/>"
+    assert with_xml["signature_xml"] == "<Signature/>"
+
+
+def test_unknown_message_is_none(store):
+    assert store.get_message("nope") is None
+
+
+def test_listing_filters_by_company(store):
+    store.insert_message(make_row(id="1", cui=VALID_CUI))
+    store.insert_message(make_row(id="2", cui=OTHER_VALID_CUI))
+
+    assert [m["id"] for m in store.list_messages(cui=OTHER_VALID_CUI)] == ["2"]
+
+
+def test_listing_pending_skips_uploaded(store):
+    store.insert_message(make_row(id="1"))
+    store.insert_message(make_row(id="2"))
+    store.set_uploaded(["1"], True, "2026-11-11T10:00:00+02:00")
+
+    assert [m["id"] for m in store.list_messages(pending=True)] == ["2"]
+
+
+def test_listing_filters_by_message_type(store):
+    store.insert_message(make_row(id="1", message_type="FACTURA PRIMITA"))
+    store.insert_message(make_row(id="2", message_type="FACTURA TRIMISA"))
+    store.insert_message(make_row(id="3", message_type="ERORI FACTURA"))
+
+    assert [m["id"] for m in store.list_messages(type_prefix="FACTURA TRIMISA")] == ["2"]
+
+
+def test_listing_since_a_date_uses_the_day_it_was_saved(store):
+    store.insert_message(make_row(id="1", first_seen_at="2026-11-09T08:00:00+02:00"))
+    store.insert_message(make_row(id="2", first_seen_at="2026-11-11T08:00:00+02:00"))
+
+    assert [m["id"] for m in store.list_messages(since="2026-11-10")] == ["2"]
+
+
+def test_listing_is_ordered_oldest_saved_first(store):
+    store.insert_message(make_row(id="b", first_seen_at="2026-11-11T08:00:00+02:00"))
+    store.insert_message(make_row(id="a", first_seen_at="2026-11-10T08:00:00+02:00"))
+
+    assert [m["id"] for m in store.list_messages()] == ["a", "b"]
+
+
+def test_finds_an_earlier_message_with_the_same_invoice(store):
+    store.insert_message(make_row(id="1", invoice_number="FV-1", supplier_cui="87654321"))
+
+    match = store.find_same_invoice(VALID_CUI, "FACTURA PRIMITA", "87654321", "FV-1")
+    other_supplier = store.find_same_invoice(VALID_CUI, "FACTURA PRIMITA", "11111111", "FV-1")
+    other_company = store.find_same_invoice(OTHER_VALID_CUI, "FACTURA PRIMITA", "87654321", "FV-1")
+
+    assert match == "1"
+    assert other_supplier is None
+    assert other_company is None
+
+
+def test_last_clean_run_ignores_failed_partial_and_other_companies(store):
+    def run(cui, started, status):
+        run_id = store.start_run(cui, 7, started)
+        store.finish_run(
+            run_id, started, listed=1, new=1, failed=0, status=status,
+            advances_coverage=(status == "ok"),
+        )
+
+    run(VALID_CUI, "2026-11-01T09:00:00+02:00", "ok")
+    run(VALID_CUI, "2026-11-05T09:00:00+02:00", "partial")
+    run(VALID_CUI, "2026-11-06T09:00:00+02:00", "error")
+    run(OTHER_VALID_CUI, "2026-11-08T09:00:00+02:00", "ok")
+
+    assert store.last_clean_run_start(VALID_CUI) == "2026-11-01T09:00:00+02:00"
+
+
+def test_no_clean_run_yet_is_none(store):
+    assert store.last_clean_run_start(VALID_CUI) is None
+
+
+def test_run_log_records_counts_and_error(store):
+    run_id = store.start_run(VALID_CUI, 7, "2026-11-11T09:00:00+02:00")
+    store.finish_run(
+        run_id, "2026-11-11T09:01:00+02:00", listed=12, new=3, failed=1,
+        status="partial", error="1 message failed",
+    )
+
+    (run,) = store.runs()
+    assert (run["cui"], run["window_days"], run["listed"], run["new"], run["failed"]) == (
+        VALID_CUI, 7, 12, 3, 1,
+    )
+    assert run["status"] == "partial"
+    assert run["error"] == "1 message failed"
+
+
+def test_a_second_connection_can_read_while_the_first_is_open(tmp_path):
+    path = tmp_path / "efactura.db"
+    writer = Store(path)
+    writer.insert_message(make_row())
+    reader = Store(path)
+
+    assert [m["id"] for m in reader.list_messages()] == ["3001"]
+
+    writer.close()
+    reader.close()
+
+
+def test_clean_run_that_did_not_reach_back_to_the_previous_one_is_not_an_anchor(store):
+    first = store.start_run(VALID_CUI, 7, "2026-10-01T09:00:00+02:00")
+    store.finish_run(first, "2026-10-01T09:01:00+02:00", listed=0, new=0, failed=0,
+                     status="ok", advances_coverage=True)
+    short = store.start_run(VALID_CUI, 1, "2026-11-11T09:00:00+02:00")
+    store.finish_run(short, "2026-11-11T09:01:00+02:00", listed=0, new=0, failed=0,
+                     status="ok", advances_coverage=False)
+
+    assert store.last_clean_run_start(VALID_CUI) == "2026-10-01T09:00:00+02:00"
+
+
+# --- classification ------------------------------------------------------------------
+
+V1_SCHEMA = """
+CREATE TABLE sync_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, cui TEXT NOT NULL, started_at TEXT NOT NULL,
+    finished_at TEXT, window_days INTEGER NOT NULL, listed INTEGER, new INTEGER, failed INTEGER,
+    status TEXT NOT NULL DEFAULT 'running', error TEXT, advances_coverage INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE messages (
+    id TEXT PRIMARY KEY, cui TEXT NOT NULL, message_type TEXT NOT NULL, anaf_created_at TEXT,
+    id_solicitare TEXT, detalii TEXT, invoice_number TEXT, invoice_issue_date TEXT,
+    invoice_due_date TEXT, invoice_type_code TEXT, supplier_cui TEXT, supplier_name TEXT,
+    customer_cui TEXT, customer_name TEXT, currency TEXT, total_without_vat TEXT, total_vat TEXT,
+    total_payable TEXT, invoice_xml TEXT, signature_xml TEXT, raw_metadata_json TEXT NOT NULL,
+    zip_sha256 TEXT, xml_path TEXT, first_seen_at TEXT NOT NULL,
+    sync_run_id INTEGER REFERENCES sync_runs(id), possible_duplicate_of TEXT,
+    uploaded_to_accounting INTEGER NOT NULL DEFAULT 0 CHECK (uploaded_to_accounting IN (0, 1)),
+    uploaded_at TEXT
+);
+"""
+
+
+def test_a_database_from_before_classification_gains_the_new_columns_and_keeps_its_rows(tmp_path):
+    path = tmp_path / "efactura.db"
+    old = sqlite3.connect(path)
+    old.executescript(V1_SCHEMA)
+    old.execute(
+        "INSERT INTO messages (id, cui, message_type, raw_metadata_json, first_seen_at, "
+        "uploaded_to_accounting) VALUES ('3001', ?, 'FACTURA PRIMITA', '{}', '2026-11-01', 1)",
+        (VALID_CUI,),
+    )
+    old.commit()
+    old.close()
+
+    store = Store(path)
+    row = store.get_message("3001")
+    store.set_classification("3001", classification_status="classified", cont="628")
+    reread = store.get_message("3001")
+    store.close()
+
+    assert row["uploaded_to_accounting"] is True
+    assert row["classification_status"] is None and row["cont"] is None
+    assert (reread["classification_status"], reread["cont"]) == ("classified", "628")
+
+
+def test_opening_the_same_database_twice_is_harmless(tmp_path):
+    Store(tmp_path / "efactura.db").close()
+    Store(tmp_path / "efactura.db").close()
+
+
+def test_a_message_saved_without_a_status_is_not_subject_to_classification(store):
+    store.insert_message(make_row())
+
+    assert store.get_message("3001")["classification_status"] is None
+    assert store.pending_classification(VALID_CUI) == []
+
+
+def test_pending_messages_are_listed_per_company_oldest_first(store):
+    store.insert_message(make_row(id="2", classification_status="pending", first_seen_at="2026-11-11T10:00"))
+    store.insert_message(make_row(id="1", classification_status="pending", first_seen_at="2026-11-11T09:00"))
+    store.insert_message(make_row(id="3", classification_status="pending", cui=OTHER_VALID_CUI))
+    store.insert_message(make_row(id="4", classification_status="review"))
+
+    assert store.pending_classification(VALID_CUI) == ["1", "2"]
+
+
+def test_classification_fields_are_saved_and_listed(store):
+    store.insert_message(make_row(classification_status="pending"))
+
+    store.set_classification(
+        "3001", classification_status="review", suggested_cont="371", confidence=0.41,
+        confidence_threshold=0.8, classification_reason="Jev confidence 0.41 is below 0.80",
+    )
+
+    (row,) = store.list_messages(classification="review")
+    assert (row["suggested_cont"], row["confidence"], row["confidence_threshold"]) == ("371", 0.41, 0.8)
+    assert store.list_messages(classification="classified") == []
+
+
+def test_only_classification_fields_can_be_set_that_way(store):
+    store.insert_message(make_row())
+
+    with pytest.raises(ValueError):
+        store.set_classification("3001", uploaded_to_accounting=1)
+
+
+def test_classifying_an_unknown_message_is_not_found(store):
+    with pytest.raises(EfacturaError) as info:
+        store.set_classification("nope", cont="628")
+
+    assert info.value.code == "not_found"
+
+
+def test_the_confidence_level_is_kept_between_sessions(tmp_path):
+    first = Store(tmp_path / "efactura.db")
+    assert first.get_setting("min_confidence") is None
+    first.set_setting("min_confidence", "0.9")
+    first.set_setting("min_confidence", "0.75")
+    first.close()
+
+    second = Store(tmp_path / "efactura.db")
+    assert second.get_setting("min_confidence") == "0.75"
+    second.close()
+
+
+def jev_call(store, message_id="3001", cost=0.00002, when="2026-11-11T09:30:00+02:00", error=None,
+             cui=VALID_CUI, tokens=400):
+    store.add_jev_call(
+        message_id=message_id, cui=cui, called_at=when, model="typesafe/jev-1.14",
+        request_json='{"model": "typesafe/jev-1.14"}',
+        response_json='{"answers": {"cont": {"probabilities": {"628": 0.9}}}}',
+        http_status=200 if error is None else 503, input_tokens=tokens, output_tokens=12,
+        cost_usd=cost, duration_ms=180, error=error,
+    )
+
+
+def test_every_jev_call_is_kept_with_request_response_and_cost(store):
+    jev_call(store)
+
+    (call,) = store.jev_calls()
+    assert call["message_id"] == "3001"
+    assert call["request_json"] == '{"model": "typesafe/jev-1.14"}'
+    assert '"probabilities"' in call["response_json"]
+    assert (call["input_tokens"], call["output_tokens"], call["cost_usd"]) == (400, 12, 0.00002)
+    assert (call["http_status"], call["duration_ms"], call["error"]) == (200, 180, None)
+
+
+def test_the_latest_call_for_a_message_can_be_read_back(store):
+    jev_call(store, when="2026-11-11T09:00:00+02:00", cost=0.1)
+    jev_call(store, when="2026-11-11T10:00:00+02:00", cost=0.2)
+    jev_call(store, message_id="other", when="2026-11-11T11:00:00+02:00")
+
+    assert store.last_jev_call("3001")["cost_usd"] == 0.2
+    assert store.last_jev_call("nobody") is None
+
+
+def test_costs_add_up_calls_tokens_and_money(store):
+    jev_call(store, message_id="1", cost=0.00002)
+    jev_call(store, message_id="1", cost=None, error="HTTP 503", tokens=None)
+    jev_call(store, message_id="2", cost=0.00004)
+
+    costs = store.jev_costs()
+
+    assert (costs["calls"], costs["failed_calls"], costs["invoices"]) == (3, 1, 2)
+    assert costs["input_tokens"] == 800
+    assert costs["cost_usd"] == pytest.approx(0.00006)
+
+
+def test_costs_are_broken_down_by_month_and_can_be_narrowed(store):
+    jev_call(store, message_id="1", when="2026-10-30T09:00:00+02:00", cost=0.5)
+    jev_call(store, message_id="2", when="2026-11-02T09:00:00+02:00", cost=0.25)
+    jev_call(store, message_id="3", when="2026-11-03T09:00:00+02:00", cost=0.25, cui=OTHER_VALID_CUI)
+
+    assert [(m["period"], m["calls"], m["cost_usd"]) for m in store.jev_costs()["by_period"]] == [
+        ("2026-10", 1, 0.5), ("2026-11", 2, 0.5),
+    ]
+    assert store.jev_costs(since="2026-11-01")["cost_usd"] == 0.5
+    assert store.jev_costs(cui=OTHER_VALID_CUI)["calls"] == 1
+    assert store.jev_costs(until="2026-11-02")["calls"] == 2  # the last day counts in full
+
+
+@pytest.mark.parametrize("group, periods", [
+    ("day", ["2026-10-30", "2026-11-02", "2026-11-03"]),
+    ("week", ["2026-W44", "2026-W45"]),   # Friday 30 October; Monday 2 and Tuesday 3 November
+    ("month", ["2026-10", "2026-11"]),
+    ("year", ["2026"]),
+])
+def test_costs_can_be_grouped_by_day_week_month_or_year(store, group, periods):
+    jev_call(store, message_id="1", when="2026-10-30T09:00:00+02:00")
+    jev_call(store, message_id="2", when="2026-11-02T09:00:00+02:00")
+    jev_call(store, message_id="3", when="2026-11-03T09:00:00+02:00")
+
+    assert [p["period"] for p in store.jev_costs(group=group)["by_period"]] == periods
+
+
+def test_an_invoice_asked_twice_in_a_period_counts_once(store):
+    jev_call(store, message_id="1", when="2026-11-02T09:00:00+02:00", cost=0.1)
+    jev_call(store, message_id="1", when="2026-11-03T09:00:00+02:00", cost=0.1)
+
+    (november,) = store.jev_costs()["by_period"]
+    assert (november["calls"], november["invoices"], november["cost_usd"]) == (2, 1, 0.2)
+
+
+def test_costs_with_no_calls_are_zero_not_missing(store):
+    costs = store.jev_costs()
+
+    assert (costs["calls"], costs["cost_usd"], costs["input_tokens"], costs["by_period"]) == (0, 0, 0, [])
+
+
+def test_a_successful_call_without_a_price_is_counted_apart(store):
+    jev_call(store, cost=None)
+
+    assert store.jev_costs()["calls_without_cost"] == 1
+
+
+# --- accounts and rules ----------------------------------------------------------------
+
+
+def test_a_new_database_starts_with_the_example_accounts_rules_and_question(store):
+    assert set(store.accounts()) == {"6022", "626", "628"}
+    assert [rule["name"] for rule in store.rules()] == ["combustibil", "telecom"]
+    assert store.rules()[0]["keywords"] == ["motorina", "benzina", "gpl auto"]
+    assert "cont" in store.get_setting("jev_instructions")
+
+
+def test_examples_are_not_put_back_after_the_user_deletes_them(tmp_path):
+    first = Store(tmp_path / "efactura.db")
+    for cont in list(first.accounts()):
+        first.delete_account(cont)
+    for rule in first.rules():
+        first.delete_rule(rule["id"])
+    first.close()
+
+    second = Store(tmp_path / "efactura.db")
+    assert (second.accounts(), second.rules()) == ({}, [])
+    second.close()
+
+
+def test_an_account_can_be_added_changed_and_removed(store):
+    store.save_account("302", "Materiale consumabile.")
+    store.save_account("302", "Materiale consumabile si auxiliare.")
+
+    assert store.accounts()["302"] == "Materiale consumabile si auxiliare."
+    store.delete_account("302")
+    assert "302" not in store.accounts()
+
+
+def test_removing_an_unknown_account_or_rule_is_not_found(store):
+    for action in (lambda: store.delete_account("999"), lambda: store.delete_rule(12345),
+                   lambda: store.update_rule(12345, name="x")):
+        with pytest.raises(EfacturaError) as info:
+            action()
+        assert info.value.code == "not_found"
+
+
+def new_rule(store, name="chirie", **overrides):
+    fields = {
+        "name": name, "cont": "612", "keywords": [], "item_codes": [], "commodity_prefixes": [],
+        "supplier_cuis": ["11112222"], "client_cui": None, "enabled": True,
+    }
+    return store.add_rule(**{**fields, **overrides})
+
+
+def test_a_rule_is_stored_with_all_its_conditions_and_goes_last(store):
+    rule_id = new_rule(store, keywords=["chirie", "inchiriere*"], client_cui=VALID_CUI)
+
+    last = store.rules()[-1]
+    assert last["id"] == rule_id
+    assert (last["name"], last["cont"], last["client_cui"], last["enabled"]) == (
+        "chirie", "612", VALID_CUI, True
+    )
+    assert (last["keywords"], last["supplier_cuis"]) == (["chirie", "inchiriere*"], ["11112222"])
+    assert (last["item_codes"], last["commodity_prefixes"]) == ([], [])
+
+
+def test_a_rule_can_be_changed_switched_off_and_removed(store):
+    rule_id = new_rule(store)
+
+    store.update_rule(rule_id, cont="6123", enabled=False, keywords=["chirie"])
+    changed = next(rule for rule in store.rules() if rule["id"] == rule_id)
+    store.delete_rule(rule_id)
+
+    assert (changed["cont"], changed["enabled"], changed["keywords"]) == ("6123", False, ["chirie"])
+    assert changed["supplier_cuis"] == ["11112222"]  # untouched fields stay
+    assert rule_id not in [rule["id"] for rule in store.rules()]
+
+
+def test_only_rule_fields_can_be_changed(store):
+    rule_id = new_rule(store)
+
+    with pytest.raises(ValueError):
+        store.update_rule(rule_id, position=1)
+
+
+def test_a_rule_can_be_moved_up_and_down_the_order(store):
+    rule_id = new_rule(store)  # third, after the two examples
+
+    store.move_rule(rule_id, up=True)
+    assert [rule["name"] for rule in store.rules()] == ["combustibil", "chirie", "telecom"]
+    store.move_rule(rule_id, up=True)
+    store.move_rule(rule_id, up=True)  # already first: stays
+    assert [rule["name"] for rule in store.rules()] == ["chirie", "combustibil", "telecom"]
+    store.move_rule(rule_id, up=False)
+    assert [rule["name"] for rule in store.rules()] == ["combustibil", "chirie", "telecom"]
+
+
+# --- what proposed rules rest on -----------------------------------------------------------
+
+
+def decided(store, message_id, method="jev", cont="302", subject="{}",
+            at="2026-11-10T10:00:00+02:00", **row):
+    """Save a received invoice that has been given an account."""
+    store.insert_message(make_row(id=message_id, classification_status="pending", **row))
+    store.set_classification(
+        message_id, classification_status="classified", cont=cont, classification_method=method,
+        classified_at=at, rule_subject=subject,
+    )
+
+
+def ids_of(rows):
+    return [row["id"] for row in rows]
+
+
+def test_invoices_decided_without_a_rule_are_listed_newest_decision_first(store):
+    decided(store, "1", method="jev", at="2026-11-01T10:00:00+02:00")
+    decided(store, "2", method="rules")
+    decided(store, "3", method="human", at="2026-11-05T10:00:00+02:00", cui=OTHER_VALID_CUI,
+            supplier_name="Alt Furnizor SRL")
+    decided(store, "4", method="jev_accepted", at="2026-11-03T10:00:00+02:00")
+    decided(store, "5", method="jev", subject=None)  # given its account before subjects were kept
+    store.insert_message(make_row(id="6", classification_status="review"))
+
+    rows = store.decided_without_rule()
+
+    assert ids_of(rows) == ["3", "4", "1"]
+    assert rows[0] == {
+        "id": "3", "cui": OTHER_VALID_CUI, "cont": "302", "supplier_name": "Alt Furnizor SRL",
+        "rule_subject": "{}",
+    }
+
+
+def test_decisions_from_before_a_date_are_left_out(store):
+    decided(store, "1", at="2026-08-01T10:00:00+02:00")
+    decided(store, "2", at="2026-11-01T10:00:00+02:00")
+
+    assert ids_of(store.decided_without_rule(since="2026-09-01")) == ["2"]
+
+
+def test_a_turned_down_proposal_stays_away_until_the_account_changes(store):
+    decided(store, "1", cont="302")
+
+    store.dismiss_suggestions(["1"])
+    turned_down = store.decided_without_rule()
+    state = store.suggestion_state("1")
+    store.set_classification("1", cont="371")
+
+    assert turned_down == []
+    assert state == {"rule_subject": "{}", "suggestion_dismissed_for": "302"}
+    assert ids_of(store.decided_without_rule()) == ["1"]
+
+
+def test_turning_down_an_unknown_invoice_changes_nothing(store):
+    decided(store, "1")
+
+    with pytest.raises(EfacturaError) as info:
+        store.dismiss_suggestions(["1", "nope"])
+
+    assert info.value.code == "not_found"
+    assert ids_of(store.decided_without_rule()) == ["1"]
+
+
+def test_the_subjects_of_classified_invoices_are_read_with_their_accounts(store):
+    decided(store, "1", cont="302", subject="A")
+    decided(store, "2", cont="371", subject="B", method="rules", cui=OTHER_VALID_CUI)
+    decided(store, "3", cont="302", subject="C", at="2026-08-01T10:00:00+02:00")
+    decided(store, "4", subject=None)
+    store.insert_message(make_row(id="5", classification_status="review"))
+
+    assert sorted(store.classified_subjects()) == [("302", "A"), ("302", "C"), ("371", "B")]
+    assert store.classified_subjects(since="2026-09-01", cui=OTHER_VALID_CUI) == [("371", "B")]
+
+
+def test_the_subject_and_the_refusal_are_not_listed_with_a_message(store):
+    decided(store, "1")
+
+    assert "rule_subject" not in store.get_message("1")
+    assert "suggestion_dismissed_for" not in store.list_messages()[0]
+
+
+def test_a_database_from_before_proposed_rules_gains_their_columns(tmp_path):
+    path = tmp_path / "efactura.db"
+    old = sqlite3.connect(path)
+    old.executescript(V1_SCHEMA)
+    old.execute(
+        "INSERT INTO messages (id, cui, message_type, raw_metadata_json, first_seen_at) "
+        "VALUES ('3001', ?, 'FACTURA PRIMITA', '{}', '2026-11-01')",
+        (VALID_CUI,),
+    )
+    old.commit()
+    old.close()
+
+    store = Store(path)
+    state = store.suggestion_state("3001")
+    unknown = store.suggestion_state("nope")
+    store.close()
+
+    assert state == {"rule_subject": None, "suggestion_dismissed_for": None}
+    assert unknown is None
+
+
+# --- found by the review of the screen -------------------------------------------------------
+
+
+def test_listing_stays_fast_when_a_client_has_thousands_of_invoices(store):
+    import time
+
+    store.save_client(VALID_CUI, "Alfa", "2026-11-01")
+    run = store.start_run(VALID_CUI, 7, "2026-11-01T09:00:00+02:00")
+    rows = [make_row(id=str(n), sync_run_id=run, invoice_xml="<x>" + "y" * 2000 + "</x>") for n in range(4000)]
+    columns = list(rows[0])
+    store._conn.executemany(
+        f"INSERT INTO messages ({', '.join(columns)}) VALUES ({', '.join(':' + c for c in columns)})", rows
+    )
+    store._conn.commit()
+
+    started = time.monotonic()
+    listed = store.list_messages(cui=VALID_CUI)
+    (client,) = store.clients()
+    took = time.monotonic() - started
+
+    assert (len(listed), client["invoices"], client["new_count"]) == (4000, 4000, 4000)
+    assert took < 1.5, f"listing 4000 invoices took {took:.1f}s"
+
+
+def test_many_programs_opening_a_new_database_at_once_do_not_trip_over_each_other(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    def open_and_count(path):
+        opened = Store(path)
+        try:
+            return len(opened.rules()), len(opened.accounts())
+        finally:
+            opened.close()
+
+    for attempt in range(8):
+        path = tmp_path / f"fresh-{attempt}.db"
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            results = list(pool.map(open_and_count, [path] * 6))
+        assert results[-1] == (2, 3), results
+        final = Store(path)
+        assert (len(final.rules()), len(final.accounts())) == (2, 3)  # the examples once, not twice
+        final.close()

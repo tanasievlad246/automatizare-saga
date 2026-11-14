@@ -1,0 +1,549 @@
+"""The local REST API: the same functions as the terminal commands, over HTTP.
+
+It listens on 127.0.0.1 only (see cli.run_server). Every route is served twice:
+
+    /sync, /invoices, ...      for other programs (Power Automate). They must send the key
+                               from config.toml in an X-API-Key header.
+    /api/sync, /api/...        for the page this program serves at /ui/. The page needs no
+                               key; see _from_own_page for why that is safe.
+"""
+
+from __future__ import annotations
+
+import hmac
+import json
+import logging
+import os
+from pathlib import Path
+from typing import Callable, Union
+
+from fastapi import APIRouter, Depends, FastAPI, Query, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.security import APIKeyHeader
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from . import __version__
+from .config import PAGE_HOSTNAME, Config, load_config
+from .errors import (
+    ANAF_ERROR,
+    ANAF_LIMIT_REACHED,
+    BUSY,
+    CONFIG_ERROR,
+    INTERNAL_ERROR,
+    INVALID_CUI,
+    INVALID_INPUT,
+    JEV_ERROR,
+    LOGIN_CODE_EXPIRED,
+    LOGIN_NEEDED,
+    NETWORK_ERROR,
+    NO_SPV_RIGHTS,
+    NOT_CLASSIFIABLE,
+    NOT_FOUND,
+    UNAUTHORIZED,
+    EfacturaError,
+)
+from .service import Service, configure_logging
+from .store import Store
+
+log = logging.getLogger(__name__)
+
+HTTP_STATUS = {
+    INVALID_INPUT: 400,
+    INVALID_CUI: 400,
+    UNAUTHORIZED: 401,
+    NOT_FOUND: 404,
+    LOGIN_NEEDED: 409,
+    LOGIN_CODE_EXPIRED: 409,
+    BUSY: 409,
+    NOT_CLASSIFIABLE: 409,
+    JEV_ERROR: 502,
+    NO_SPV_RIGHTS: 502,
+    ANAF_LIMIT_REACHED: 502,
+    ANAF_ERROR: 502,
+    NETWORK_ERROR: 502,
+    CONFIG_ERROR: 500,
+    INTERNAL_ERROR: 500,
+}
+
+# Reachable without the key: they reveal the list of routes, never data.
+OPEN_PATHS = {"/", "/health", "/api/health", "/openapi.json"}
+# No other site may show this page inside its own (and trick the person into clicking in it).
+NO_FRAMING = {"X-Frame-Options": "DENY", "Content-Security-Policy": "frame-ancestors 'none'"}
+PAGE_PREFIX = "/ui"  # the built page and its files: no data in them
+PAGE_API_PREFIX = "/api"
+BUILT_PAGE = Path(__file__).parent / "ui"  # written there by `pnpm --dir frontend build`
+
+
+class AsciiJSONResponse(JSONResponse):
+    """Same encoding as the commands: non-English letters as \\u escapes."""
+
+    def render(self, content) -> bytes:
+        return json.dumps(content, ensure_ascii=True).encode("ascii")
+
+
+class SyncRequest(BaseModel):
+    cui: Union[str, int]
+    days: int | None = None
+    classify: bool = True
+    start: str | None = None  # first day, YYYY-MM-DD, instead of days
+    end: str | None = None  # last day; today when left out
+    cover_gap: bool = False  # days is a minimum, widened back to the last complete run
+
+
+class UploadedRequest(BaseModel):
+    ids: list[Union[str, int]]
+    uploaded: bool = True
+
+
+class ClassifyRequest(BaseModel):
+    force: bool = False
+
+
+class SetContRequest(BaseModel):
+    accept: bool = False
+    cont: Union[str, int, None] = None
+    force: bool = False
+
+
+class SettingsRequest(BaseModel):
+    min_confidence: float | None = None
+    jev_instructions: str | None = None
+
+
+class AccountRequest(BaseModel):
+    description: str = ""
+
+
+class RuleRequest(BaseModel):
+    name: str
+    cont: Union[str, int]
+    keywords: list[str] = []
+    item_codes: list[str] = []
+    commodity_prefixes: list[str] = []
+    supplier_cuis: list[str] = []
+    client_cui: Union[str, int, None] = None
+    enabled: bool = True
+
+
+class RulePreviewRequest(BaseModel):
+    keywords: list[str] = []
+    item_codes: list[str] = []
+    commodity_prefixes: list[str] = []
+    supplier_cuis: list[str] = []
+    client_cui: Union[str, int, None] = None  # try it on this client's invoices only
+
+
+class DismissSuggestionsRequest(BaseModel):
+    invoice_ids: list[Union[str, int]]
+
+
+class MoveRequest(BaseModel):
+    up: bool
+
+
+class ClientRequest(BaseModel):
+    cui: Union[str, int]
+    name: str
+
+
+class SagaFolderRequest(BaseModel):
+    saga_folder: str
+
+
+class OpenFolderRequest(BaseModel):
+    cui: Union[str, int, None] = None
+    invoice_id: Union[str, int, None] = None  # the folder that invoice's SAGA file is in
+
+
+class SecretRequest(BaseModel):
+    value: str = ""
+
+
+class LoginFinishRequest(BaseModel):
+    address: str
+
+
+def _failure(error: EfacturaError) -> AsciiJSONResponse:
+    return AsciiJSONResponse(error.to_dict(), status_code=HTTP_STATUS.get(error.code, 500))
+
+
+def _from_own_page(request: Request, own_hosts: set[str]) -> bool:
+    """Is this the page this program serves, calling its own API?
+
+    Browsers add Sec-Fetch-Site to every request and a page cannot change it, so a page
+    from any other site arrives as "cross-site" and is turned away. The Host check stops
+    another name from being pointed at this computer to pass as "same-origin". A program
+    on this PC could send both headers, but it could equally read the key from config.toml.
+    """
+    return (
+        request.url.path.startswith(PAGE_API_PREFIX + "/")
+        and request.headers.get("sec-fetch-site") == "same-origin"
+        and request.headers.get("host") in own_hosts
+    )
+
+
+def _own_hosts(port: int) -> set[str]:
+    """The names the page may be opened under, as a browser writes them in the Host
+    header: with the port, except port 80, which browsers leave out."""
+    names = ("127.0.0.1", "localhost", PAGE_HOSTNAME)
+    return {name if port == 80 else f"{name}:{port}" for name in names}
+
+
+def create_app(
+    cfg: Config,
+    service_factory: Callable[[Config], Service] | None = None,
+    port: int | None = None,
+    ui_dir: Path | None = None,
+) -> FastAPI:
+    cfg.require_api_key()
+    make_service = service_factory or Service
+    expected_key = cfg.api_key.encode()
+    port = port or cfg.api_port
+    own_hosts = _own_hosts(port)
+    ui_dir = ui_dir or BUILT_PAGE
+    router = APIRouter()
+
+    # Create or upgrade the database now, once, rather than in the first requests, which
+    # arrive several at a time when the page opens.
+    Store(cfg.db_path).close()
+
+    app = FastAPI(
+        title="efactura local API",
+        version=__version__,
+        description="Send the key from config.toml in an X-API-Key header.",
+        default_response_class=AsciiJSONResponse,
+        # FastAPI's interactive documentation loads its scripts from a CDN. On this address
+        # the page is trusted without a key, so a script from elsewhere could read every key.
+        # The route list is still at /openapi.json, and in the README.
+        docs_url=None,
+        redoc_url=None,
+    )
+    # Only so the documentation page offers a field for the key; the check is the middleware.
+    documented_key = [Depends(APIKeyHeader(name="X-API-Key", auto_error=False))]
+
+    @app.middleware("http")
+    async def require_key(request: Request, call_next):
+        path = request.url.path
+        is_open = path in OPEN_PATHS or path == PAGE_PREFIX or path.startswith(PAGE_PREFIX + "/")
+        allowed = is_open or _from_own_page(request, own_hosts) or hmac.compare_digest(
+            request.headers.get("x-api-key", "").encode(), expected_key
+        )
+        response = (
+            await call_next(request)
+            if allowed
+            else _failure(EfacturaError(UNAUTHORIZED, "Missing or wrong X-API-Key header."))
+        )
+        response.headers.update(NO_FRAMING)
+        return response
+
+    @app.exception_handler(EfacturaError)
+    async def on_known_error(request: Request, exc: EfacturaError):
+        return _failure(exc)
+
+    @app.exception_handler(RequestValidationError)
+    async def on_bad_request(request: Request, exc: RequestValidationError):
+        problems = "; ".join(
+            f"{'.'.join(str(part) for part in error['loc'][1:]) or error['loc'][0]}: {error['msg']}"
+            for error in exc.errors()
+        )
+        return _failure(EfacturaError(INVALID_INPUT, problems or "The request could not be read."))
+
+    @app.exception_handler(StarletteHTTPException)
+    async def on_http_error(request: Request, exc: StarletteHTTPException):
+        code = NOT_FOUND if exc.status_code == 404 else INVALID_INPUT
+        message = f"No such route: {request.method} {request.url.path}" if code == NOT_FOUND else str(exc.detail)
+        return AsciiJSONResponse(EfacturaError(code, message).to_dict(), status_code=exc.status_code)
+
+    @app.exception_handler(Exception)
+    async def on_bug(request: Request, exc: Exception):
+        log.exception("Unexpected failure in %s %s", request.method, request.url.path)
+        return _failure(EfacturaError(INTERNAL_ERROR, f"{type(exc).__name__}: {exc}"))
+
+    def call(action: Callable[[Service], dict]) -> dict:
+        service = make_service(cfg)
+        try:
+            return action(service)
+        finally:
+            service.close()
+
+    @router.get("/health", summary="Is the API running?")
+    def health():
+        return call(lambda s: s.health())
+
+    @router.get("/auth/status", dependencies=documented_key, summary="Is a login needed?")
+    def auth_status():
+        return call(lambda s: s.auth_status())
+
+    @router.post("/auth/login/start", dependencies=documented_key, summary="ANAF login address")
+    def login_start():
+        return call(lambda s: s.login_start())
+
+    @router.post("/auth/login/finish", dependencies=documented_key, summary="Save the login")
+    def login_finish(body: LoginFinishRequest):
+        return call(lambda s: s.login_finish(body.address))
+
+    @router.get("/anaf/messages", dependencies=documented_key, summary="Preview; saves nothing")
+    def anaf_messages(cui: str = Query(...), days: int | None = None):
+        return call(lambda s: s.list_remote(cui, days))
+
+    @router.post("/sync", dependencies=documented_key, summary="Fetch and save new messages")
+    def sync(body: SyncRequest):
+        return call(
+            lambda s: s.sync(
+                str(body.cui), body.days, classify=body.classify, start=body.start, end=body.end,
+                cover_gap=body.cover_gap,
+            )
+        )
+
+    @router.get("/invoices", dependencies=documented_key, summary="Saved messages")
+    def invoices(
+        cui: str | None = None,
+        pending: bool = False,
+        type: str | None = Query(None, description="primita, trimisa, erori or mesaj"),
+        since: str | None = Query(None, description="YYYY-MM-DD"),
+        classification: str | None = Query(None, description="pending, classified or review"),
+        new: bool = Query(False, description="only those from the latest sync, not yet uploaded"),
+    ):
+        return call(lambda s: s.invoices(cui, pending, type, since, classification, new))
+
+    @router.post(
+        "/invoices/uploaded", dependencies=documented_key,
+        summary="Set or clear the uploaded flag on several invoices",
+    )
+    def mark_many_uploaded(body: UploadedRequest):
+        return call(lambda s: s.mark_uploaded([str(i) for i in body.ids], undo=not body.uploaded))
+
+    @router.get("/invoices/{message_id}", dependencies=documented_key, summary="One saved message")
+    def invoice(message_id: str, xml: bool = False):
+        return call(lambda s: s.invoice(message_id, include_xml=xml))
+
+    @router.post("/invoices/{message_id}/uploaded", dependencies=documented_key, summary="Set the flag")
+    def mark_uploaded(message_id: str):
+        return call(lambda s: s.mark_uploaded([message_id]))
+
+    @router.delete("/invoices/{message_id}/uploaded", dependencies=documented_key, summary="Clear the flag")
+    def unmark_uploaded(message_id: str):
+        return call(lambda s: s.mark_uploaded([message_id], undo=True))
+
+    @router.post(
+        "/invoices/{message_id}/classify", dependencies=documented_key,
+        summary="Give one saved invoice its account",
+    )
+    def classify(message_id: str, body: ClassifyRequest | None = None):
+        return call(lambda s: s.classify(message_id, force=bool(body and body.force)))
+
+    @router.get("/review", dependencies=documented_key, summary="Invoices a person must decide")
+    def review(cui: str | None = None):
+        return call(lambda s: s.review(cui))
+
+    @router.post(
+        "/invoices/{message_id}/cont", dependencies=documented_key,
+        summary="Accept Jev's suggestion, or set an account",
+    )
+    def set_cont(message_id: str, body: SetContRequest):
+        cont = str(body.cont) if body.cont is not None else None
+        return call(lambda s: s.set_cont(message_id, cont=cont, accept=body.accept, force=body.force))
+
+    @router.get(
+        "/classification/settings", dependencies=documented_key,
+        summary="The confidence level and the accounts on offer",
+    )
+    def classification_settings():
+        return call(lambda s: s.classification_settings())
+
+    @router.put(
+        "/classification/settings", dependencies=documented_key, summary="Change the confidence level"
+    )
+    def change_classification_settings(body: SettingsRequest):
+        if body.min_confidence is None and body.jev_instructions is None:
+            raise EfacturaError(INVALID_INPUT, "Give min_confidence, jev_instructions, or both.")
+
+        def change(service: Service) -> dict:
+            if body.min_confidence is not None:
+                service.set_min_confidence(body.min_confidence)
+            if body.jev_instructions is not None:
+                service.set_jev_instructions(body.jev_instructions)
+            return service.classification_settings()
+
+        return call(change)
+
+    @router.get("/classification/costs", dependencies=documented_key, summary="What Jev has cost")
+    def classification_costs(
+        since: str | None = Query(None, description="YYYY-MM-DD"),
+        until: str | None = Query(None, description="YYYY-MM-DD, included"),
+        cui: str | None = None,
+        group: str = Query("month", description="day, week, month or year"),
+    ):
+        return call(lambda s: s.costs(since, cui, until, group))
+
+    @router.get("/classification/calls", dependencies=documented_key, summary="What Jev was asked")
+    def classification_calls(
+        since: str | None = None, until: str | None = None, cui: str | None = None, limit: int = 200
+    ):
+        return call(lambda s: s.jev_calls(since, until, cui, limit))
+
+    @router.get(
+        "/invoices/{message_id}/view", dependencies=documented_key,
+        summary="One message with its parsed invoice, both XML texts and Jev's answer",
+    )
+    def invoice_view(message_id: str):
+        return call(lambda s: s.invoice_view(message_id))
+
+    # --- rules and accounts (the "Reguli de clasificare" screen) ---
+
+    def rule_fields(body: RuleRequest) -> dict:
+        fields = body.model_dump()
+        fields["cont"] = str(body.cont)
+        fields["client_cui"] = str(body.client_cui) if body.client_cui is not None else None
+        return fields
+
+    @router.get("/rules", dependencies=documented_key, summary="Accounts, rules and the question for Jev")
+    def rules():
+        return call(lambda s: s.rules_overview())
+
+    @router.put("/accounts/{cont}", dependencies=documented_key, summary="Add or describe an account")
+    def save_account(cont: str, body: AccountRequest):
+        return call(lambda s: s.save_account(cont, body.description))
+
+    @router.delete("/accounts/{cont}", dependencies=documented_key, summary="Remove an account")
+    def delete_account(cont: str):
+        return call(lambda s: s.delete_account(cont))
+
+    @router.post("/rules", dependencies=documented_key, summary="Add a rule")
+    def add_rule(body: RuleRequest):
+        return call(lambda s: s.save_rule(**rule_fields(body)))
+
+    @router.put("/rules/{rule_id}", dependencies=documented_key, summary="Replace a rule")
+    def change_rule(rule_id: int, body: RuleRequest):
+        return call(lambda s: s.save_rule(rule_id, **rule_fields(body)))
+
+    @router.delete("/rules/{rule_id}", dependencies=documented_key, summary="Remove a rule")
+    def delete_rule(rule_id: int):
+        return call(lambda s: s.delete_rule(rule_id))
+
+    @router.post("/rules/{rule_id}/move", dependencies=documented_key, summary="Move a rule up or down")
+    def move_rule(rule_id: int, body: MoveRequest):
+        return call(lambda s: s.move_rule(rule_id, body.up))
+
+    # --- proposed rules: what Jev or a person decided, offered as a rule ---
+
+    @router.get(
+        "/rules/suggestions", dependencies=documented_key,
+        summary="Rules worth creating from recent decisions made without a rule",
+    )
+    def rule_suggestions():
+        return call(lambda s: s.rule_suggestions())
+
+    @router.post(
+        "/rules/preview", dependencies=documented_key,
+        summary="How a rule would have done on recently classified invoices; saves nothing",
+    )
+    def rule_preview(body: RulePreviewRequest):
+        conditions = body.model_dump()
+        client_cui = conditions.pop("client_cui")
+        return call(lambda s: s.rule_preview(
+            **conditions, client_cui=str(client_cui) if client_cui is not None else None
+        ))
+
+    @router.post(
+        "/rules/suggestions/dismiss", dependencies=documented_key,
+        summary="Stop proposing a rule for these invoices",
+    )
+    def dismiss_rule_suggestions(body: DismissSuggestionsRequest):
+        return call(lambda s: s.dismiss_rule_suggestions([str(i) for i in body.invoice_ids]))
+
+    # --- clients ---
+
+    @router.get("/clients", dependencies=documented_key, summary="Clients, with invoice counts")
+    def clients():
+        return call(lambda s: s.clients())
+
+    @router.post("/clients", dependencies=documented_key, summary="Add or rename a client")
+    def save_client(body: ClientRequest):
+        return call(lambda s: s.save_client(str(body.cui), body.name))
+
+    @router.delete("/clients/{cui}", dependencies=documented_key, summary="Take a client off the list")
+    def remove_client(cui: str):
+        return call(lambda s: s.remove_client(cui))
+
+    @router.post(
+        "/clients/import", dependencies=documented_key,
+        summary="Add clients from a CSV or Excel file sent as the request body",
+    )
+    async def import_clients(request: Request, filename: str = Query(...)):
+        content = await request.body()
+        return call(lambda s: s.import_clients(filename, content))
+
+    # --- settings and keys changed on screen ---
+
+    @router.get("/settings", dependencies=documented_key, summary="The folder for SAGA")
+    def settings():
+        return call(lambda s: s.app_settings())
+
+    @router.put("/settings", dependencies=documented_key, summary="Change the folder for SAGA")
+    def change_settings(body: SagaFolderRequest):
+        return call(lambda s: s.set_saga_folder(body.saga_folder))
+
+    @router.post(
+        "/settings/choose-folder", dependencies=documented_key,
+        summary="Pick a folder in the computer's own dialog",
+    )
+    def choose_folder():
+        return call(lambda s: s.choose_folder())
+
+    @router.post("/folders/open", dependencies=documented_key, summary="Show the SAGA folder")
+    def open_folder(body: OpenFolderRequest):
+        cui = str(body.cui) if body.cui is not None else None
+        invoice_id = str(body.invoice_id) if body.invoice_id is not None else None
+        return call(lambda s: s.open_saga_folder(cui, invoice_id))
+
+    @router.get("/secrets", dependencies=documented_key, summary="Every key, in full")
+    def secrets():
+        return call(lambda s: s.secrets())
+
+    @router.put("/secrets/{key}", dependencies=documented_key, summary="Change a key")
+    def change_secret(key: str, body: SecretRequest):
+        return call(lambda s: s.set_secret(key, body.value))
+
+    @app.post("/shutdown", summary="Stop the program")
+    def shutdown():
+        """Used by `efactura stop` before an update replaces the program's files. It exists
+        only here, with the key: the page has no way to reach it."""
+        stop = getattr(app.state, "stop", None)  # put there by `efactura serve`
+        if stop:
+            stop()
+        return {"ok": True, "stopping": stop is not None}
+
+    app.include_router(router)  # for other programs, with the key
+    app.include_router(router, prefix=PAGE_API_PREFIX, include_in_schema=False)  # for the page
+
+    # --- the page ---
+
+    @app.get("/", include_in_schema=False)
+    def to_the_page():
+        return RedirectResponse(PAGE_PREFIX + "/")
+
+    if (ui_dir / "index.html").is_file():
+        app.mount(PAGE_PREFIX, StaticFiles(directory=ui_dir, html=True), name="page")
+    else:
+
+        @app.get(PAGE_PREFIX + "/{rest:path}", include_in_schema=False)
+        def page_not_built(rest: str):
+            raise EfacturaError(
+                NOT_FOUND,
+                "The page has not been built yet. Run: pnpm --dir frontend build "
+                "(or, while developing: uv run efactura dev).",
+            )
+
+    return app
+
+
+def dev_app() -> FastAPI:
+    """The app as `efactura dev` runs it: built again each time the code changes.
+    The settings file is the one named in EFACTURA_CONFIG (set by the dev command)."""
+    cfg = load_config()
+    configure_logging(cfg)
+    return create_app(cfg, port=int(os.environ.get("EFACTURA_API_PORT") or cfg.api_port))

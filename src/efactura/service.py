@@ -1,0 +1,1694 @@
+"""One function per command. The terminal commands and the local API both call these,
+so they return the same plain dictionaries either way."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import math
+import os
+import re
+import sqlite3
+import subprocess
+import sys
+import time
+from collections import Counter
+from contextlib import nullcontext
+from dataclasses import asdict, dataclass, replace
+from decimal import Decimal
+from datetime import date, datetime, timedelta
+from pathlib import Path
+from typing import Callable
+
+import httpx
+
+from . import __version__, auth, jev, saga
+from .anaf import TYPE_PREFIXES, AnafService, normalize_cui, parse_created_at, type_slug
+from .classify import decide_by_rules, jev_request, read_jev_answer, subject_of
+from .clients_file import read_client_rows
+from .config import MAX_DAYS, Config
+from .errors import (
+    BUSY,
+    INTERNAL_ERROR,
+    INVALID_CUI,
+    INVALID_INPUT,
+    JEV_ERROR,
+    LOGIN_NEEDED,
+    NETWORK_ERROR,
+    NOT_CLASSIFIABLE,
+    NOT_FOUND,
+    EfacturaError,
+)
+from .invoice import (
+    Invoice,
+    decode_xml,
+    extract_zip,
+    normalise_company_id,
+    parse_invoice,
+    parse_invoice_fields,
+)
+from .rules import CONDITIONS, Rule, Rulebook, Subject, any_of
+from .store import JEV_INSTRUCTIONS, Store
+from .suggestions import propose, ticked_words, words_of
+
+log = logging.getLogger(__name__)
+
+# ANAF rejects an end time ahead of its own clock, so the window ends slightly in the past.
+CLOCK_MARGIN = timedelta(minutes=1)
+# Keeps the start safely inside ANAF's 60-day limit.
+OLDEST_MARGIN = timedelta(minutes=5)
+# After this many unreachable downloads in a row, stop instead of timing out on each one.
+MAX_NETWORK_FAILURES = 3
+
+_UNSAFE_IN_FILE_NAME = re.compile(r"[^A-Za-z0-9_-]")
+
+# --- classification ---
+RECEIVED = TYPE_PREFIXES["primita"]  # only received invoices get an account
+PENDING, CLASSIFIED, REVIEW = "pending", "classified", "review"
+STATUSES = (PENDING, CLASSIFIED, REVIEW)
+# Jev answers below this confidence go to a person. Kept in the database (table settings)
+# so it can be changed without touching files; this is the value before anyone sets one.
+DEFAULT_MIN_CONFIDENCE = 0.80
+MIN_CONFIDENCE = "min_confidence"
+COST_GROUPS = ("day", "week", "month", "year")
+MAX_LISTED_CALLS = 1000
+# Rules are proposed from the decisions of the last RECENT_DAYS days, and tried on the
+# invoices given an account in the same days. Older ones no longer say how things are booked.
+RECENT_DAYS = 90
+MAX_LISTED_SUGGESTIONS = 20
+# A failure that may pass (no connection, rate limit, server error) is tried once more.
+JEV_ATTEMPTS = 2
+JEV_RETRY_DELAY = 2.0
+# An account as SAGA writes it: 628, 6022, or an analytic account such as 371.01.
+_ACCOUNT = re.compile(r"^\d{3,}(\.[0-9A-Za-z]+)*$")
+MAX_ACCOUNT_LENGTH = 20
+
+
+# Settings the screen can change. They are kept in the database and win over config.toml.
+SAVED_SETTINGS = {  # name in the database -> field of Config
+    "saga_dir": "saga_import_dir",
+    "openrouter_api_key": "openrouter_api_key",
+    "anaf_client_id": "client_id",
+    "anaf_client_secret": "client_secret",
+}
+EDITABLE_SECRETS = ("openrouter_api_key", "anaf_client_id", "anaf_client_secret")
+
+
+class _JevCouldNotDecide(Exception):
+    """Jev was reached but gave nothing usable for this one invoice (it refused the
+    request, or its answer made no sense). The next invoice may well be fine."""
+
+
+class Service:
+    def __init__(
+        self,
+        cfg: Config,
+        http: httpx.Client | None = None,
+        now: Callable[[], datetime] | None = None,
+    ):
+        self._file_cfg = cfg  # as config.toml gives it
+        self.cfg = _with_saved_settings(cfg)
+        self._http = http or httpx.Client(timeout=httpx.Timeout(60.0))
+        self._now = now or (lambda: datetime.now().astimezone())
+
+    def close(self) -> None:
+        self._http.close()
+
+    # --- login --------------------------------------------------------------
+
+    def health(self) -> dict:
+        return {"ok": True, "service": "efactura", "version": __version__}
+
+    def auth_status(self) -> dict:
+        """Reads the saved login only; contacts nothing."""
+        tokens = auth.load_tokens(self.cfg.token_file)
+        return {"ok": True, **_login_summary(tokens, self._now())}
+
+    def login_start(self) -> dict:
+        return {
+            "ok": True,
+            "authorize_url": auth.authorize_url(self.cfg),
+            "redirect_uri": self.cfg.redirect_uri,
+        }
+
+    def login_finish(self, address: str) -> dict:
+        code = auth.code_from_redirect(address)
+        now = self._now()
+        with self._lock():
+            tokens = auth.exchange_code(self.cfg, self._http, code, now)
+            auth.save_tokens(self.cfg.token_file, tokens)
+        log.info("Logged in; access valid until %s", tokens.access_expires_at.isoformat())
+        return {"ok": True, **_login_summary(tokens, now)}
+
+    # --- ANAF ---------------------------------------------------------------
+
+    def list_remote(self, cui: str, days: int | None = None) -> dict:
+        """What ANAF has for the window, each marked new or already saved. Saves nothing."""
+        cui = normalize_cui(cui)
+        now = self._now()
+        store = self._open_store()
+        try:
+            window_days = _window_days(
+                self.cfg.default_days, store.last_clean_run_start(cui), days, now
+            )
+            anaf_service = self._anaf_service(lock_held=False)
+            entries = anaf_service.list_messages(cui, *_window(now, window_days))
+            known = store.existing_ids(e["id"] for e in entries)
+        finally:
+            store.close()
+        messages = [
+            {
+                "id": e["id"],
+                "message_type": str(e.get("tip") or ""),
+                "anaf_created_at": parse_created_at(e.get("data_creare")),
+                "id_solicitare": e.get("id_solicitare"),
+                "detalii": e.get("detalii"),
+                "is_new": e["id"] not in known,
+            }
+            for e in entries
+        ]
+        return {
+            "ok": True,
+            "cui": cui,
+            "window_days": window_days,
+            "listed": len(messages),
+            "new_count": sum(m["is_new"] for m in messages),
+            "messages": messages,
+        }
+
+    def sync(
+        self,
+        cui: str,
+        days: int | None = None,
+        classify: bool = True,
+        start: str | None = None,
+        end: str | None = None,
+        cover_gap: bool = False,
+    ) -> dict:
+        """List, skip what is already saved, download and save the rest. Then give the
+        received invoices just saved an account and write their SAGA files.
+
+        The period is the last `days` days, or the days from `start` to `end` (dates such
+        as 2026-11-03; `end` defaults to today). With neither, it is the default number of
+        days, widened to reach back to the last complete run. With cover_gap, `days` is a
+        minimum that is widened the same way, so no day since the last run is skipped.
+
+        With classify=False the messages are only saved, and stay outside classification
+        for good (for a first run that brings in invoices already booked by hand).
+        """
+        cui = normalize_cui(cui)
+        with self._lock():
+            store = self._open_store()
+            try:
+                now = self._now()
+                covered_until = store.last_clean_run_start(cui)
+                window = _plan_window(
+                    self.cfg.default_days, covered_until, days, start, end, now, cover_gap
+                )
+                run_id = store.start_run(cui, window.days, now.isoformat())
+                try:
+                    result = self._run_sync(store, cui, window, run_id, now, classify)
+                except Exception as exc:
+                    detail = (
+                        f"{exc.code}: {exc.message}" if isinstance(exc, EfacturaError) else repr(exc)
+                    )
+                    log.error("Sync for %s failed: %s", cui, detail)
+                    try:
+                        store.finish_run(
+                            run_id, self._now().isoformat(),
+                            listed=0, new=0, failed=0, status="error", error=detail,
+                        )
+                    except sqlite3.Error as log_failure:
+                        # The caller must still get the error that stopped the run.
+                        log.error("Could not record failed run %s: %s", run_id, log_failure)
+                    raise
+                store.finish_run(
+                    run_id, self._now().isoformat(),
+                    listed=result["listed"], new=result["new_count"], failed=result["failed_count"],
+                    status="partial" if result["failed"] else "ok",
+                    error=f"{result['failed_count']} message(s) failed" if result["failed"] else None,
+                    advances_coverage=not result["failed"] and window.reaches_back,
+                )
+                log.info(
+                    "Sync for %s: %d listed, %d new, %d failed",
+                    cui, result["listed"], result["new_count"], result["failed_count"],
+                )
+                result["classification"] = result["saga_folder"] = None
+                if classify:
+                    try:
+                        self._classify_waiting(store, cui, result)
+                    except sqlite3.Error:
+                        # The messages are saved; what is still waiting is picked up next time.
+                        log.exception("Classification for %s stopped", cui)
+                        result["classification"] = result["saga_folder"] = None
+                return result
+            finally:
+                store.close()
+
+    def _run_sync(
+        self, store: Store, cui: str, window: "_Window", run_id: int, now: datetime, classify: bool
+    ) -> dict:
+        anaf_service = self._anaf_service(lock_held=True)
+        entries = anaf_service.list_messages(cui, window.begin, window.finish)
+        known = store.existing_ids(e["id"] for e in entries)
+        unseen = [e for e in entries if e["id"] not in known]
+        folder = self.cfg.invoices_dir / self.cfg.folder_name(now)
+
+        saved: list[dict] = []
+        failed: list[dict] = []
+        network_failures = 0
+        for position, entry in enumerate(unseen):
+            try:
+                saved.append(
+                    self._save_message(store, anaf_service, cui, entry, folder, run_id, now, classify)
+                )
+                network_failures = 0
+                continue
+            except EfacturaError as exc:
+                if exc.code == LOGIN_NEEDED:
+                    raise
+                error = exc
+            except (OSError, sqlite3.Error) as exc:
+                log.exception("Could not save message %s", entry["id"])
+                error = EfacturaError(INTERNAL_ERROR, f"Could not save the message: {exc}")
+            failed.append(_failure(entry, error))
+            log.warning("Message %s failed: %s: %s", entry["id"], error.code, error.message)
+            network_failures = network_failures + 1 if error.code == NETWORK_ERROR else 0
+            if network_failures >= MAX_NETWORK_FAILURES:
+                skipped = EfacturaError(
+                    NETWORK_ERROR, "Skipped: ANAF was unreachable for the messages before this one."
+                )
+                failed.extend(_failure(rest, skipped) for rest in unseen[position + 1 :])
+                break
+
+        return {
+            "ok": True,
+            "cui": cui,
+            "window_days": window.days,
+            "listed": len(entries),
+            "new_count": len(saved),
+            "failed_count": len(failed),
+            "folder": str(folder) if saved else None,
+            "new": saved,
+            "failed": failed,
+        }
+
+    def _save_message(
+        self, store: Store, anaf_service: AnafService, cui: str, entry: dict,
+        folder: Path, run_id: int, now: datetime, classify: bool,
+    ) -> dict:
+        message_id = entry["id"]
+        message_type = str(entry.get("tip") or "")
+        archive = anaf_service.download(message_id)
+        extracted = extract_zip(archive)
+        fields = parse_invoice_fields(extracted.xml)
+
+        duplicate_of = None
+        if fields["invoice_number"] and fields["supplier_cui"]:
+            duplicate_of = store.find_same_invoice(
+                cui, message_type, fields["supplier_cui"], fields["invoice_number"]
+            )
+            if duplicate_of:
+                log.warning(
+                    "Message %s repeats invoice %s from %s (first saved as message %s)",
+                    message_id, fields["invoice_number"], fields["supplier_cui"], duplicate_of,
+                )
+
+        safe_id = _UNSAFE_IN_FILE_NAME.sub("_", message_id)
+        path = folder / f"{cui}_{type_slug(message_type)}_{safe_id}.xml"
+        folder.mkdir(parents=True, exist_ok=True)
+        _write_file(path, extracted.xml)
+        try:
+            store.insert_message(
+                {
+                    "id": message_id,
+                    "cui": cui,
+                    "message_type": message_type,
+                    "anaf_created_at": parse_created_at(entry.get("data_creare")),
+                    "id_solicitare": entry.get("id_solicitare"),
+                    "detalii": entry.get("detalii"),
+                    **fields,
+                    "invoice_xml": decode_xml(extracted.xml),
+                    "signature_xml": decode_xml(extracted.signature) if extracted.signature else None,
+                    "raw_metadata_json": json.dumps(entry, ensure_ascii=False),
+                    "zip_sha256": hashlib.sha256(archive).hexdigest(),
+                    "xml_path": path.relative_to(self.cfg.data_dir).as_posix(),
+                    "first_seen_at": now.isoformat(),
+                    "sync_run_id": run_id,
+                    "possible_duplicate_of": duplicate_of,
+                    # Only a message saved here, now, ever enters classification.
+                    "classification_status": (
+                        PENDING
+                        if classify and _is_received(message_type)
+                        and parse_invoice(extracted.xml) is not None
+                        else None
+                    ),
+                }
+            )
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
+        return self._present(store.get_message(message_id))
+
+    # --- the local database ---------------------------------------------------
+
+    def invoices(
+        self,
+        cui: str | None = None,
+        pending: bool = False,
+        message_type: str | None = None,
+        since: str | None = None,
+        classification: str | None = None,
+        only_new: bool = False,
+    ) -> dict:
+        if message_type is not None and message_type not in TYPE_PREFIXES:
+            raise EfacturaError(
+                INVALID_INPUT, f"type must be one of: {', '.join(TYPE_PREFIXES)}."
+            )
+        if classification is not None and classification not in STATUSES:
+            raise EfacturaError(
+                INVALID_INPUT, f"classification must be one of: {', '.join(STATUSES)}."
+            )
+        _check_date(since)
+        store = self._open_store()
+        try:
+            rows = store.list_messages(
+                cui=normalize_cui(cui) if cui else None,
+                pending=pending,
+                type_prefix=TYPE_PREFIXES[message_type] if message_type else None,
+                since=since,
+                classification=classification,
+                only_new=only_new,
+            )
+        finally:
+            store.close()
+        return {"ok": True, "count": len(rows), "invoices": [self._present(r) for r in rows]}
+
+    def invoice(self, message_id: str, include_xml: bool = False) -> dict:
+        store = self._open_store()
+        try:
+            row = store.get_message(message_id, include_xml=include_xml)
+        finally:
+            store.close()
+        if row is None:
+            raise EfacturaError(NOT_FOUND, f"No saved message with id: {message_id}")
+        return {"ok": True, "invoice": self._present(row)}
+
+    def mark_uploaded(self, ids: list[str], undo: bool = False) -> dict:
+        ids = [str(i) for i in ids]
+        if not ids:
+            raise EfacturaError(INVALID_INPUT, "Give at least one message id.")
+        when = self._now().isoformat()
+        store = self._open_store()
+        try:
+            store.set_uploaded(ids, not undo, when)
+        finally:
+            store.close()
+        return {
+            "ok": True,
+            "uploaded_to_accounting": not undo,
+            "uploaded_at": None if undo else when,
+            "updated": ids,
+        }
+
+    # --- classification -------------------------------------------------------
+
+    def classify(self, message_id: str, force: bool = False) -> dict:
+        """Give one saved invoice its account: the rules first, Jev if they cannot decide.
+
+        Without force this only works on invoices that are waiting or in review. An invoice
+        saved outside classification, or one already classified, needs force.
+        """
+        with self._lock():
+            store = self._open_store()
+            try:
+                self._classifiable(store, message_id, force, classified_ok=force)
+                self._classify_one(store, message_id, _new_tally())
+                return {"ok": True, "invoice": self._present(store.get_message(message_id))}
+            finally:
+                store.close()
+
+    def review(self, cui: str | None = None) -> dict:
+        """The invoices a person must decide, with what Jev suggested."""
+        store = self._open_store()
+        try:
+            rows = store.list_messages(
+                cui=normalize_cui(cui) if cui else None, classification=REVIEW, pending=True
+            )
+            invoices = [
+                {**self._present(row), "jev_probabilities": _probabilities(store, row["id"])}
+                for row in rows
+            ]
+            level = _min_confidence(store)
+            accounts = store.accounts()
+        finally:
+            store.close()
+        return {
+            "ok": True,
+            "count": len(invoices),
+            "min_confidence": level,
+            "accounts": accounts,
+            "invoices": invoices,
+        }
+
+    def set_cont(
+        self, message_id: str, cont: str | None = None, accept: bool = False, force: bool = False
+    ) -> dict:
+        """A person's decision: accept Jev's suggestion, or set an account."""
+        if accept == (cont is not None):
+            raise EfacturaError(
+                INVALID_INPUT, "Either accept Jev's suggestion or give a cont, one of the two."
+            )
+        if cont is not None:
+            cont = _checked_account(cont)
+        with self._lock():
+            store = self._open_store()
+            try:
+                row, invoice = self._classifiable(store, message_id, force, classified_ok=True)
+                if accept:
+                    if not row["suggested_cont"]:
+                        raise EfacturaError(
+                            INVALID_INPUT, "Jev suggested no account for this invoice; give a cont."
+                        )
+                    cont, method, reason = (
+                        row["suggested_cont"], "jev_accepted", "Jev's suggestion, accepted by a person."
+                    )
+                else:
+                    method, reason = "human", "Set by a person."
+                self._finish(store, row, invoice, cont, method, reason)
+                return {"ok": True, "invoice": self._present(store.get_message(message_id))}
+            finally:
+                store.close()
+
+    def classification_settings(self) -> dict:
+        store = self._open_store()
+        try:
+            return {
+                "ok": True,
+                "min_confidence": _min_confidence(store),
+                "model": self.cfg.jev_model,
+                "jev_configured": bool(self.cfg.openrouter_api_key),
+                "accounts": store.accounts(),
+                "jev_instructions": store.get_setting(JEV_INSTRUCTIONS) or "",
+            }
+        finally:
+            store.close()
+
+    def set_jev_instructions(self, text: str) -> dict:
+        """The question Jev is asked about every invoice the rules cannot decide."""
+        text = str(text or "").strip()
+        if not text:
+            raise EfacturaError(INVALID_INPUT, "The question for Jev cannot be empty.")
+        store = self._open_store()
+        try:
+            store.set_setting(JEV_INSTRUCTIONS, text)
+        finally:
+            store.close()
+        return self.classification_settings()
+
+    # --- clients ------------------------------------------------------------------
+
+    def clients(self) -> dict:
+        """The companies whose invoices are fetched, with how many invoices need attention."""
+        store = self._open_store()
+        try:
+            rows = store.clients()
+        finally:
+            store.close()
+        return {"ok": True, "count": len(rows), "clients": rows}
+
+    def save_client(self, cui: str, name: str) -> dict:
+        """Add a client, or rename one that is already in the list."""
+        cui, name = normalize_cui(cui), _tidy_name(name)
+        if not name:
+            raise EfacturaError(INVALID_INPUT, "A client needs a name.")
+        store = self._open_store()
+        try:
+            store.save_client(cui, name, self._now().isoformat())
+        finally:
+            store.close()
+        return self.clients()
+
+    def remove_client(self, cui: str) -> dict:
+        """Take a client off the list. Its saved invoices stay."""
+        store = self._open_store()
+        try:
+            store.delete_client(normalize_cui(cui))
+        finally:
+            store.close()
+        return self.clients()
+
+    def import_clients(self, filename: str, content: bytes) -> dict:
+        """Add the clients in a CSV or Excel file. Rows that cannot be used are listed
+        with the reason as a code, so the screen can explain each in its own words."""
+        rows = read_client_rows(filename, content)
+        added, updated, rejected, unchanged = [], [], [], 0
+        now = self._now().isoformat()
+        store = self._open_store()
+        try:
+            for number, written_name, written_cui in rows:
+                name = _tidy_name(written_name)
+                problem = _problem_with(name, written_cui)
+                if problem:
+                    rejected.append({"row": number, "name": name, "cui": written_cui, "code": problem})
+                    continue
+                cui = normalize_cui(written_cui)
+                known_as = store.client_name(cui)
+                store.save_client(cui, name, now)
+                if known_as is None:
+                    added.append({"cui": cui, "name": name})
+                elif known_as != name:
+                    updated.append({"cui": cui, "name": name})
+                else:
+                    unchanged += 1
+        finally:
+            store.close()
+        log.info("Clients imported from %s: %d added, %d updated, %d rejected",
+                 filename, len(added), len(updated), len(rejected))
+        return {
+            "ok": True, "rows": len(rows), "added": added, "updated": updated,
+            "unchanged": unchanged, "rejected": rejected,
+        }
+
+    # --- settings and keys changed on screen ----------------------------------
+
+    def app_settings(self) -> dict:
+        return {"ok": True, "saga_folder": str(self.cfg.saga_dir)}
+
+    def set_saga_folder(self, folder: str) -> dict:
+        """Where the files for SAGA are written from now on. Files already written stay
+        where they are; each invoice remembers its own path."""
+        text = str(folder or "").strip()
+        path = Path(text).expanduser()
+        if not text or not path.is_absolute():
+            raise EfacturaError(
+                INVALID_INPUT, "Give the folder's full path, for example C:\\SAGA Import."
+            )
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise EfacturaError(INVALID_INPUT, f"The folder cannot be created: {exc}") from None
+        self._save_setting("saga_dir", str(path))
+        return self.app_settings()
+
+    def choose_folder(self) -> dict:
+        """Let the person pick a folder in the computer's own dialog; None if they cancel."""
+        return {"ok": True, "folder": _ask_for_folder(str(self.cfg.saga_dir))}
+
+    def open_saga_folder(self, cui: str | None = None, message_id: str | None = None) -> dict:
+        """Show a folder in the file manager: the one holding an invoice's SAGA file, or
+        the SAGA folder itself, or one client's part of it.
+
+        By invoice, it is the folder the file is really in. That differs from the folder
+        set now when the setting was changed after the file was written.
+        """
+        if message_id is not None:
+            folder = self._folder_of_saga_file(message_id)
+        else:
+            folder = self.cfg.saga_dir / normalize_cui(cui) if cui else self.cfg.saga_dir
+            folder.mkdir(parents=True, exist_ok=True)
+        _reveal(folder)
+        return {"ok": True, "folder": str(folder)}
+
+    def _folder_of_saga_file(self, message_id: str) -> Path:
+        store = self._open_store()
+        try:
+            row = store.get_message(message_id)
+        finally:
+            store.close()
+        if row is None:
+            raise EfacturaError(NOT_FOUND, f"No saved message with id: {message_id}")
+        folder = (self.cfg.data_dir / row["saga_xml_path"]).parent if row["saga_xml_path"] else None
+        if folder is None or not folder.is_dir():
+            raise EfacturaError(NOT_FOUND, "This invoice has no file for SAGA.")
+        return folder
+
+    def secrets(self) -> dict:
+        """Every key the tool holds, in full. Only for the person at this computer."""
+        tokens = auth.load_tokens(self.cfg.token_file)
+        values = {
+            "openrouter_api_key": self.cfg.openrouter_api_key,
+            "anaf_client_id": self.cfg.client_id,
+            "anaf_client_secret": self.cfg.client_secret,
+            "api_key": self.cfg.api_key,
+            "anaf_access_token": tokens.access_token if tokens else "",
+            "anaf_refresh_token": (tokens.refresh_token or "") if tokens else "",
+        }
+        return {
+            "ok": True,
+            "secrets": [
+                {"key": key, "value": value, "editable": key in EDITABLE_SECRETS}
+                for key, value in values.items()
+            ],
+        }
+
+    def set_secret(self, key: str, value: str) -> dict:
+        """Change a key. An empty value goes back to what config.toml says."""
+        if key not in EDITABLE_SECRETS:
+            raise EfacturaError(
+                INVALID_INPUT, f"Only these can be changed here: {', '.join(EDITABLE_SECRETS)}."
+            )
+        self._save_setting(key, str(value or "").strip())
+        return self.secrets()
+
+    def _save_setting(self, key: str, value: str) -> None:
+        store = self._open_store()
+        try:
+            if value:
+                store.set_setting(key, value)
+            else:
+                store.delete_setting(key)
+        finally:
+            store.close()
+        self.cfg = _with_saved_settings(self._file_cfg)
+        log.info("Setting %s changed", key)  # never the value: it may be a key
+
+    # --- rules and accounts ---------------------------------------------------
+
+    def rules_overview(self) -> dict:
+        """Everything the rules screen shows."""
+        store = self._open_store()
+        try:
+            return {
+                "ok": True,
+                "accounts": store.accounts(),
+                "rules": store.rules(),
+                "jev_instructions": store.get_setting(JEV_INSTRUCTIONS) or "",
+                "min_confidence": _min_confidence(store),
+            }
+        finally:
+            store.close()
+
+    def save_account(self, cont: str, description: str = "") -> dict:
+        """Add an account Jev may choose, or change its description."""
+        cont = _checked_account(cont)
+        store = self._open_store()
+        try:
+            store.save_account(cont, str(description or "").strip())
+        finally:
+            store.close()
+        return self.rules_overview()
+
+    def delete_account(self, cont: str) -> dict:
+        store = self._open_store()
+        try:
+            store.delete_account(str(cont).strip())
+        finally:
+            store.close()
+        return self.rules_overview()
+
+    def save_rule(
+        self,
+        rule_id: int | None = None,
+        *,
+        name: str,
+        cont: str,
+        keywords=(),
+        item_codes=(),
+        commodity_prefixes=(),
+        supplier_cuis=(),
+        client_cui: str | None = None,
+        enabled: bool = True,
+    ) -> dict:
+        """Add a rule (rule_id None) or replace one. `client_cui` None: for every client."""
+        tidy = _rule_from(
+            str(name or "").strip(), _checked_account(cont),
+            keywords=keywords, item_codes=item_codes,
+            commodity_prefixes=commodity_prefixes, supplier_cuis=supplier_cuis,
+        )
+        if not tidy.name:
+            raise EfacturaError(INVALID_INPUT, "A rule needs a name.")
+        if not any(getattr(tidy, condition) for condition in CONDITIONS):
+            raise EfacturaError(
+                INVALID_INPUT,
+                "A rule needs at least one condition: a keyword, a code or a supplier.",
+            )
+        fields = {
+            "name": tidy.name,
+            "cont": tidy.cont,
+            **{condition: getattr(tidy, condition) for condition in CONDITIONS},
+            "client_cui": normalize_cui(client_cui) if client_cui else None,
+            "enabled": bool(enabled),
+        }
+        store = self._open_store()
+        try:
+            if rule_id is None:
+                store.add_rule(**fields)
+            else:
+                store.update_rule(rule_id, **fields)
+        finally:
+            store.close()
+        return self.rules_overview()
+
+    def delete_rule(self, rule_id: int) -> dict:
+        store = self._open_store()
+        try:
+            store.delete_rule(rule_id)
+        finally:
+            store.close()
+        return self.rules_overview()
+
+    def move_rule(self, rule_id: int, up: bool) -> dict:
+        """Move a rule one place earlier or later in the order the rules are checked."""
+        store = self._open_store()
+        try:
+            store.move_rule(rule_id, up)
+        finally:
+            store.close()
+        return self.rules_overview()
+
+    # --- proposed rules -------------------------------------------------------
+
+    def rule_suggestions(self) -> dict:
+        """Rules worth creating: what Jev or a person decided lately, for invoices that no
+        rule would decide today. Invoices that would get the same rule are one proposal."""
+        store = self._open_store()
+        try:
+            since = self._recent()
+            rulebooks: dict[str, Rulebook] = {}
+            proposals: dict[tuple, dict] = {}
+            for row in store.decided_without_rule(since):
+                subject = _stored_subject(row["rule_subject"])
+                if subject is None:
+                    continue
+                if row["cui"] not in rulebooks:
+                    rulebooks[row["cui"]] = _rulebook_for(store, row["cui"])
+                proposal = propose(subject, row["cont"])
+                if proposal is None or rulebooks[row["cui"]].rule_for(subject):
+                    continue
+                listed = proposals.setdefault(proposal.key, {
+                    "cont": proposal.cont,
+                    "keywords": list(proposal.keywords),
+                    "supplier_cuis": list(proposal.supplier_cuis),
+                    "supplier_name": row["supplier_name"] if proposal.supplier_cuis else None,
+                    "invoice_ids": [],
+                })
+                listed["invoice_ids"].append(row["id"])
+            # The one most invoices stand behind first; of equals, the latest decision
+            # (the rows came newest first, and the sort keeps their order).
+            shown = sorted(proposals.values(), key=lambda listed: -len(listed["invoice_ids"]))
+            shown = shown[:MAX_LISTED_SUGGESTIONS]
+            classified = _subjects(store.classified_subjects(since))
+        finally:
+            store.close()
+        rules = [
+            Rule("", listed["cont"], listed["keywords"], supplier_cuis=listed["supplier_cuis"])
+            for listed in shown
+        ]
+        # Few invoices match any of the proposals; only those are tried on each one.
+        proposals_together = any_of(rules)
+        matched_by_some = [pair for pair in classified if proposals_together.matches(pair[1])]
+        for listed, rule in zip(shown, rules):
+            listed.update(_evidence(rule, matched_by_some))
+        return {"ok": True, "count": len(proposals), "days": RECENT_DAYS, "suggestions": shown}
+
+    def rule_preview(
+        self,
+        *,
+        keywords=(),
+        item_codes=(),
+        commodity_prefixes=(),
+        supplier_cuis=(),
+        client_cui: str | None = None,
+    ) -> dict:
+        """How a rule with these conditions would have done on the invoices given an
+        account lately: how many it matches, and on which accounts those are."""
+        rule = _rule_from(
+            "", "", keywords=keywords, item_codes=item_codes,
+            commodity_prefixes=commodity_prefixes, supplier_cuis=supplier_cuis,
+        )
+        store = self._open_store()
+        try:
+            classified = _subjects(store.classified_subjects(
+                self._recent(), normalize_cui(client_cui) if client_cui else None
+            ))
+        finally:
+            store.close()
+        return {"ok": True, **_evidence(rule, classified), "days": RECENT_DAYS}
+
+    def dismiss_rule_suggestions(self, ids: list[str]) -> dict:
+        """ "Not now": stop proposing a rule for these invoices, unless their account changes."""
+        ids = [str(i) for i in ids]
+        if not ids:
+            raise EfacturaError(INVALID_INPUT, "Give at least one message id.")
+        store = self._open_store()
+        try:
+            store.dismiss_suggestions(ids)
+        finally:
+            store.close()
+        return {"ok": True, "dismissed": ids}
+
+    def _recent(self) -> str:
+        """The moment RECENT_DAYS ago, as decisions are dated."""
+        return (self._now() - timedelta(days=RECENT_DAYS)).isoformat()
+
+    def _rule_suggestion(self, store: Store, row: dict) -> dict | None:
+        """The rule to propose on one invoice's screen, however old the invoice is."""
+        if row["classification_status"] != CLASSIFIED or row["classification_method"] == "rules":
+            return None
+        state = store.suggestion_state(row["id"])
+        subject = _stored_subject(state["rule_subject"])
+        if subject is None or state["suggestion_dismissed_for"] == row["cont"]:
+            return None
+        if propose(subject, row["cont"]) is None or _rulebook_for(store, row["cui"]).rule_for(subject):
+            return None
+        words = words_of(subject.description)
+        return {
+            "cont": row["cont"],
+            "line": subject.description,
+            "words": list(words),
+            "ticked": list(ticked_words(words)),
+            "supplier_cui": subject.supplier_cui,
+            "supplier_name": row["supplier_name"],
+        }
+
+    def set_min_confidence(self, value: float) -> dict:
+        """The confidence below which a Jev answer goes to a person, from 0 to 1."""
+        usable = isinstance(value, (int, float)) and not isinstance(value, bool)
+        if not usable or not 0 <= value <= 1:  # NaN fails the comparison too
+            raise EfacturaError(INVALID_INPUT, "The confidence level must be a number from 0 to 1.")
+        store = self._open_store()
+        try:
+            store.set_setting(MIN_CONFIDENCE, repr(float(value)))
+        finally:
+            store.close()
+        log.info("Confidence level set to %s", value)
+        return self.classification_settings()
+
+    def costs(
+        self, since: str | None = None, cui: str | None = None, until: str | None = None,
+        group: str = "month",
+    ) -> dict:
+        """What the Jev calls have cost between two days, in total and per day, week,
+        month or year."""
+        _check_date(since)
+        _check_date(until, "until")
+        if group not in COST_GROUPS:
+            raise EfacturaError(INVALID_INPUT, f"group must be one of: {', '.join(COST_GROUPS)}.")
+        cui = normalize_cui(cui) if cui else None
+        store = self._open_store()
+        try:
+            totals = store.jev_costs(since=since, cui=cui, until=until, group=group)
+        finally:
+            store.close()
+        return {
+            "ok": True,
+            "since": since,
+            "until": until,
+            "cui": cui,
+            "group": group,
+            **totals,
+            "average_cost_per_invoice_usd": (
+                totals["cost_usd"] / totals["invoices"] if totals["invoices"] else None
+            ),
+        }
+
+    def jev_calls(
+        self, since: str | None = None, until: str | None = None, cui: str | None = None,
+        limit: int = 200,
+    ) -> dict:
+        """What Jev was asked, newest first: which invoice, what it answered, what it cost."""
+        _check_date(since)
+        _check_date(until, "until")
+        if not 1 <= limit <= MAX_LISTED_CALLS:
+            raise EfacturaError(INVALID_INPUT, f"limit must be from 1 to {MAX_LISTED_CALLS}.")
+        store = self._open_store()
+        try:
+            rows = store.jev_call_list(since, until, normalize_cui(cui) if cui else None, limit)
+        finally:
+            store.close()
+        calls = []
+        for row in rows:
+            answer = _jev_answer_in(row.pop("response_json"))
+            calls.append({**row, "choice": answer.get("choice"), "confidence": answer.get("confidence")})
+        return {"ok": True, "count": len(calls), "calls": calls}
+
+    def invoice_view(self, message_id: str) -> dict:
+        """Everything the screen shows for one message: the stored row, the invoice read
+        from the XML, both XML texts, Jev's last answer and the rule worth creating from it."""
+        store = self._open_store()
+        try:
+            row = store.get_message(message_id, include_xml=True)
+            if row is None:
+                raise EfacturaError(NOT_FOUND, f"No saved message with id: {message_id}")
+            last_call = store.last_jev_call(message_id)
+            client_name = store.client_name(row["cui"])
+            rule_suggestion = self._rule_suggestion(store, row)
+        finally:
+            store.close()
+        shown = self._present(row)
+        xml = shown.pop("invoice_xml")
+        shown.pop("signature_xml")
+        invoice = parse_invoice(xml or "")
+        return {
+            "ok": True,
+            "invoice": shown,
+            "client_name": client_name,
+            "document": _as_json(invoice) if invoice else None,
+            "xml": xml,
+            "saga_xml": _read_text(shown["saga_xml_path"]),
+            "jev": last_call and {
+                "called_at": last_call["called_at"],
+                "model": last_call["model"],
+                "cost_usd": last_call["cost_usd"],
+                "error": last_call["error"],
+                "probabilities": _jev_answer_in(last_call["response_json"]).get("probabilities"),
+            },
+            "rule_suggestion": rule_suggestion,
+        }
+
+    def _classify_waiting(self, store: Store, cui: str, result: dict) -> None:
+        """Classify what this sync saved, plus anything left waiting by an earlier one.
+
+        Never fails the sync: the messages are saved either way, and an invoice that could
+        not be classified simply waits for the next run.
+        """
+        counts = {CLASSIFIED: 0, REVIEW: 0, PENDING: 0}
+        tally = _new_tally()
+        jev_down = False
+        for message_id in store.pending_classification(cui):
+            try:
+                status = self._classify_one(store, message_id, tally, jev_allowed=not jev_down)
+            except EfacturaError as exc:
+                # OpenRouter itself is failing (connection, key, credit, rate limit), so
+                # the invoices after this one are not sent in this run either.
+                jev_down = jev_down or exc.code == JEV_ERROR
+                status = PENDING
+                log.warning("Message %s not classified: %s", message_id, exc.message)
+            except Exception as exc:
+                log.exception("Could not classify message %s", message_id)
+                status = PENDING
+                _note_error(store, message_id, f"{type(exc).__name__}: {exc}")
+            counts[status] += 1
+
+        result["new"] = [self._present(store.get_message(entry["id"])) for entry in result["new"]]
+        result["classification"] = {
+            **counts,
+            "skipped": sum(entry["classification_status"] is None for entry in result["new"]),
+            **tally,
+        }
+        if counts[CLASSIFIED]:
+            result["saga_folder"] = str(self.cfg.saga_dir / cui)
+        log.info("Classification for %s: %s", cui, result["classification"])
+
+    def _classifiable(
+        self, store: Store, message_id: str, force: bool, classified_ok: bool
+    ) -> tuple[dict, Invoice]:
+        """The saved row and its invoice, or the reason it may not be classified."""
+        row = store.get_message(message_id, include_xml=True)
+        if row is None:
+            raise EfacturaError(NOT_FOUND, f"No saved message with id: {message_id}")
+        if not _is_received(row["message_type"]):
+            raise EfacturaError(
+                NOT_CLASSIFIABLE,
+                f"Only received invoices are classified; this message is: {row['message_type']}.",
+            )
+        invoice = parse_invoice(row["invoice_xml"] or "")
+        if invoice is None:
+            raise EfacturaError(NOT_CLASSIFIABLE, "The saved XML cannot be read as an invoice.")
+        if row["uploaded_to_accounting"]:
+            # The accounting program already has it; a new file would change nothing there.
+            raise EfacturaError(
+                NOT_CLASSIFIABLE,
+                "This invoice is marked as uploaded to accounting. Clear the flag first "
+                "(mark-uploaded --undo) if its account really has to change.",
+            )
+        if row["classification_status"] is None and not force:
+            raise EfacturaError(
+                NOT_CLASSIFIABLE,
+                "This invoice was saved outside classification (before it existed, or with "
+                "classification switched off). Pass force to classify it anyway.",
+            )
+        if row["classification_status"] == CLASSIFIED and not classified_ok:
+            raise EfacturaError(
+                NOT_CLASSIFIABLE,
+                f"Already classified on {row['cont']}. Pass force to classify it again, or "
+                "set another account with set-cont.",
+            )
+        return row, invoice
+
+    def _classify_one(
+        self, store: Store, message_id: str, tally: dict, jev_allowed: bool = True
+    ) -> str:
+        """Decide one invoice and return its new status."""
+        row = store.get_message(message_id, include_xml=True)
+        invoice = parse_invoice(row["invoice_xml"] or "")
+        if invoice is None:
+            raise EfacturaError(NOT_CLASSIFIABLE, "The saved XML cannot be read as an invoice.")
+
+        rulebook = _rulebook_for(store, row["cui"])
+        earlier = _same_invoice_saved_before(store, row)
+        if earlier:
+            # Booking it automatically would enter the invoice in SAGA a second time.
+            return self._to_review(
+                store, row,
+                f"The same invoice (supplier, number and date) is already saved as message "
+                f"{earlier}. Decide whether it has to be booked again.",
+            )
+
+        decision = decide_by_rules(invoice, rulebook)
+        if decision:
+            return self._finish(
+                store, row, invoice, decision.cont, "rules",
+                f'Rule "{decision.rule}" matched line {decision.line}, the largest on the invoice.',
+            )
+        if not invoice.lines:
+            return self._to_review(store, row, "The invoice has no lines to decide from.")
+        if not self.cfg.openrouter_api_key:
+            return self._to_review(
+                store, row,
+                "No rule matched, and OpenRouter is not set up ([openrouter] api_key in config.toml).",
+            )
+        if not rulebook.accounts:
+            return self._to_review(
+                store, row, "No rule matched, and there are no accounts for Jev to choose from."
+            )
+        if not jev_allowed:
+            _note_error(store, message_id, "Not sent to Jev: OpenRouter failed earlier in this run.")
+            return PENDING
+
+        request = jev_request(invoice, rulebook, self.cfg.jev_model)
+        if not request["state"]["linii"]:
+            # Not even the deciding line fits beside the list of accounts.
+            return self._to_review(
+                store, row, "The invoice and the list of accounts do not fit in one request to Jev."
+            )
+        try:
+            answer = self._ask_jev(store, row, request, rulebook, tally)
+        except _JevCouldNotDecide as exc:
+            return self._to_review(store, row, f"Jev could not decide this invoice: {exc}")
+        level = _min_confidence(store)
+        jev_said = {
+            "suggested_cont": answer.choice,
+            "confidence": answer.confidence,
+            "confidence_threshold": level,
+        }
+        if answer.refused:
+            return self._to_review(store, row, "Jev declined to answer.", **jev_said)
+        if answer.choice is None:
+            return self._to_review(store, row, "Jev found that none of the accounts fits.", **jev_said)
+        if answer.confidence is None:
+            return self._to_review(
+                store, row, f"Jev suggested {answer.choice} without a confidence figure.", **jev_said
+            )
+        if answer.confidence < level:
+            return self._to_review(
+                store, row,
+                f"Jev suggested {answer.choice} with confidence {answer.confidence:.2f}, "
+                f"below the level of {level:.2f}.",
+                **jev_said,
+            )
+        return self._finish(
+            store, row, invoice, answer.choice, "jev",
+            f"Jev chose {answer.choice} with confidence {answer.confidence:.2f}.", **jev_said,
+        )
+
+    def _ask_jev(self, store: Store, row: dict, request: dict, rulebook: Rulebook, tally: dict):
+        """Ask Jev, storing every request and reply.
+
+        Raises jev_error when OpenRouter as a whole is failing, and _JevCouldNotDecide when
+        only this invoice could not be answered.
+        """
+        error, service_wide = None, True
+        for attempt in range(JEV_ATTEMPTS):
+            call = jev.ask(self._http, self.cfg.openrouter_api_key, request)
+            answer, error, service_wide = None, call.error, call.service_wide
+            if call.ok:
+                try:
+                    answer = read_jev_answer(call.response, rulebook)
+                except EfacturaError as exc:
+                    error, service_wide = exc.message, False
+            store.add_jev_call(
+                message_id=row["id"],
+                cui=row["cui"],
+                called_at=self._now().isoformat(),
+                model=call.model or self.cfg.jev_model,
+                request_json=json.dumps(request, ensure_ascii=False),
+                response_json=(
+                    json.dumps(call.response, ensure_ascii=False) if call.response is not None else None
+                ),
+                http_status=call.status,
+                input_tokens=call.input_tokens,
+                output_tokens=call.output_tokens,
+                cost_usd=call.cost_usd,
+                duration_ms=call.duration_ms,
+                error=error,
+            )
+            tally["jev_calls"] += 1
+            tally["jev_cost_usd"] += call.cost_usd or 0
+            if answer is not None:
+                return answer
+            if not call.transient or attempt == JEV_ATTEMPTS - 1:
+                break
+            _pause(JEV_RETRY_DELAY)
+        if not service_wide:
+            raise _JevCouldNotDecide(error)
+        # The invoice stays as it was: waiting, in review, or with its earlier account.
+        _note_error(store, row["id"], error)
+        raise EfacturaError(JEV_ERROR, error or "Jev gave no answer.")
+
+    def _finish(
+        self, store: Store, row: dict, invoice: Invoice, cont: str, method: str, reason: str,
+        **jev_said,
+    ) -> str:
+        """Write the SAGA file with `cont` on every line and record the decision."""
+        folder = self.cfg.saga_dir / row["cui"]
+        path = folder / saga.file_name(invoice)
+        if store.saga_path_owner(self._stored_path(path), excluding=row["id"]):
+            # Another invoice already has that file name (numbers that differ only in
+            # punctuation or letter case, or the same invoice sent twice). One file, one invoice.
+            path = folder / saga.file_name(invoice, distinct=row["id"])
+        stored = self._stored_path(path)
+        subject = subject_of(invoice)
+        # "Not now" was said about a rule for the account the invoice had; a new account is
+        # a new proposal.
+        forgotten = {"suggestion_dismissed_for": None} if cont != row.get("cont") else {}
+        before = path.read_bytes() if path.exists() else None
+        folder.mkdir(parents=True, exist_ok=True)
+        _write_file(path, saga.build_xml(invoice, cont, row["id_solicitare"], row["id"]))
+        try:
+            store.set_classification(
+                row["id"],
+                classification_status=CLASSIFIED,
+                cont=cont,
+                classification_method=method,
+                classification_reason=reason,
+                classified_at=self._now().isoformat(),
+                saga_xml_path=stored,
+                classification_error=None,
+                # Kept so rules can be tried on this invoice later without its XML.
+                rule_subject=subject.to_json() if subject else None,
+                **forgotten,
+                **jev_said,
+            )
+        except Exception:
+            # SAGA must never find a file for a decision that was not recorded.
+            if before is None:
+                path.unlink(missing_ok=True)
+            else:
+                _write_file(path, before)
+            raise
+        if row.get("saga_xml_path") and row["saga_xml_path"] != stored:
+            self._drop_saga_file(store, row)  # it had another name before
+        log.info("Message %s classified on %s (%s)", row["id"], cont, method)
+        return CLASSIFIED
+
+    def _to_review(self, store: Store, row: dict, reason: str, **jev_said) -> str:
+        store.set_classification(
+            row["id"],
+            classification_status=REVIEW,
+            cont=None,
+            classification_method=None,
+            classification_reason=reason,
+            classified_at=None,
+            saga_xml_path=None,
+            classification_error=None,
+            **jev_said,
+        )
+        # Only once the row no longer points at it: if the update fails, the file stays.
+        self._drop_saga_file(store, row)
+        log.info("Message %s needs review: %s", row["id"], reason)
+        return REVIEW
+
+    def _drop_saga_file(self, store: Store, row: dict) -> None:
+        """An invoice that is no longer classified must not leave a file for SAGA behind.
+        `row` is the invoice as it was; the file goes unless another invoice's row has it."""
+        stored = row.get("saga_xml_path")
+        if stored and not store.saga_path_owner(stored, excluding=row["id"]):
+            (self.cfg.data_dir / stored).unlink(missing_ok=True)
+
+    def _stored_path(self, path: Path) -> str:
+        """Relative to the data folder when inside it, so the folder can be moved."""
+        try:
+            return path.relative_to(self.cfg.data_dir).as_posix()
+        except ValueError:
+            return str(path)
+
+    # --- internals ----------------------------------------------------------------
+
+    def _open_store(self) -> Store:
+        return Store(self.cfg.db_path)
+
+    def _lock(self) -> "_FileLock":
+        return _FileLock(self.cfg.lock_path)
+
+    def _present(self, row: dict) -> dict:
+        """A stored row as the commands return it: the file path made absolute."""
+        shown = dict(row)
+        for key in ("xml_path", "saga_xml_path"):
+            if shown.get(key):
+                shown[key] = str(self.cfg.data_dir / shown[key])
+        return shown
+
+    def _anaf_service(self, lock_held: bool) -> AnafService:
+        """An AnafService that takes its access token from the saved login.
+
+        The tokens handed out are remembered: when ANAF rejects one, the renewal can tell
+        whether another process has already replaced it.
+        """
+        handed_out: list[str] = []
+
+        def get_token(force_refresh: bool) -> str:
+            rejected = handed_out[-1] if force_refresh and handed_out else None
+            token = self._access_token(force_refresh, lock_held, rejected)
+            handed_out.append(token)
+            return token
+
+        return AnafService(self.cfg, self._http, get_token)
+
+    def _access_token(self, force_refresh: bool, lock_held: bool, rejected: str | None) -> str:
+        """The saved access token, renewed first when it has expired or ANAF rejected it.
+
+        `rejected` is the token ANAF just refused, when this is a forced renewal.
+        """
+        now = self._now()
+        tokens = auth.load_tokens(self.cfg.token_file)
+        if auth.token_state(tokens, now) == auth.VALID and not force_refresh:
+            return tokens.access_token
+        with nullcontext() if lock_held else self._lock():
+            if not lock_held:
+                # Another process may have renewed the login while this one was deciding.
+                # Its refresh token replaced ours, so renewing with ours would be refused.
+                tokens = auth.load_tokens(self.cfg.token_file)
+            state = auth.token_state(tokens, now)
+            if state == auth.VALID and (not force_refresh or tokens.access_token != rejected):
+                return tokens.access_token
+            if tokens is None or not tokens.refresh_token or state == auth.NEEDS_LOGIN:
+                raise EfacturaError(
+                    LOGIN_NEEDED,
+                    "No usable saved login. Plug in the USB token and run the login "
+                    "(efactura login, or login-start then login-finish).",
+                )
+            renewed = auth.refresh_tokens(self.cfg, self._http, tokens, now)
+            auth.save_tokens(self.cfg.token_file, renewed)
+        log.info("Login renewed; access valid until %s", renewed.access_expires_at.isoformat())
+        return renewed.access_token
+
+def configure_logging(cfg: Config) -> None:
+    """Log to the data folder. Nothing is logged to standard output: that is for the JSON."""
+    logger = logging.getLogger("efactura")
+    for existing in list(logger.handlers):
+        if isinstance(existing, logging.FileHandler):
+            if existing.baseFilename == os.path.abspath(cfg.log_path):
+                return
+            logger.removeHandler(existing)
+            existing.close()
+    cfg.data_dir.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(cfg.log_path, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+
+
+def _window_days(
+    default_days: int, covered_until: str | None, days: int | None, now: datetime,
+    cover_gap: bool = False,
+) -> int:
+    """Days to ask ANAF for. `covered_until` is when everything was last known to be saved.
+
+    A given `days` is taken as it is, unless cover_gap asks for it to be a minimum.
+    """
+    if days is not None:
+        if not 1 <= days <= MAX_DAYS:
+            raise EfacturaError(INVALID_INPUT, f"days must be from 1 to {MAX_DAYS}.")
+        if not cover_gap:
+            return days
+    window = days or default_days
+    if covered_until:
+        # Reach back to that point, plus a day of overlap.
+        gap = now - datetime.fromisoformat(covered_until)
+        window = max(window, math.ceil(gap.total_seconds() / 86400) + 1)
+    return min(window, MAX_DAYS)
+
+
+@dataclass(frozen=True)
+class _Window:
+    """The period one sync asks ANAF for."""
+
+    begin: datetime
+    finish: datetime
+    days: int
+    reaches_back: bool  # runs up to now, from at or before the point everything was saved to
+
+
+def _plan_window(
+    default_days: int, covered_until: str | None, days: int | None,
+    start: str | None, end: str | None, now: datetime, cover_gap: bool = False,
+) -> _Window:
+    if start is None and end is None:
+        window_days = _window_days(default_days, covered_until, days, now, cover_gap)
+        return _Window(
+            *_window(now, window_days), window_days, _reaches_back(now, window_days, covered_until)
+        )
+    if days is not None:
+        raise EfacturaError(INVALID_INPUT, "Give either a number of days or dates, not both.")
+    if start is None:
+        raise EfacturaError(INVALID_INPUT, "A date range needs its first day.")
+
+    today = now.date()
+    first, last = _day(start), _day(end) if end else today
+    begin = datetime(first.year, first.month, first.day, tzinfo=now.tzinfo)
+    if first > last or last > today:
+        raise EfacturaError(
+            INVALID_INPUT, "The first day must not be after the last, and neither after today."
+        )
+    if first < (now - timedelta(days=MAX_DAYS)).date():
+        raise EfacturaError(INVALID_INPUT, f"ANAF keeps messages for {MAX_DAYS} days only.")
+    # The sixtieth day back is allowed, from the hour ANAF still reaches.
+    begin = max(begin, now - timedelta(days=MAX_DAYS) + OLDEST_MARGIN)
+    end_of_last_day = datetime(last.year, last.month, last.day, tzinfo=now.tzinfo) + timedelta(days=1)
+    # A range that stops before today leaves the days after it unfetched, so it cannot
+    # move the "everything is saved up to here" mark.
+    covers_gap = covered_until is None or begin <= datetime.fromisoformat(covered_until)
+    return _Window(
+        begin=begin,
+        finish=min(end_of_last_day, now - CLOCK_MARGIN),
+        days=(last - first).days + 1,
+        reaches_back=last == today and covers_gap,
+    )
+
+
+def _day(text: str) -> date:
+    try:
+        return date.fromisoformat(str(text))
+    except ValueError:
+        raise EfacturaError(INVALID_INPUT, "Dates are written like 2026-11-03.") from None
+
+
+def _reaches_back(now: datetime, window_days: int, covered_until: str | None) -> bool:
+    """Did this window start at or before the point up to which everything was saved?
+
+    A run that did not (a short --days after a long pause) must not count as caught up,
+    or the messages in between would never be fetched. Sixty days is all ANAF keeps.
+    """
+    if covered_until is None or window_days >= MAX_DAYS:
+        return True
+    return now - timedelta(days=window_days) <= datetime.fromisoformat(covered_until)
+
+
+def _window(now: datetime, window_days: int) -> tuple[datetime, datetime]:
+    end = now - CLOCK_MARGIN
+    oldest = now - timedelta(days=MAX_DAYS) + OLDEST_MARGIN
+    return max(end - timedelta(days=window_days), oldest), end
+
+
+def _login_summary(tokens: auth.Tokens | None, now: datetime) -> dict:
+    return {
+        "state": auth.token_state(tokens, now),
+        "access_expires_at": tokens.access_expires_at.isoformat() if tokens else None,
+        "refresh_expires_at": (
+            tokens.refresh_expires_at.isoformat() if tokens and tokens.refresh_expires_at else None
+        ),
+        "access_days_left": _days_left(tokens.access_expires_at if tokens else None, now),
+        # When this reaches zero the USB token and PIN are needed again.
+        "refresh_days_left": _days_left(tokens.refresh_expires_at if tokens else None, now),
+    }
+
+
+def _days_left(expires_at: datetime | None, now: datetime) -> int | None:
+    return max(0, (expires_at - now).days) if expires_at else None
+
+
+def _failure(entry: dict, error: EfacturaError) -> dict:
+    return {
+        "id": entry["id"],
+        "message_type": str(entry.get("tip") or ""),
+        "error": {"code": error.code, "message": error.message},
+    }
+
+
+def _tidy_name(name) -> str:
+    return " ".join(str(name or "").split())
+
+
+def _problem_with(name: str, written_cui: str) -> str | None:
+    """Why a row of a client file cannot be used, as a code; None when it can."""
+    if not written_cui:
+        return "missing_cui"
+    try:
+        normalize_cui(written_cui)
+    except EfacturaError:
+        return INVALID_CUI
+    return None if name else "missing_name"
+
+
+def _with_saved_settings(cfg: Config) -> Config:
+    """config.toml overlaid with what was changed on screen."""
+    store = Store(cfg.db_path)
+    try:
+        saved = {field: store.get_setting(key) for key, field in SAVED_SETTINGS.items()}
+    finally:
+        store.close()
+    changed = {
+        field: Path(value) if field == "saga_import_dir" else value
+        for field, value in saved.items()
+        if value
+    }
+    return replace(cfg, **changed) if changed else cfg
+
+
+# A web page is never told a folder's path, so the dialog is opened by this program, on
+# the computer it runs on. It gets a process of its own because it needs its own main thread.
+_FOLDER_DIALOG = """
+import sys, tkinter
+from tkinter import filedialog
+window = tkinter.Tk()
+window.withdraw()
+window.attributes("-topmost", True)  # in front of the browser
+chosen = filedialog.askdirectory(initialdir=sys.argv[1], title="Folderul pentru SAGA")
+# As UTF-8 bytes: printed as text, Windows' code page cannot hold every Romanian letter.
+sys.stdout.buffer.write(chosen.encode("utf-8"))
+"""
+FOLDER_DIALOG_TIMEOUT = 600  # seconds the dialog may stay open
+
+
+def _ask_for_folder(start: str) -> str | None:
+    try:
+        dialog = subprocess.run(
+            [sys.executable, "-c", _FOLDER_DIALOG, start],
+            capture_output=True, timeout=FOLDER_DIALOG_TIMEOUT,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    chosen = dialog.stdout.decode("utf-8", errors="replace").strip()
+    return str(Path(chosen)) if chosen else None
+
+
+def _reveal(folder: Path) -> None:
+    """Open a folder in the computer's file manager."""
+    if os.name == "nt":
+        os.startfile(folder)  # noqa: S606 - a folder of ours, opened in Explorer
+    else:
+        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(folder)])
+
+
+def _is_received(message_type: str | None) -> bool:
+    return (message_type or "").upper().startswith(RECEIVED)
+
+
+def _new_tally() -> dict:
+    return {"jev_calls": 0, "jev_cost_usd": 0}
+
+
+def _rulebook_for(store: Store, cui: str) -> Rulebook:
+    """The accounts and the rules that apply to one client: its own rules first, then the
+    ones shared by every client, each group in the order set on the rules screen."""
+    applicable = [
+        rule for rule in store.rules() if rule["enabled"] and rule["client_cui"] in (None, cui)
+    ]
+    applicable.sort(key=lambda rule: rule["client_cui"] is None)  # stable: keeps the order
+    return Rulebook(
+        accounts=store.accounts(),
+        rules=tuple(
+            Rule(rule["name"], rule["cont"], **{name: rule[name] for name in CONDITIONS})
+            for rule in applicable
+        ),
+        instructions=store.get_setting(JEV_INSTRUCTIONS) or "",
+    )
+
+
+def _rule_from(name: str, cont: str, **conditions) -> Rule:
+    """A rule as the matching reads it: the lists tidied, and each supplier's id written
+    the way the invoice parser writes it, so the two can match."""
+    if any(isinstance(entries, str) for entries in conditions.values()):
+        raise EfacturaError(INVALID_INPUT, "Each condition of a rule is a list of entries.")
+    tidy = Rule(name, cont, **conditions)
+    return replace(
+        tidy, supplier_cuis=tuple(normalise_company_id(entry) for entry in tidy.supplier_cuis)
+    )
+
+
+def _stored_subject(text: str | None) -> Subject | None:
+    """A subject kept beside an invoice; None when there is none or it cannot be read
+    (edited by hand, or written by a version that kept it differently). Such an invoice
+    is left out of proposed rules instead of taking the whole list down."""
+    try:
+        return Subject.from_json(text) if text else None
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return None
+
+
+def _subjects(stored: list[tuple[str, str]]) -> list[tuple[str, Subject]]:
+    read = ((cont, _stored_subject(subject)) for cont, subject in stored)
+    return [(cont, subject) for cont, subject in read if subject is not None]
+
+
+def _evidence(rule: Rule, classified: list[tuple[str, Subject]]) -> dict:
+    """How a rule would have done on invoices that already have an account."""
+    by_cont = Counter(cont for cont, subject in classified if rule.matches(subject))
+    return {"matches": sum(by_cont.values()), "by_cont": dict(sorted(by_cont.items()))}
+
+
+def _checked_account(cont) -> str:
+    cont = str(cont if cont is not None else "").strip()
+    if len(cont) > MAX_ACCOUNT_LENGTH or not _ACCOUNT.match(cont):
+        raise EfacturaError(
+            INVALID_INPUT,
+            "cont must be an account number such as 628, or an analytic one such as 371.01.",
+        )
+    return cont
+
+
+def _min_confidence(store: Store) -> float:
+    saved = store.get_setting(MIN_CONFIDENCE)
+    return float(saved) if saved is not None else DEFAULT_MIN_CONFIDENCE
+
+
+def _probabilities(store: Store, message_id: str) -> dict | None:
+    """What Jev thought of each account, from its last stored reply for this invoice."""
+    call = store.last_jev_call(message_id)
+    return _jev_answer_in(call["response_json"]).get("probabilities") if call else None
+
+
+def _jev_answer_in(response_json: str | None) -> dict:
+    """Jev's answer inside a stored reply; empty when the call failed or made no sense."""
+    try:
+        answer = json.loads(response_json)["answers"]["cont"]
+    except (TypeError, KeyError, ValueError):
+        return {}
+    return answer if isinstance(answer, dict) else {}
+
+
+def _as_json(invoice: Invoice) -> dict:
+    """The parsed invoice for the screen: amounts as text (no rounding), each line with
+    the unit as SAGA will show it."""
+    document = _plain(asdict(invoice))
+    for described in document["lines"]:
+        described["unit_name"] = saga.UNITS.get((described["unit"] or "").upper(), described["unit"])
+    return document
+
+
+def _plain(value):
+    if isinstance(value, Decimal):
+        return format(value, "f")
+    if isinstance(value, dict):
+        return {key: _plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(item) for item in value]
+    return value
+
+
+def _read_text(path: str | None) -> str | None:
+    """A file's text, or None when there is no file (never written, or deleted by hand)."""
+    try:
+        return Path(path).read_text(encoding="utf-8") if path else None
+    except OSError:
+        return None
+
+
+def _same_invoice_saved_before(store: Store, row: dict) -> str | None:
+    """The id of an earlier message carrying this very invoice: same supplier and number
+    (noted when it was saved) and the same date. A supplier who starts numbering again
+    each year reuses numbers, but not on the same day."""
+    earlier_id = row.get("possible_duplicate_of")
+    if not earlier_id:
+        return None
+    earlier = store.get_message(earlier_id)
+    if earlier and earlier["invoice_issue_date"] == row["invoice_issue_date"]:
+        return earlier_id
+    return None
+
+
+def _note_error(store: Store, message_id: str, error: str) -> None:
+    try:
+        store.set_classification(message_id, classification_error=error)
+    except (sqlite3.Error, EfacturaError):
+        log.exception("Could not record why message %s was not classified", message_id)
+
+
+def _check_date(day: str | None, name: str = "since") -> None:
+    if day is None:
+        return
+    try:
+        date.fromisoformat(day)
+    except ValueError:
+        raise EfacturaError(INVALID_INPUT, f"{name} must be a date like 2026-11-11.") from None
+
+
+def _pause(seconds: float) -> None:
+    time.sleep(seconds)
+
+
+def _write_file(path: Path, content: bytes) -> None:
+    """Write beside the target, then swap in: a reader never sees half a file."""
+    partial = path.with_name(path.name + ".part")
+    try:
+        partial.write_bytes(content)
+        os.replace(partial, path)
+    except BaseException:
+        # Windows refuses the swap while another program has the target open.
+        partial.unlink(missing_ok=True)
+        raise
+
+
+class _FileLock:
+    """Allows one sync or login renewal at a time, across processes.
+
+    The operating system drops the lock if the process dies, so it cannot go stale.
+    """
+
+    def __init__(self, path: Path):
+        self._path = Path(path)
+        self._handle = None
+
+    def __enter__(self) -> "_FileLock":
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(self._path, "a+b")
+        try:
+            _lock_handle(handle)
+        except OSError:
+            handle.close()
+            raise EfacturaError(
+                BUSY, "Another sync or login renewal is running. Try again when it has finished."
+            ) from None
+        self._handle = handle
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        try:
+            _unlock_handle(self._handle)
+        finally:
+            self._handle.close()
+            self._handle = None
+
+
+if os.name == "nt":
+    import msvcrt
+
+    def _lock_handle(handle) -> None:
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+
+    def _unlock_handle(handle) -> None:
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+
+else:
+    import fcntl
+
+    def _lock_handle(handle) -> None:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def _unlock_handle(handle) -> None:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)

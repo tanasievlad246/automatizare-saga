@@ -1,0 +1,489 @@
+# efactura
+
+Fetches ANAF e-Factura messages for a company CUI and keeps them locally:
+
+- a SQLite database (`data/efactura.db`) with one row per message and an "uploaded to accounting" flag
+- the XML files in a folder named after the day they were fetched (`data/invoices/11-11-2026/`)
+
+Only messages not saved before are downloaded. It never uploads or changes anything at ANAF.
+
+Each newly received invoice is then given an account (`cont`) and rewritten as a file the SAGA C accounting program can import (`data/SAGA Import/<CUI>/`). See [Classification and SAGA](#classification-and-saga).
+
+There are three ways to use it, all on the same data:
+
+- **The screen** (in Romanian), for the accountant: clients, invoices, accounts, rules, costs. See [The screen](#the-screen).
+- **Terminal commands**, each printing one JSON document.
+- **A local REST API** with the same steps, so a Power Automate Desktop flow can call them and read the result.
+
+## How the login works
+
+The key on the USB signature token cannot be read or copied, so this tool never touches it. The token is used once, in the browser, exactly like logging in to SPV. ANAF then issues a login that this tool saves and renews by itself:
+
+| | Lasts | Needs the USB token |
+|---|---|---|
+| Access token | 90 days | no |
+| Refresh token (renews the access token) | 365 days | no |
+| A new login | — | yes: certificate + PIN in the browser |
+
+So the token and PIN are needed about once a year. The PIN is typed into Windows' own prompt; this tool never sees it.
+
+## Installing on the accountant's PC
+
+`install.ps1` does it in one go. Open an ordinary PowerShell window, signed in to Windows as the person who will work with the program (not "Run as administrator"). Download the script:
+
+```powershell
+irm https://raw.githubusercontent.com/tanasievlad246/automatizare-saga/main/install.ps1 -OutFile install.ps1
+```
+
+Then run it:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+What it does:
+
+1. **Git and uv.** Installs them if they are missing. Windows asks an administrator to approve only when Git has to be installed; uv is installed for the user alone.
+2. **The latest release** of [tanasievlad246/automatizare-saga](https://github.com/tanasievlad246/automatizare-saga) is cloned into `%LOCALAPPDATA%\AutoSaga` (`-InstallDir` chooses another folder). `-Repo owner/name` installs from another repository; a private one works too, as Git asks the PC to sign in to GitHub once. Without any release, the main branch is installed and the script says so.
+3. **The dependencies** go into that folder (`.venv`). uv downloads Python as well if the PC has none.
+4. **`config.toml`** is written with a random key for the local API. The port is 80 when it is free, so the address needs no port; otherwise 8765.
+5. **Two shortcuts.** One in the Windows Startup folder starts the program, without a window, each time that user signs in. One on the Desktop, "e-Factura pentru SAGA", opens the page and starts the program first if it is not running.
+6. The program is started and the page opens at **`http://autosaga.localhost`** (or `http://autosaga.localhost:8765`).
+
+Then, on the page: fill in the ANAF client ID and secret and the OpenRouter key under "Chei și parole", and connect to ANAF. Step 2 of [One-time setup](#one-time-setup) below, registering the application with ANAF, still has to be done by hand.
+
+- **Updating:** run the script again. It stops the program, moves the folder to the newest release and starts it again. `config.toml` and `data\` are not touched.
+- **Removing:** `install.ps1 -Uninstall` stops the program and removes the two shortcuts. The folder, with the settings and every saved invoice, stays until it is deleted by hand.
+- **Other programs** (a Power Automate flow) reach the local API at `http://127.0.0.1` when the port is 80, and at `http://127.0.0.1:8765` otherwise, with the key from `config.toml`.
+- **Why the address needs no hosts-file entry.** Chrome, Edge and Firefox open any name ending in `.localhost` on the computer itself, and treat it as they treat `localhost`. A made-up name such as `local.autosaga` would need the hosts file, would be marked "Not secure", and the page could no longer prove itself to the program.
+- **Why it starts at sign-in, not at boot.** The saved ANAF login belongs to one Windows user, and the folder dialog and "Deschide folderul" need that user's desktop.
+- **The built page must be in the repository** (`src/efactura/ui/`), so the accountant's PC needs no Node. Run `pnpm --dir frontend build` before tagging a release.
+
+`install.ps1` itself has not been run: this was written on a Mac without PowerShell. Its Git and uv steps, and the program's `setup`, `start` and `stop`, were replayed by hand against a copy of the project (install, update to a newer release, no release at all). See [Not yet confirmed](#not-yet-confirmed-against-the-real-services).
+
+## One-time setup
+
+These are the steps by hand, for a PC set up without `install.ps1`.
+
+
+1. **Windows PC:** the token's driver is installed and logging in to SPV works in Edge or Chrome.
+2. **Register an application with ANAF**, logged in with the same certificate: anaf.ro → Servicii Online → Înregistrare utilizatori → Dezvoltatori aplicații → Profil OAuth → "Generare Client ID".
+   - Service: E-Factura.
+   - Callback URL: `https://localhost/callback` (must be `https://`; it is reported that an application cannot be edited after it is created, so type it carefully).
+   - Note the **client ID** and **client secret**.
+3. **Install uv** (it installs Python and the dependencies by itself): see <https://docs.astral.sh/uv/getting-started/installation/>, or `winget install --id=astral-sh.uv -e`.
+4. **Copy this folder** to a local disk on the PC (not a network share: the database must be local).
+5. **Create the settings file:** copy `config.example.toml` to `config.toml` and fill in `client_id`, `client_secret` and, for the local API, `[api] key` (any long random text).
+6. **Log in once:** `uv run efactura login`
+
+The first `uv run` downloads the dependencies and needs internet access.
+
+## The screen
+
+Double-click `start.bat`, or run
+
+```bash
+uv run efactura serve --open
+```
+
+The page opens at `http://autosaga.localhost:8765/ui/` (without `:8765` when the port is 80). `http://127.0.0.1:8765/ui/` is the same page. It only works on this computer.
+
+| Screen | What it is for |
+|---|---|
+| **Clienți** | Import clients from Excel or CSV, add one by hand, download invoices for one client or all (the last 1 to 30 days, or two dates). Shows how many invoices are new and how many wait for an account |
+| **A client's invoices** | New, to check, not yet in SAGA, all. One button marks the ready ones as imported in SAGA |
+| **One invoice** | The invoice as a person reads it, ANAF's XML, the SAGA XML; its account and who chose it; accept Jev's proposal or pick another; a rule proposed from it when no rule decided it; the path of the SAGA file |
+| **Reguli de clasificare** | Rules proposed from recent decisions, the rules, the accounts Jev chooses from, how sure Jev must be, the question Jev is asked |
+| **Costuri Jev** | Cost between two dates, by day, week, month or year, and every invoice Jev classified |
+| **Chei și parole** | The OpenRouter key and ANAF client details (hidden until asked for, changeable), and when the ANAF login expires |
+
+On every screen, the top bar holds the **folder for SAGA** (type it, or "Alege folderul" opens Windows' own folder dialog) and the **ANAF connection** with the days left; clicking it opens the login steps.
+
+**"New"** means: a received invoice brought in by that client's latest download that brought anything, and not yet marked as imported in SAGA.
+
+**Downloading from the screen never leaves a gap.** "Ultimele 5 zile" means at least five days: if the last complete download for that client was longer ago, the program reaches back to it (up to ANAF's 60 days) and says so. Two dates are taken exactly as chosen. If some invoices could not be downloaded, the window says how many.
+
+**What is changed on screen is stored in the database** and wins over `config.toml`: the SAGA folder, the OpenRouter key, the ANAF client ID and secret. Clearing a key on screen goes back to the value in `config.toml`.
+
+**The client file** needs two columns, name and CUI, in any order; other columns, such as a row number, are ignored. A header row is recognised in the first five rows (`CUI`, `C.U.I.`, `CIF`, `Cod fiscal`; `Nume`, `Denumire`, `Client`, `Firma`, `Societate`). Without one, the cell that passes the CUI check is the CUI. Rows that cannot be used are listed with the reason.
+
+**Building the page.** The page's source is in `frontend/` (React, shadcn/ui). The built page lives in `src/efactura/ui/` and is what `serve` shows, so the accountant's PC needs only `uv`. After changing the source:
+
+```bash
+pnpm --dir frontend build
+```
+
+**Trying it without ANAF.** This builds a made-up database in `demo/` and starts everything against it:
+
+```bash
+uv run python scripts/seed_demo.py
+```
+
+```bash
+uv run efactura --config demo/config.toml dev
+```
+
+Then open `http://localhost:5173/ui/`. Downloading from ANAF does not work there; everything else does.
+
+## Commands
+
+Run them from this folder. Use `--config PATH` before the command if `config.toml` is elsewhere.
+
+| Command | What it does |
+|---|---|
+| `uv run efactura auth-status` | Reports `valid`, `needs_refresh` or `needs_login`, with expiry dates. Contacts nothing. |
+| `uv run efactura login` | For a person: opens ANAF's login in the browser, then waits for the pasted address. |
+| `uv run efactura login-start [--open]` | Returns the ANAF login address (for a flow that drives the browser). |
+| `uv run efactura login-finish "<address>"` | Takes the address the browser ended on and saves the login. |
+| `uv run efactura list <CUI> [--days N]` | What ANAF has, each marked new or already saved. Saves nothing. |
+| `uv run efactura sync <CUI> [--days N] [--from DATE --to DATE] [--no-classify]` | Fetches and saves everything not saved yet, then classifies the received invoices it saved. The period is the last `N` days, or the days from `--from` to `--to` (`--to` defaults to today). |
+| `uv run efactura invoices [--cui CUI] [--pending] [--new] [--type T] [--since YYYY-MM-DD] [--classification S]` | Reads the database. `--pending` = not yet uploaded. `--new` = from the latest download and not yet uploaded. `T` is `primita`, `trimisa`, `erori` or `mesaj`. `S` is `pending`, `classified` or `review`. |
+| `uv run efactura invoice <id> [--xml]` | One message; `--xml` adds the XML text. |
+| `uv run efactura mark-uploaded <id>... [--undo]` | Sets (or clears) the uploaded flag. |
+| `uv run efactura classify <id> [--force]` | Classifies one saved invoice. |
+| `uv run efactura review [--cui CUI]` | Invoices a person must decide, with Jev's suggestion. |
+| `uv run efactura set-cont <id> --accept` | Accepts Jev's suggestion. |
+| `uv run efactura set-cont <id> --cont 628` | Sets the account a person chose. |
+| `uv run efactura confidence [VALUE]` | Shows, or sets, the confidence level (0 to 1). |
+| `uv run efactura costs [--since DATE] [--until DATE] [--group day\|week\|month\|year] [--cui CUI]` | What the Jev calls have cost, in total and per period. |
+| `uv run efactura serve [--port N] [--open]` | Starts the screen and the local API; `--open` also opens the browser. |
+| `uv run efactura dev [--port N]` | For development: the API and the page's dev server together, both reloading on change. |
+| `uv run efactura setup [--port N]` | Writes the first `config.toml` from `config.example.toml`, with a random API key; port 80 when free, else 8765. Leaves an existing `config.toml` alone. |
+| `uv run efactura start` | Runs the program in the background, without a window, unless it already runs. What it prints goes to `data/server.log`. |
+| `uv run efactura open` | `start`, then opens the page in the browser. This is what the Desktop shortcut runs. |
+| `uv run efactura stop` | Stops the program running in the background. |
+
+Notes:
+
+- One CUI per call, with or without `RO`. A mistyped CUI is rejected by its check digit before ANAF is contacted.
+- The window is 7 days by default. If the last fully successful run for that CUI was longer ago, the window widens to cover the gap, up to ANAF's limit of 60 days. For a first run that should reach back further, use `--days 60`.
+- `list` and `sync` renew the saved login by themselves when it has expired.
+- Only one `sync` runs at a time; a second one gets `busy`.
+- A date range that stops before today does not count as "caught up", so the next default run still reaches back over the days after it.
+
+### The login address
+
+After the certificate and PIN step, ANAF sends the browser to `https://localhost/callback?code=...`. Nothing listens there, so the browser shows "can't reach this page". That is expected: the address bar now holds the one-time code. Copy the whole address and hand it back (paste it into `login`, or pass it to `login-finish`). The code is reported to last about a minute and works once; if it is too late you get `login_code_expired` and repeat the login.
+
+## Output
+
+Success (from `sync`):
+
+```json
+{
+  "ok": true,
+  "cui": "12345674",
+  "window_days": 7,
+  "listed": 12,
+  "new_count": 1,
+  "failed_count": 0,
+  "folder": "C:\\efactura\\data\\invoices\\11-11-2026",
+  "new": [
+    {
+      "id": "3001234567",
+      "cui": "12345674",
+      "message_type": "FACTURA PRIMITA",
+      "anaf_created_at": "2026-11-10T14:15",
+      "invoice_number": "FV-1042",
+      "invoice_issue_date": "2026-11-09",
+      "supplier_cui": "87654321",
+      "supplier_name": "Furnizor SRL",
+      "total_payable": "1190.00",
+      "currency": "RON",
+      "xml_path": "C:\\efactura\\data\\invoices\\11-11-2026\\12345674_primita_3001234567.xml",
+      "possible_duplicate_of": null,
+      "uploaded_to_accounting": false
+    }
+  ],
+  "failed": []
+}
+```
+
+(Entries carry a few more fields: due date, type code, customer, totals, `first_seen_at`, `uploaded_at`, and the classification fields described [below](#classification-and-saga). The reply also has a `classification` summary and `saga_folder`.)
+
+Failure (from any command):
+
+```json
+{ "ok": false, "error": { "code": "login_needed", "message": "..." } }
+```
+
+| Exit code | Meaning |
+|---|---|
+| 0 | `ok` is true |
+| 3 | `login_needed`: someone must plug in the token and log in |
+| 1 | any other failure |
+
+| Error code | Meaning |
+|---|---|
+| `login_needed` | No saved login, or ANAF no longer accepts it. |
+| `login_code_expired` | The pasted address was too old or already used. Repeat the login. |
+| `invalid_cui` | Not a CUI, or the check digit does not match. |
+| `invalid_input` | A wrong or missing argument. |
+| `no_spv_rights` | The certificate holder has no SPV rights for that company. |
+| `anaf_limit_reached` | ANAF's daily call limit (e.g. 10 downloads a day per message). |
+| `anaf_error` | ANAF refused or answered something unexpected; the message carries ANAF's text. |
+| `network_error` | ANAF could not be reached. |
+| `not_found` | No saved message with that id. |
+| `busy` | Another sync or login renewal is running. |
+| `config_error` | `config.toml` is missing or incomplete, or ANAF rejected the client ID/secret. |
+| `not_classifiable` | The message is not a received invoice, is marked as uploaded, was saved outside classification, or is already classified. `force` lifts the last two. |
+| `jev_error` | OpenRouter refused or could not be reached; the message says why (key, credit, rate limit). |
+| `internal_error` | A bug. The details are in `data/efactura.log`. |
+
+A `sync` in which some messages failed still has `"ok": true`; the failures are listed in `failed` and are retried on the next run. `possible_duplicate_of` is set when the same supplier and invoice number were already saved under another message id (ANAF treats a re-submitted invoice as a new message).
+
+Letters outside ASCII are written as `\u....` escapes, so Romanian names are not damaged by the Windows console's code page. Nothing but the JSON is written to standard output; activity is logged to `data/efactura.log`.
+
+## Local API
+
+Start it with `uv run efactura serve` (or double-click `start.bat`). It listens on `http://127.0.0.1:8765` only, so other computers cannot reach it. Every route except `/health` needs the header `X-API-Key: <the key from config.toml>`.
+
+The screen uses the same routes under `/api/...` and needs no key. That is safe because the program only accepts a keyless request when the browser itself marks it as coming from the program's own page (`Sec-Fetch-Site: same-origin`, which a page cannot fake) and it is addressed to `autosaga.localhost`, `127.0.0.1` or `localhost` on the program's port. A page from any other site, and any other program, still needs the key.
+
+`http://127.0.0.1:8765/openapi.json` describes every route; any API tool can load it. FastAPI's interactive pages (`/docs`, `/redoc`) are switched off: they load their scripts from the internet, and on this address a page is trusted without a key.
+
+| Route | Same as |
+|---|---|
+| `GET /health` | (no key needed) is the API running? |
+| `GET /auth/status` | `auth-status` |
+| `POST /auth/login/start` | `login-start` |
+| `POST /auth/login/finish` with `{"address": "..."}` | `login-finish` |
+| `GET /anaf/messages?cui=...&days=...` | `list` |
+| `POST /sync` with `{"cui": "...", "days": 7, "classify": true}` (`days`, `classify` optional; or `"start"` and `"end"` dates; `"cover_gap": true` makes `days` a minimum) | `sync` |
+| `GET /invoices?cui=...&pending=true&type=...&since=...&classification=...` | `invoices` |
+| `GET /invoices/{id}?xml=true` | `invoice` |
+| `POST /invoices/{id}/uploaded` | `mark-uploaded` |
+| `DELETE /invoices/{id}/uploaded` | `mark-uploaded --undo` |
+| `POST /invoices/{id}/classify` with optional `{"force": true}` | `classify` |
+| `GET /review?cui=...` | `review` |
+| `POST /invoices/{id}/cont` with `{"accept": true}` or `{"cont": "628"}` (optional `"force": true`) | `set-cont` |
+| `GET /classification/settings` | `confidence` |
+| `PUT /classification/settings` with `{"min_confidence": 0.8}` | `confidence 0.8` |
+| `GET /classification/costs?since=...&until=...&group=...&cui=...` | `costs` |
+
+Routes that exist for the screen and have no command:
+
+| Route | What it does |
+|---|---|
+| `GET /clients`, `POST /clients` with `{"cui", "name"}`, `DELETE /clients/{cui}` | The client list |
+| `POST /clients/import?filename=clienti.xlsx` (the file as the body) | Add clients from Excel or CSV |
+| `POST /invoices/uploaded` with `{"ids": [...], "uploaded": true}` | Mark several invoices as uploaded, or not |
+| `GET /invoices/{id}/view` | One invoice: the row, the parsed invoice, both XML texts, Jev's answer, and `rule_suggestion` (the rule proposed from it, or `null`) |
+| `GET /rules`, `POST /rules`, `PUT /rules/{id}`, `DELETE /rules/{id}`, `POST /rules/{id}/move` | The classification rules |
+| `GET /rules/suggestions` | Rules proposed from the decisions of the last 90 days that no rule made: for each, the account, the `keywords` or `supplier_cuis` to look for, the invoices behind it, and how it would have done (`matches`, `by_cont`) |
+| `POST /rules/preview` with `{"keywords": [...], "supplier_cuis": [...], "client_cui": ...}` (all optional, as are `item_codes` and `commodity_prefixes`) | How a rule with these conditions would have done on the invoices given an account in the last 90 days. Saves nothing |
+| `POST /rules/suggestions/dismiss` with `{"invoice_ids": [...]}` | "Nu acum": stop proposing a rule for these invoices |
+| `PUT /accounts/{cont}` with `{"description"}`, `DELETE /accounts/{cont}` | The accounts Jev chooses from |
+| `PUT /classification/settings` with `{"min_confidence", "jev_instructions"}` | The confidence level and the question for Jev |
+| `GET /classification/calls?since=...&until=...&cui=...&limit=...` | What Jev was asked, newest first |
+| `GET /settings`, `PUT /settings` with `{"saga_folder"}` | The folder for SAGA |
+| `POST /settings/choose-folder`, `POST /folders/open` with `{"invoice_id"}` or `{"cui"}` | Open the computer's folder dialog; show in Explorer the folder an invoice's SAGA file is in, or a client's folder |
+| `GET /secrets`, `PUT /secrets/{key}` with `{"value"}` | The keys, in full |
+| `POST /shutdown` | Stops the program (what `efactura stop` calls). With the key only; the page cannot reach it |
+
+The body is the same JSON the command prints. HTTP status: 200 success; 400 bad input; 401 missing or wrong key; 404 unknown id or route; 409 `login_needed`, `login_code_expired`, `busy` or `not_classifiable`; 502 ANAF or OpenRouter refused or was unreachable; 500 a bug or a settings problem.
+
+## Classification and SAGA
+
+SAGA C does not read ANAF's XML. Its import ("Import date din fișiere XML") reads SAGA's own layout, which has an account (`<Cont>`) on every line. So each received invoice is given an account and rewritten in that layout.
+
+**How the account is decided**
+
+1. **Rules.** Each line is checked against the rules written on the "Reguli de clasificare" screen. The line with the largest value decides for the whole invoice. A rule belongs to every client unless it names one; a client's own rules are checked first.
+2. **Jev.** If that line matches no rule, the invoice is sent to the Jev decision model on OpenRouter, which picks one of the accounts listed on the same screen.
+3. **Review.** The invoice waits for a person when:
+   - Jev's confidence is below the confidence level (0.80 until you change it);
+   - Jev finds that no account fits, or gives no usable answer for that invoice;
+   - the same invoice (supplier, number and date) is already saved under another ANAF id, so booking it automatically would enter it twice.
+
+Every line of an invoice gets the same account.
+
+**A new database starts with examples.** Three example accounts and two example rules are put in once, so there is something to look at. Replace them on the "Reguli de clasificare" screen with the accountant's real ones; deleted examples do not come back. The accounts must exist in the company's chart of accounts in SAGA.
+
+A rule matches a line when any of its conditions holds: a keyword in the description (case and diacritics ignored, whole words, `*` at the end for any ending), the supplier's CUI (with or without `RO`), the supplier's article code, or the start of a CPV/NC code.
+
+**Proposed rules.** When no rule decided an invoice (Jev chose the account, a person accepted Jev's proposal, or a person chose it), the program proposes the rule that would have decided it. The proposal is on the invoice's screen and under "Reguli propuse" on the rules screen; the menu shows how many there are.
+
+- **What it looks for.** A word from the invoice's largest line: the first one that tells what was bought. Numbers, units of measure, link words, month names and words about the document ("nr", "conform", "contract") are never offered, nor is a word joined to digits ("Office365"), because a keyword has to stand as a word of its own; general words such as "servicii" or "abonament" are offered but not ticked. When the line says nothing telling ("Servicii conform contract"), the proposal is for the supplier instead. On the invoice's screen the person can tick other words (the rule then matches any of them) or choose the supplier. The two word lists are in `src/efactura/suggestions.py`; they are a judgement, to adjust once real invoices show what they miss.
+- **How it would have done.** Each proposal says how many of the invoices given an account in the last 90 days it matches, and on which accounts those are. All on the proposed account is shown in green; anything else in orange, to check before creating it.
+- **Creating it** adds an ordinary rule for every client, at the end of the list. "Schimb-o întâi" opens it in the rule window first, for instance to limit it to one client. No saved invoice changes: the rule applies from the next download.
+- **When it goes away.** As soon as any rule in force for that client matches the invoice, however that rule was made. "Nu acum" hides the proposal for those invoices until their account changes (choosing the same account again keeps it hidden); a later invoice of the same kind brings it back.
+- **Limits.** The rules screen lists proposals from decisions made in the last 90 days, the ones with most invoices first, 20 at most. An invoice that got its account before this feature existed takes part only after its account is chosen again.
+
+**Only new invoices are classified.** An invoice enters classification at the moment `sync` saves it. Invoices already in the database, and those saved with `--no-classify`, are never classified automatically; `classify <id> --force` does one on request. Use `sync <CUI> --days 60 --no-classify` for a first run that brings in invoices already booked by hand.
+
+**States** (`classification_status`)
+
+| State | Meaning |
+|---|---|
+| `null` | Outside classification: saved before it existed or with `--no-classify`, or not a received invoice |
+| `pending` | Waiting. OpenRouter as a whole was failing (no connection, key, credit, rate limit), or the file could not be written; the next `sync` tries again. After such a failure the rest of that run is not sent to Jev either |
+| `classified` | Account decided and SAGA file written. `classification_method` says how: `rules`, `jev`, `jev_accepted` (a person accepted Jev's suggestion) or `human` |
+| `review` | A person must decide |
+
+Each invoice also carries `cont`, `classification_reason`, `suggested_cont` and `confidence` (Jev's pick and how sure it was), `confidence_threshold` (the level at the time), `saga_xml_path` and `classification_error`.
+
+**Review**
+
+```bash
+uv run efactura review
+```
+
+lists the invoices to decide, each with Jev's suggestion, its confidence and the probability it gave every account. Then either
+
+```bash
+uv run efactura set-cont 3001234567 --accept
+```
+
+```bash
+uv run efactura set-cont 3001234567 --cont 628
+```
+
+Any account number is accepted, so analytic accounts such as `371.01` work. `set-cont` also corrects an invoice that is already classified; the SAGA file is rewritten.
+
+An invoice marked as uploaded is left alone: `classify` and `set-cont` refuse it until the flag is cleared (`mark-uploaded <id> --undo`), and it no longer appears in `review`.
+
+**The confidence level** is kept in the database, not in `config.toml`, so a flow can change it:
+
+```bash
+uv run efactura confidence 0.9
+```
+
+It starts at 0.80, which is a guess. `suggested_cont` and `cont` are both kept, so once some invoices have been reviewed you can compare what Jev suggested with what the accountant chose and move the level.
+
+**Costs.** Every request to Jev is stored in the table `jev_calls`: the request, the reply, the tokens, the cost in USD, and the error if it failed. The API key is never stored.
+
+```bash
+uv run efactura costs --since 2026-11-01
+```
+
+gives calls, tokens and cost in total and per month (`--group` changes that to day, week or year), and the average per invoice. Jev charges for input tokens only (USD 0.042 per million when this was written; check [OpenRouter's model page](https://openrouter.ai/typesafe/jev-1.14)).
+
+**What is sent to OpenRouter:** the supplier's name and fiscal code and, per line, the description, the supplier's article code, classification codes, unit, quantity, value and VAT rate. Not sent: your client company, addresses, bank accounts, phone numbers, e-mail addresses.
+
+**Setting it up:** create a key at <https://openrouter.ai/settings/keys>, add credit, and put the key in `config.toml` under `[openrouter] api_key`. Without a key the rules still work and everything else goes to review.
+
+**The SAGA files**
+
+- One file per invoice: `data/SAGA Import/<CUI>/F_<supplier code>_<number>_<date>.xml`. Characters a file name cannot hold are replaced by `-`. If two invoices would get the same name (`AB 12` and `AB/12`, or names differing only in letter case), the later one has its ANAF message id added to the number.
+- One folder per company on purpose. SAGA files an invoice under purchases whenever the supplier is not the open company, so a file imported into the wrong company would become a purchase there. Point SAGA's import screen at the folder of the company that is open.
+- In SAGA, open the "Import date" screen and choose the folder. Synchronising on "Nr.+data" skips invoices already imported. Imported invoices are not validated; the accountant checks and validates them, and can still change the account there.
+- Lines are imported on the type "Nedefinit" with the account. The supplier's article codes are left out so that SAGA does not match a stock article and take the account from it.
+- VAT per line is calculated (ANAF's file has none). Where rounding line by line drifts from the invoice's VAT total, the gap is closed one cent per line, largest lines first, so the lines add up to the invoice and none moves by more than a cent. Invoice-level discounts and charges become extra lines. Credit notes are written with negative amounts.
+- Quantity × price always gives the line value. ANAF's value already includes a discount on the line while its price does not, so in that case the price is written as value ÷ quantity. A line without a quantity is written as one unit at its value.
+- SAGA's own e-Factura screen also lists the same invoices from SPV. Import each invoice one way only.
+- To list the files waiting for SAGA: `uv run efactura invoices --classification classified --pending`. After importing, `mark-uploaded <id>`.
+
+## Using it from Power Automate Desktop
+
+These steps have not been tried in Power Automate from the machine this was built on; the action names are the standard ones.
+
+**As a command**
+
+1. *Run DOS command*: command `uv run efactura sync 12345674`, working folder = this folder. It produces `CommandOutput` (the JSON), `CommandErrorOutput` and `CommandExitCode`.
+2. Branch on `CommandExitCode`: `0` continue, `3` ask someone to log in, anything else stop and report.
+3. *Convert JSON to custom object* on `CommandOutput`, then loop over `new` (for example `%JsonAsCustomObject['new']%`). Each item has `xml_path` (ANAF's file) and, once classified, `saga_xml_path` (the file for SAGA).
+4. Invoices classified by a later run or by a person are not in `new`. To get everything waiting for SAGA, run `uv run efactura invoices --classification classified --pending`.
+5. If `classification.review` is above zero, tell someone: `uv run efactura review` lists what to decide.
+6. After SAGA has imported an invoice, run `uv run efactura mark-uploaded <id>`.
+
+**As a web request**
+
+1. Make sure the API is running: *Invoke web service* `GET http://127.0.0.1:8765/health`; if it fails, *Run application* `start-api.bat` (window style hidden) and wait a few seconds.
+2. *Invoke web service*: `POST http://127.0.0.1:8765/sync`, content type `application/json`, custom header `X-API-Key: <key>`, body `{"cui": "12345674"}`.
+   - Raise the timeout: a sync with hundreds of new invoices can take minutes.
+   - Turn off "Fail on error status" so the flow can read the JSON of a failure, and branch on the status code instead.
+3. *Convert JSON to custom object* on the response.
+
+**The yearly login from a flow**
+
+1. Call `login-start` (or `POST /auth/login/start`) and open `authorize_url` in Edge.
+2. The accountant chooses the certificate and types the PIN.
+3. When the browser shows "can't reach this page", read the address bar (for example send `Ctrl+L`, `Ctrl+C`, then *Get clipboard text*) and hand it back within a minute.
+   - Prefer the API for this step: `POST /auth/login/finish` with body `{"address": "<the address>"}`. The address travels as JSON, so nothing needs quoting.
+   - If you use the command instead, put the address in double quotes (`login-finish "<address>"`): it contains `?`, `=` and possibly `&` or `%`, which the Windows command line would otherwise split or expand.
+
+Or simply have a person run `uv run efactura login` when a flow reports exit code 3.
+
+## Where things are kept
+
+```
+data/
+  efactura.db          SQLite database
+  efactura.log         activity log
+  server.log           what the program printed while running in the background
+  invoices/
+    11-11-2026/        the day the messages were saved (not the invoice date)
+      12345674_primita_3001234567.xml      <CUI>_<type>_<message id>.xml
+  SAGA Import/         (or the folder chosen on screen)
+    12345674/          one folder per company
+      F_87654321_FV-1042_09.11.2026.xml    F_<supplier code>_<number>_<date>.xml
+```
+
+- **Database:** table `messages` (one row per ANAF message: list details, invoice fields read from the XML, the full invoice XML and ANAF's signature XML, `uploaded_to_accounting`, `uploaded_at`, the classification fields), `sync_runs` (one row per run), `jev_calls` (every request to Jev with its reply and cost), `clients`, `accounts`, `rules`, and `settings` (the confidence level, the question for Jev, and what was changed on screen: the SAGA folder and the keys). Any SQLite tool can read it. A database made by an earlier version gains the new columns when it is first opened; nothing is lost.
+- **Saved login:** `%LOCALAPPDATA%\efactura\tokens.json`, in the Windows user's private folder and outside this project. Treat it like the token and PIN: whoever copies it can read e-Factura data for every company the certificate covers until it expires.
+- **`config.toml`** holds the client secret, the API key and the OpenRouter key. It is ignored by git; do not share it.
+- **Keys changed on screen** are stored in the database as plain text, like those in `config.toml`. Treat `data/efactura.db` as a secret too.
+- **Changing the SAGA folder** affects new files only. Files already written stay where they are; each invoice remembers its own path, and the screen names every folder that still holds files waiting for SAGA.
+- The folder name format can be changed in `config.toml` (`DD-MM-YYYY` or `YYYY-MM-DD`, which sorts by date in Explorer).
+
+## Limits to know about
+
+- ANAF keeps messages for 60 days. Older ones cannot be fetched.
+- A new invoice can take up to about 15 minutes to appear in ANAF's list.
+- ANAF allows 10 downloads a day per message; skipping saved messages keeps the tool far below that.
+- ANAF's test system (`environment = "test"`) only lists what was uploaded to it, so real invoices can only be read with `environment = "prod"`.
+
+## Not yet confirmed against the real services
+
+Everything is covered by automated tests against a stand-in for ANAF. One thing was checked against the real service on 2026-11-11 with placeholder credentials: ANAF's token call accepts the client ID and secret as a Basic header and needs no certificate.
+
+The first real run on the Windows PC should confirm:
+
+- a complete login, and the one-minute lifetime of the login code (reported by open-source clients, not by ANAF's own document)
+- the file names inside ANAF's ZIP, and what a buyer-message ZIP contains (it is saved as-is either way)
+- the one-sync-at-a-time lock on Windows (tested on macOS only)
+- the Power Automate steps above
+
+For classification, nothing has yet run against the real OpenRouter or the real SAGA:
+
+- **Jev.** The request and reply shapes follow OpenRouter's published reference for `POST /api/alpha/decisions`, read on 2026-11-13. The endpoint is marked alpha. If its shape changes, Jev calls fail, invoices wait as `pending`, and the rules keep working. The first real call (`classify <id>`, then `costs`) confirms the shape and the price.
+- **SAGA's formats.** The tags and their order are from SAGA's manual. The manual does not state the date format (`dd.mm.yyyy` is assumed, as elsewhere in SAGA), the decimal format (a point), the text encoding (UTF-8), whether the fiscal code carries `RO` (written as on the invoice), or how the file name's parts are used. They are constants at the top of [src/efactura/saga.py](src/efactura/saga.py). To check them, print an outgoing invoice in SAGA with "Formular PDF": SAGA puts its own XML next to the PDF in `TEMP\Facturi`. Compare that file with one from `SAGA Import`.
+- **`<Cont>` on import.** The manual lists the tag but does not say that the account lands on the "Nedefinit" line. Import one file into a test company or a backup first.
+- **Foreign-currency invoices** are written with their currency; SAGA books those in a separate screen and the import is untried.
+- **Jev's accuracy** on Romanian invoices is unknown until its suggestions are compared with the accountant's choices.
+
+For the installer:
+
+- **`install.ps1` has never been run.** It is plain Windows PowerShell 5.1, checked by reading only. Run it first on a spare Windows account or a test PC.
+- **Starting without a window** (`start`, `open`, the two shortcuts) uses Windows-only process flags that could not be tried on a Mac. The same commands start and stop the program correctly on macOS. If the background start fails on Windows, `start.bat` still works.
+- **Port 80** is chosen when nothing listens on it at install time. If another program takes it later, the program will not start; change `[api] port` in `config.toml`. A double click on the Desktop shortcut then shows the reason in a message box.
+- **`winget`** is needed only when Git is missing; on a Windows without it the script stops and names the Git download page.
+
+For the screen:
+
+- **The folder dialog and "Deschide folderul"** use Windows itself and were only tried as far as this Mac allows. The dialog may open behind the browser window; typing the path always works.
+- **The page was checked against a made-up database** (see [The screen](#the-screen)), not against real ANAF data.
+- **Other Windows accounts on the same PC** could open the page while the program is running.
+
+Not covered: an account per line (every line gets the invoice's account), partial VAT deduction (`TipDeducere`), stock articles, sent invoices, encrypting the stored keys.
+
+## Development
+
+Everything, with one command (API and page, both reloading as the code changes):
+
+```bash
+uv run efactura dev
+```
+
+Tests:
+
+```bash
+uv run pytest
+```
+
+```bash
+pnpm --dir frontend test
+```
+
+The page's code is in `frontend/src`, one folder per screen. All text on screen is Romanian and written in the components; the program's own error messages are English and are translated per error code in `frontend/src/errorMessages.ts`.
