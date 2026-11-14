@@ -190,17 +190,17 @@ The menu on the left has a fixed width and the screen's content takes the rest. 
 pnpm --dir frontend build
 ```
 
-**Trying it without ANAF.** This builds a made-up database in `demo/` and starts everything against it:
+**Trying it without ANAF.** One command builds a made-up copy in `demo/` the first time and starts everything on it:
 
 ```bash
-uv run python scripts/seed_demo.py
+uv run efactura demo
 ```
 
-```bash
-uv run efactura --config demo/config.toml dev
-```
+Then open the address it prints. A top-bar label, "Date de probă", says the data is made up. Add `--fresh` to throw away what was done in it and build it again, or `--port N` to use another port.
 
-Then open `http://localhost:5173/ui/`. Downloading from ANAF does not work there; everything else does.
+What works: each download brings one or two made-up invoices; the ANAF login is finished by pasting the address the browser ends on; Jev answers from a table of words, and a line with "nimic" or "eroare" in it makes him decline or fail, so both can be seen. What is not covered: program updates and the Windows certificate login.
+
+It cannot touch real data: it uses only its own `demo/` folder, which the program starts on only because of a marker file made in it, its settings say it is a demo, and it listens on port 8770, not the usual one. It needs `uv`; `pnpm` is needed only to change the page (without it, the built page is served).
 
 ## Commands
 
@@ -208,6 +208,7 @@ Run them from this folder. Use `--config PATH` before the command if `config.tom
 
 | Command | What it does |
 |---|---|
+| `uv run efactura demo [--fresh] [--port N]` | Builds the made-up demo in `demo/` if needed, then starts the program on it. See "Trying it without ANAF". |
 | `uv run efactura auth-status` | Reports `valid`, `needs_refresh` or `needs_login`, with expiry dates. Contacts nothing. |
 | `uv run efactura login` | For a person: opens ANAF's login in the browser, then waits for the pasted address. |
 | `uv run efactura login-start [--open]` | Returns the ANAF login address (for a flow that drives the browser). |

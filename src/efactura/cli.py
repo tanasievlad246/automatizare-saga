@@ -223,6 +223,9 @@ def _parser() -> argparse.ArgumentParser:
 
     setup = commands.add_parser("setup", help="write the first config.toml, once (used by the installer)")
     setup.add_argument("--port", type=int, help="default: 8765, or the next free port after it")
+    made_up = commands.add_parser("demo", help="start the program on made-up data, building it first if needed")
+    made_up.add_argument("--fresh", action="store_true", help="build the demo again, dropping what was done in it")
+    made_up.add_argument("--port", type=int, help="default: the one in the demo's settings")
     commands.add_parser("start", help="run the program in the background, unless it already runs")
     commands.add_parser("open", help="start it if needed, then open the page in the browser")
     commands.add_parser("stop", help="stop the program running in the background")
@@ -241,6 +244,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "setup":  # the one command that runs before there are settings
             _emit(background.first_settings(config_path, args.port))
             return EXIT_OK
+        if args.command == "demo":  # also before there are settings: it makes its own
+            return _run_demo(args)
         cfg = load_config(args.config)
         if args.config:  # so a restarted dev server reads the same settings file
             os.environ["EFACTURA_CONFIG"] = str(Path(args.config).resolve())
@@ -261,6 +266,39 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_FAILURE
     if result is not None:
         _emit(result)
+    return EXIT_OK
+
+
+def _demo_config(fresh: bool) -> Config:
+    """The demo's settings, building the demo first when it is missing or cannot be trusted."""
+    folder = demo.FOLDER  # read here, not at import: a test points it elsewhere
+    if not fresh:
+        try:
+            cfg = load_config(folder / "config.toml")
+            if cfg.demo:
+                return cfg
+        except EfacturaError as exc:
+            if exc.code != CONFIG_ERROR:
+                raise
+        # Settings that do not say demo, or say it over data without the marker, are a folder
+        # left by an earlier version: started as they are, they would reach the real ANAF.
+    return demo.build(folder)
+
+
+def _run_demo(args: argparse.Namespace) -> int:
+    cfg = _demo_config(args.fresh)
+    os.environ["EFACTURA_CONFIG"] = str(demo.FOLDER / "config.toml")  # so a restarted dev server reads the same settings
+    configure_logging(cfg)
+    port = args.port or cfg.api_port
+    address = f"http://127.0.0.1:{port}"
+    said = {"listening": address, "routes": f"{address}/openapi.json"}
+    if shutil.which("pnpm"):
+        _emit({"ok": True, "page": f"http://localhost:{DEV_PAGE_PORT}{PAGE_PATH}", **said})
+        run_dev(cfg, port)
+    else:
+        _emit({"ok": True, "page": page_address(port), **said,
+               "note": "pnpm was not found, so the built page is served."})
+        run_server(cfg, port)
     return EXIT_OK
 
 

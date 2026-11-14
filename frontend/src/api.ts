@@ -65,7 +65,7 @@ export const api = {
   startLogin: () => call<{ authorize_url: string }>('POST', '/auth/login/start'),
   finishLogin: (address: string) => call<AuthStatus>('POST', '/auth/login/finish', { address }),
 
-  sagaFolder: () => call<{ saga_folder: string }>('GET', '/settings'),
+  sagaFolder: () => call<{ saga_folder: string; demo?: boolean }>('GET', '/settings'),
   setSagaFolder: (saga_folder: string) => call<{ saga_folder: string }>('PUT', '/settings', { saga_folder }),
   /** `purpose` says which folder is being picked, so the dialog is titled for it and opens where that folder is. */
   chooseFolder: (purpose?: 'backups') =>

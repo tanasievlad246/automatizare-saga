@@ -10,6 +10,7 @@ import { countOf } from '../format'
 import type { UpdateStatus } from '../types'
 import { AnafConnectionBadge } from './AnafConnectionBadge'
 import { Brand } from './Brand'
+import { DemoLabel } from './DemoLabel'
 import { ProgramVersion } from './ProgramVersion'
 import { SagaFolderChip } from './SagaFolderChip'
 import { UpdateDialog } from './UpdateDialog'
@@ -37,6 +38,8 @@ export function AppShell() {
   // must not keep yesterday's answer.
   const proposedRules =
     useQuery({ queryKey: ['proposed-rules'], queryFn: api.proposedRules, refetchOnWindowFocus: true }).data?.count ?? 0
+  // The same question the SAGA folder chip asks: one answer, shared.
+  const isDemo = useQuery({ queryKey: ['saga-folder'], queryFn: api.sagaFolder }).data?.demo === true
   const update = useQuery({ queryKey: ['program-update'], queryFn: () => api.updateStatus(), refetchOnWindowFocus: true }).data
   // The update window is held here, not by the notice that opens it: once the update has
   // worked the notice goes away, and it must not take the window and its "Continuă" with it.
@@ -48,6 +51,7 @@ export function AppShell() {
           a small screen. The SAGA folder is what gives way, by showing less of its path. */}
       <header className="sticky top-0 z-30 flex flex-wrap items-center gap-x-5 gap-y-3 border-b bg-card px-7 py-3 min-[60rem]:flex-nowrap">
         <Brand />
+        {isDemo && <DemoLabel />}
         <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2.5 min-[60rem]:flex-nowrap">
           <SagaFolderChip />
           <AnafConnectionBadge />

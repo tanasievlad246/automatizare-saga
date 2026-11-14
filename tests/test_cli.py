@@ -352,3 +352,55 @@ def test_one_bad_round_of_housekeeping_does_not_end_it_for_good(monkeypatch, tmp
     cli._keep_house_until(None, stopped)  # returns only because the second round was reached
 
     assert rounds == [0, 1]
+
+
+def test_the_demo_command_builds_the_demo_once_and_starts_on_it(monkeypatch, tmp_path, capsys):
+    from efactura import cli, demo
+
+    started = []
+    monkeypatch.setattr(demo, "FOLDER", tmp_path / "demo")
+    monkeypatch.setattr(cli, "run_dev", lambda cfg, port: started.append(("dev", cfg.demo, port)))
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/pnpm")
+
+    assert cli.main(["demo", "--port", "9100"]) == 0
+    kept = tmp_path / "demo" / "data" / "kept.txt"
+    kept.write_text("x")
+    cli.main(["demo", "--port", "9100"])
+    still_there = kept.exists()
+    cli.main(["demo", "--fresh", "--port", "9100"])
+
+    assert still_there and not kept.exists()
+    assert started == [("dev", True, 9100)] * 3
+
+
+def test_without_pnpm_the_demo_serves_the_built_page(monkeypatch, tmp_path, capsys):
+    import json
+
+    from efactura import cli, demo
+
+    started = []
+    monkeypatch.setattr(demo, "FOLDER", tmp_path / "demo")
+    monkeypatch.setattr(cli, "run_server", lambda cfg, port: started.append(("serve", cfg.demo, port)))
+    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
+
+    cli.main(["demo", "--port", "9100"])
+
+    said = json.loads(capsys.readouterr().out)
+    assert started == [("serve", True, 9100)] and "pnpm" in said["note"] and said["page"].endswith(":9100/ui/")
+
+
+def test_a_demo_folder_left_by_an_earlier_version_is_built_again(monkeypatch, tmp_path):
+    from efactura import cli, demo
+
+    old = tmp_path / "demo"
+    (old / "data").mkdir(parents=True)
+    (old / "config.toml").write_text('[api]\nkey = "k"\n', encoding="utf-8")  # says nothing of demo
+    (old / "data" / "old.txt").write_text("x")
+    started = []
+    monkeypatch.setattr(demo, "FOLDER", old)
+    monkeypatch.setattr(cli, "run_dev", lambda cfg, port: started.append((cfg.demo, port)))
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/pnpm")
+
+    cli.main(["demo"])
+
+    assert started == [(True, 8770)] and not (old / "data" / "old.txt").exists()
