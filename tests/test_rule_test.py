@@ -196,6 +196,20 @@ def test_a_jev_that_fails_is_reported_at_once_not_tried_again(desk, openrouter):
     assert result["jev"]["error"] and len(openrouter.fail_with) == 1  # one attempt used, one left
 
 
+@pytest.mark.parametrize("failure, status", [(401, 401), (402, 402), (403, 403), (502, 502), ("unreachable", None)])
+def test_a_failed_call_says_what_openrouter_answered(desk, openrouter, failure, status):
+    # A refused key or an empty account is not helped by waiting; the screen tells them apart by this.
+    openrouter.fail_with = [failure]
+
+    result = desk.test_rules(lines=CIMENT)
+
+    assert (result["why_not"], result["jev"]["http_status"]) == ("jev_failed", status)
+
+
+def test_an_answered_call_carries_its_status_too(desk):
+    assert desk.test_rules(lines=CIMENT)["jev"]["http_status"] == 200
+
+
 def test_numbers_as_people_type_them(desk):
     typed = [{"description": "Ciment", "quantity": " 20 ", "unit_price": "28,50"}]
     assert desk.test_rules(lines=typed)["decided_by"] == "jev"

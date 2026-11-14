@@ -1046,6 +1046,9 @@ class Service:
             "cost_usd": call.cost_usd,
             "duration_ms": call.duration_ms,
             "error": None if answer else (error or "Jev gave no answer."),
+            # None when OpenRouter was not reached. A refused key or an empty account (401,
+            # 402, 403) is not helped by waiting, and the screen says so.
+            "http_status": call.status,
         }
         if answer is None:
             return left("jev_failed", f"Jev could not decide this invoice: {said['error']}", jev=said)

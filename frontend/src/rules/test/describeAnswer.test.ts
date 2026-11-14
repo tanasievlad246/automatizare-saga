@@ -4,7 +4,7 @@ import { describeAnswer } from './describeAnswer'
 const nothing = { rule: null, jev: null, why_not: null, reason: '', suggestion: null, cont: null, account_description: null, deciding_line: null }
 const jev = (more: object = {}) => ({
   choice: '302', confidence: 0.93, threshold: 0.8, refused: false, probabilities: { '302': 0.93, '371': 0.27, '628': 0.09 },
-  cost_usd: 0.00002, duration_ms: 1400, error: null, ...more,
+  cost_usd: 0.00002, duration_ms: 1400, error: null, http_status: 200, ...more,
 })
 const answer = (more: object) => ({ ...nothing, decided_by: 'nobody', ...more }) as never
 
@@ -59,10 +59,18 @@ describe('the answer to a trial invoice', () => {
   })
 
   it('says Jev did not answer, with the program\'s words under the technical details', () => {
-    const said = describeAnswer(answer({ why_not: 'jev_failed', jev: jev({ choice: null, error: 'HTTP 502 from OpenRouter' }) }), 'rules_then_jev')
+    const said = describeAnswer(answer({ why_not: 'jev_failed', jev: jev({ choice: null, error: 'HTTP 502 from OpenRouter', http_status: 502 }) }), 'rules_then_jev')
     expect(said.sentences).toEqual(['Jev nu a răspuns. Încercați din nou puțin mai târziu.'])
     expect(said.technical).toBe('HTTP 502 from OpenRouter')
+    const unreached = describeAnswer(answer({ why_not: 'jev_failed', jev: jev({ choice: null, error: 'connection reset', http_status: null }) }), 'rules_then_jev')
+    expect(unreached.sentences).toEqual(['Jev nu a răspuns. Încercați din nou puțin mai târziu.'])
     // A request too large to send has no answer from Jev at all; the program's own line is shown.
     expect(describeAnswer(answer({ why_not: 'jev_failed', reason: 'Does not fit in one request.' }), 'rules_then_jev').technical).toBe('Does not fit in one request.')
+  })
+
+  it.each([401, 402, 403])('says a refusal with HTTP %i is the key or the credit, which waiting does not mend', (status) => {
+    const said = describeAnswer(answer({ why_not: 'jev_failed', jev: jev({ choice: null, error: `OpenRouter refused (HTTP ${status})`, http_status: status }) }), 'rules_then_jev')
+    expect(said).toMatchObject({ title: 'Jev nu a putut fi întrebat.', technical: `OpenRouter refused (HTTP ${status})` })
+    expect(said.sentences).toEqual(['OpenRouter a refuzat întrebarea. Verificați cheia OpenRouter și creditul din cont.'])
   })
 })

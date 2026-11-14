@@ -20,6 +20,9 @@ const REASONS_NOBODY_WAS_ASKED: Record<string, string[]> = {
   no_accounts: ['Nu există niciun cont din care Jev să aleagă. Le adăugați la „Reguli de clasificare”.'],
   jev_failed: ['Jev nu a răspuns. Încercați din nou puțin mai târziu.'],
 }
+// OpenRouter turned the key away (401, 403) or the account has no credit left (402): waiting does not help.
+const REFUSED_BY_OPENROUTER = [401, 402, 403]
+const REFUSED_SENTENCES = ['OpenRouter a refuzat întrebarea. Verificați cheia OpenRouter și creditul din cont.']
 
 /**
  * What the screen says about the program's answer. What to say comes from `why_not`, not from
@@ -77,9 +80,10 @@ export function describeAnswer(result: RuleTestResult, ask: TrialAsk): Described
     }
   }
 
+  const refused = result.why_not === 'jev_failed' && jev?.http_status != null && REFUSED_BY_OPENROUTER.includes(jev.http_status)
   return {
     tone: 'attention', title: 'Jev nu a putut fi întrebat.', subtitle: '', label: null,
-    sentences: REASONS_NOBODY_WAS_ASKED[result.why_not ?? ''] ?? [],
+    sentences: refused ? REFUSED_SENTENCES : (REASONS_NOBODY_WAS_ASKED[result.why_not ?? ''] ?? []),
     technical: result.why_not === 'jev_failed' ? (jev?.error ?? result.reason) : null,
   }
 }

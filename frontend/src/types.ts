@@ -251,6 +251,7 @@ export type TrialJev = {
   cost_usd: number | null
   duration_ms: number | null
   error: string | null
+  http_status: number | null // what OpenRouter answered; null when it was not reached
 }
 
 export type RuleTestResult = {
