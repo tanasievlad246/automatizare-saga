@@ -246,7 +246,7 @@ def test_a_row_with_only_a_description_is_one_at_no_price_and_a_rule_on_a_word_d
 
 @pytest.mark.parametrize("typed, read", [
     ("12 000", "12000"),
-    ("12 000", "12000"),  # the space a copied number often carries
+    ("12\u00a0000", "12000"),  # the space a copied number often carries
     ("1.234,50", "1234.50"),
     ("28,50", "28.50"),
     ("28.50", "28.50"),
