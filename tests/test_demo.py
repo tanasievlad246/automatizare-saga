@@ -29,6 +29,21 @@ def test_building_again_starts_from_nothing(tmp_path):
     assert not (cfg.data_dir / "left-over.txt").exists()
 
 
+def test_a_demo_folder_still_in_use_is_a_settings_error_that_says_to_stop_the_demo(tmp_path, monkeypatch):
+    demo.build(tmp_path / "demo")
+
+    def held_open(path, ignore_errors=False, **kwargs):  # Windows, with a file a running demo has open
+        if not ignore_errors:
+            raise PermissionError(13, "The process cannot access the file because it is being used by another process", str(path))
+
+    monkeypatch.setattr(demo.shutil, "rmtree", held_open)
+    with pytest.raises(EfacturaError) as refused:
+        demo.build(tmp_path / "demo")
+
+    assert refused.value.code == "config_error" and "in use" in refused.value.message
+    assert "stop the running demo" in refused.value.message
+
+
 def test_settings_are_demo_only_when_they_say_so(tmp_path):
     plain = tmp_path / "config.toml"
     plain.write_text('[api]\nkey = "k"\n', encoding="utf-8")

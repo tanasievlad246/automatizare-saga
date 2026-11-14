@@ -21,6 +21,7 @@ import httpx
 
 from . import auth
 from .config import DEMO_MARKER, Config, load_config
+from .errors import CONFIG_ERROR, EfacturaError
 from .service import Service
 from .standins import FakeAnaf, FakeOpenRouter, line, rich_invoice_xml
 
@@ -112,7 +113,16 @@ def _jev() -> FakeOpenRouter:
 
 def build(folder: Path, now: datetime | None = None) -> Config:
     """Make the demo in `folder` from nothing and return its settings."""
-    shutil.rmtree(folder, ignore_errors=True)
+    if folder.exists():
+        try:
+            shutil.rmtree(folder)
+        except OSError as exc:
+            # On Windows a file a running demo still has open cannot be deleted.
+            raise EfacturaError(
+                CONFIG_ERROR,
+                f"The demo folder {folder} is in use and cannot be built again: stop the running demo "
+                f"first, then try again. ({exc})",
+            ) from None
     folder.mkdir(parents=True)
     (folder / "config.toml").write_text(CONFIG, encoding="utf-8")
     # The marker comes before the settings are read: they say [demo], which is refused
