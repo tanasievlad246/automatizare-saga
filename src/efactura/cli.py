@@ -14,7 +14,7 @@ import threading
 import webbrowser
 from pathlib import Path
 
-from . import background
+from . import background, update
 from .anaf import TYPE_PREFIXES
 from .config import Config, load_config, page_address
 from .errors import (
@@ -205,6 +205,8 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("start", help="run the program in the background, unless it already runs")
     commands.add_parser("open", help="start it if needed, then open the page in the browser")
     commands.add_parser("stop", help="stop the program running in the background")
+    newer = commands.add_parser("update", help="move this installed copy to the newest release")
+    newer.add_argument("--check", action="store_true", help="only say whether a newer release exists")
     return parser
 
 
@@ -247,6 +249,8 @@ def _dispatch(args: argparse.Namespace, cfg: Config, config_path: Path) -> dict 
             return started
         case "stop":
             return background.stop(cfg)
+        case "update":
+            return update.status(cfg, check=True) if args.check else update.update(cfg)
 
     if args.command in ("serve", "dev"):
         cfg.require_api_key()

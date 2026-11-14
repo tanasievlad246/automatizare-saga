@@ -168,3 +168,15 @@ export type JevCall = {
 }
 
 export type Secret = { key: string; value: string; editable: boolean }
+
+/** Which release of the program is installed, and whether a newer one exists. */
+export type UpdateStatus = {
+  version: string
+  installed_release: string | null
+  latest_release: string | null
+  update_available: boolean
+  can_update: boolean // false for a copy the installer did not make
+  checked_at: string | null
+  check_error: string | null
+  last_update: { at: string; ok: boolean; from: string | null; to: string; error: string | null } | null
+}

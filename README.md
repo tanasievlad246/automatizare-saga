@@ -50,9 +50,9 @@ What it does:
 5. **Two shortcuts.** One in the Windows Startup folder starts the program, without a window, each time that user signs in. One on the Desktop, "e-Factura pentru SAGA", opens the page and starts the program first if it is not running.
 6. The program is started and the page opens at **`http://autosaga.localhost:8765`** (with the port from step 4).
 
-Then, on the page: fill in the ANAF client ID and secret and the OpenRouter key under "Chei și parole", and connect to ANAF. Step 2 of [One-time setup](#one-time-setup) below, registering the application with ANAF, still has to be done by hand.
+Then, on the page: fill in the ANAF client ID and secret and the OpenRouter key under "Chei și parole", and connect to ANAF. Getting the client ID and secret from ANAF is done by hand, once: [README-ANAF.md](README-ANAF.md) explains it in Romanian, and the "Chei și parole" screen links to it.
 
-- **Updating:** run the script again. It stops the program, moves the folder to the newest release and starts it again. `config.toml` and `data\` are not touched.
+- **Updating:** on the page, press "Actualizează programul" when it says a new version exists; see [Updating](#updating). Running the script again does the same.
 - **Removing:** `install.ps1 -Uninstall` stops the program and removes the two shortcuts. The folder, with the settings and every saved invoice, stays until it is deleted by hand.
 - **Other programs** (a Power Automate flow) reach the local API at `http://127.0.0.1:8765` (the port in `config.toml`), with the key from the same file.
 - **Why the address needs no hosts-file entry.** Chrome, Edge and Firefox open any name ending in `.localhost` on the computer itself, and treat it as they treat `localhost`. A made-up name such as `local.autosaga` would need the hosts file, would be marked "Not secure", and the page could no longer prove itself to the program.
@@ -61,16 +61,36 @@ Then, on the page: fill in the ANAF client ID and secret and the OpenRouter key 
 
 `install.ps1` was written on a Mac without PowerShell and has had one run on Windows so far, which got as far as starting the program. See [Not yet confirmed](#not-yet-confirmed-against-the-real-services).
 
+## Updating
+
+An installed copy updates itself to the newest release, from the page or from the terminal:
+
+- **On the page:** when a newer release exists, a notice appears on top of every screen with the button "Actualizează programul". The foot of the menu shows the installed version and "Caută o versiune nouă", which looks at once. Otherwise the program looks at most every twelve hours.
+- **In the terminal:** `efactura update` updates, `efactura update --check` only says whether a newer release exists.
+
+What an update does: it stops the program, copies the database, moves the folder to the newest release tag, installs that release's dependencies and starts the program again. If any step fails, the folder goes back to the release it had and the program is started again on that one.
+
+**The database and the settings are not replaced:**
+
+- `config.toml` and `data\` are not part of any release, so changing release does not touch them.
+- Git would silently overwrite such a file if a release ever came to contain one. Before anything is stopped, the update checks the new release for files at those two places and refuses it if there are any.
+- A copy of the database is written to `data\backups\` before each update, named after the release being left and the time. The last three are kept.
+- A newer release may add columns to the database when it first opens it; nothing is removed.
+
+Only a copy made by `install.ps1` can be updated this way: a folder standing on a release tag. A development checkout on a branch is refused, and the page shows no update button there. Every tag counts as a release, and the highest version is the newest.
+
+How the last update ended is kept in `data\last-update.json`, and what it printed in `data\update.log`.
+
 ## One-time setup
 
 These are the steps by hand, for a PC set up without `install.ps1`.
 
 
 1. **Windows PC:** the token's driver is installed and logging in to SPV works in Edge or Chrome.
-2. **Register an application with ANAF**, logged in with the same certificate: anaf.ro → Servicii Online → Înregistrare utilizatori → Dezvoltatori aplicații → Profil OAuth → "Generare Client ID".
+2. **Register an application with ANAF** to get the client ID and client secret. [README-ANAF.md](README-ANAF.md) has the steps in Romanian, for the accountant. In short: <https://www.anaf.ro/InregOauth> (anaf.ro → Servicii Online → Înregistrare utilizatori → "Înregistrare pentru API-uri"), sign in, then "Editare profil Oauth" → "Gestionare aplicații" → "Generare Client ID".
    - Service: E-Factura.
-   - Callback URL: `https://localhost/callback` (must be `https://`; it is reported that an application cannot be edited after it is created, so type it carefully).
-   - Note the **client ID** and **client secret**.
+   - Callback URL: `https://localhost/callback` (must be `https://`; ANAF's procedure describes deleting an application, not editing one, so type it carefully).
+   - Click the application's row to see the **client ID** and **client secret**.
 3. **Install uv** (it installs Python and the dependencies by itself): see <https://docs.astral.sh/uv/getting-started/installation/>, or `winget install --id=astral-sh.uv -e`.
 4. **Copy this folder** to a local disk on the PC (not a network share: the database must be local).
 5. **Create the settings file:** copy `config.example.toml` to `config.toml` and fill in `client_id`, `client_secret` and, for the local API, `[api] key` (any long random text).
@@ -96,6 +116,8 @@ The page opens at `http://autosaga.localhost:8765/ui/`. `http://127.0.0.1:8765/u
 | **Reguli de clasificare** | Rules proposed from recent decisions, the rules, the accounts Jev chooses from, how sure Jev must be, the question Jev is asked |
 | **Costuri Jev** | Cost between two dates, by day, week, month or year, and every invoice Jev classified |
 | **Chei și parole** | The OpenRouter key and ANAF client details (hidden until asked for, changeable), and when the ANAF login expires |
+
+On every screen, a notice appears on top when a newer release of the program exists, and the foot of the menu shows the installed version; see [Updating](#updating).
 
 On every screen, the top bar holds the **folder for SAGA** (type it, or "Alege folderul" opens Windows' own folder dialog) and the **ANAF connection** with the days left; clicking it opens the login steps.
 
@@ -152,6 +174,7 @@ Run them from this folder. Use `--config PATH` before the command if `config.tom
 | `uv run efactura start` | Runs the program in the background, without a window, unless it already runs. What it prints goes to `data/server.log`. |
 | `uv run efactura open` | `start`, then opens the page in the browser. This is what the Desktop shortcut runs. |
 | `uv run efactura stop` | Stops the program running in the background. |
+| `uv run efactura update [--check]` | Moves an installed copy to the newest release, keeping `config.toml` and the data; `--check` only reports. See [Updating](#updating). |
 
 Notes:
 
@@ -280,6 +303,8 @@ Routes that exist for the screen and have no command:
 | `POST /settings/choose-folder`, `POST /folders/open` with `{"invoice_id"}` or `{"cui"}` | Open the computer's folder dialog; show in Explorer the folder an invoice's SAGA file is in, or a client's folder |
 | `GET /secrets`, `PUT /secrets/{key}` with `{"value"}` | The keys, in full |
 | `POST /shutdown` | Stops the program (what `efactura stop` calls). With the key only; the page cannot reach it |
+| `GET /update?check=true` | The installed release, the newest one, whether an update exists and how the last update ended. `check` asks the remote now |
+| `POST /update` | Starts the update as a process of its own and answers at once; the program stops and comes back on the new release |
 
 The body is the same JSON the command prints. HTTP status: 200 success; 400 bad input; 401 missing or wrong key; 404 unknown id or route; 409 `login_needed`, `login_code_expired`, `busy` or `not_classifiable`; 502 ANAF or OpenRouter refused or was unreachable; 500 a bug or a settings problem.
 
@@ -412,6 +437,9 @@ data/
   efactura.db          SQLite database
   efactura.log         activity log
   server.log           what the program printed while running in the background
+  update.log           what the last update printed
+  last-update.json     how the last update ended
+  backups/             copies of the database made before each update (the last three)
   invoices/
     11-11-2026/        the day the messages were saved (not the invoice date)
       12345674_primita_3001234567.xml      <CUI>_<type>_<message id>.xml
@@ -459,6 +487,7 @@ For the installer:
 - **Starting without a window** (`start`, `open`, the two shortcuts) uses Windows-only process flags that could not be tried on a Mac. The same commands start and stop the program correctly on macOS. If the background start fails on Windows, `start.bat` still works.
 - **The port** is chosen at install time: 8765, or the next free one. If another program takes it later, the program will not start; change `[api] port` in `config.toml`. A double click on the Desktop shortcut then shows the reason in a message box.
 - **First run on Windows, 2026-11-14:** `install.ps1` ran as far as starting the program, which then reported the port as taken, for port 80 and for a free port alike. The cause was this program's own check: Windows takes about two seconds to refuse a connection to a port nobody listens on, and that wait was read as another program holding the port. Fixed in 0.1.1; the start itself is still to be confirmed.
+- **Updating from the page or with `efactura update`** was run for real on macOS (page button and terminal, with a running program, the database kept and copied). On Windows it has not been run: files in use there cannot be replaced, so if installing the new release's dependencies fails, the update goes back to the old release and says so; running `install.ps1` again remains the fallback.
 - **`winget`** is needed only when Git is missing; on a Windows without it the script stops and names the Git download page.
 
 For the screen:

@@ -18,6 +18,7 @@ UNAUTHORIZED = "unauthorized"
 INTERNAL_ERROR = "internal_error"
 JEV_ERROR = "jev_error"
 NOT_CLASSIFIABLE = "not_classifiable"
+UPDATE_ERROR = "update_error"
 
 
 class EfacturaError(Exception):

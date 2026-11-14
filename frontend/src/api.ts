@@ -2,7 +2,7 @@
 
 import type {
   AuthStatus, Client, CostGroup, Costs, ImportResult, Invoice, InvoiceView, JevCall, ProposedRules,
-  RuleEvidence, RuleFields, RulesOverview, Secret, SyncResult,
+  RuleEvidence, RuleFields, RulesOverview, Secret, SyncResult, UpdateStatus,
 } from './types'
 
 /** What the program answers when it refuses: a stable code and an English explanation. */
@@ -95,6 +95,11 @@ export const api = {
     call<Costs>('GET', `/classification/costs${query({ ...range, group })}`),
   jevCalls: (range: CostRange) =>
     call<{ calls: JevCall[] }>('GET', `/classification/calls${query({ ...range, limit: MOST_CALLS_LISTED })}`),
+
+  /** `lookNow` asks GitHub at once; otherwise the answer of the last twelve hours is given. */
+  updateStatus: (lookNow = false) => call<UpdateStatus>('GET', `/update${query({ check: lookNow || undefined })}`),
+  /** The program stops, moves to the newest release and starts again. Data and settings stay. */
+  startUpdate: () => call('POST', '/update'),
 
   secrets: () => call<{ secrets: Secret[] }>('GET', '/secrets'),
   setSecret: (key: string, value: string) => call('PUT', `/secrets/${key}`, { value }),

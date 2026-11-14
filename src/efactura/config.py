@@ -42,6 +42,7 @@ class Config:
     openrouter_api_key: str = ""  # empty: classification runs on the rules alone
     jev_model: str = DEFAULT_JEV_MODEL
     saga_import_dir: Path | None = None  # None: "SAGA Import" inside the data folder
+    path: Path | None = None  # the settings file these were read from
 
     @property
     def saga_dir(self) -> Path:
@@ -180,4 +181,5 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
         saga_import_dir=(
             _beside(config_path, str(saga_dir)) if saga_dir else data_dir / SAGA_IMPORT_FOLDER
         ),
+        path=config_path,
     )

@@ -17,6 +17,7 @@ const MESSAGES: Record<string, string> = {
   busy: 'Se descarcă deja facturi. Așteptați să se termine, apoi încercați din nou.',
   config_error: 'Lipsește o setare. Verificați pagina „Chei și parole”.',
   not_classifiable: 'Contul acestei facturi nu poate fi schimbat acum.',
+  update_error: 'Programul nu a putut fi actualizat. A rămas la versiunea pe care o avea.',
   jev_error: 'Jev nu a putut fi întrebat. Verificați cheia OpenRouter și creditul din cont.',
   unauthorized: 'Pagina nu mai are voie să vorbească cu programul. Închideți pagina și porniți programul din nou.',
   unreachable: 'Programul nu răspunde. Verificați dacă este pornit.',

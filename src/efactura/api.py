@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import __version__
+from . import __version__, update
 from .config import PAGE_HOSTNAME, Config, load_config
 from .errors import (
     ANAF_ERROR,
@@ -43,6 +43,7 @@ from .errors import (
     NOT_CLASSIFIABLE,
     NOT_FOUND,
     UNAUTHORIZED,
+    UPDATE_ERROR,
     EfacturaError,
 )
 from .service import Service, configure_logging
@@ -59,6 +60,7 @@ HTTP_STATUS = {
     LOGIN_CODE_EXPIRED: 409,
     BUSY: 409,
     NOT_CLASSIFIABLE: 409,
+    UPDATE_ERROR: 409,
     JEV_ERROR: 502,
     NO_SPV_RIGHTS: 502,
     ANAF_LIMIT_REACHED: 502,
@@ -507,6 +509,16 @@ def create_app(
     @router.put("/secrets/{key}", dependencies=documented_key, summary="Change a key")
     def change_secret(key: str, body: SecretRequest):
         return call(lambda s: s.set_secret(key, body.value))
+
+    # --- updating the installed program ---
+
+    @router.get("/update", dependencies=documented_key, summary="Installed release, and whether a newer one exists")
+    def update_status(check: bool = False):
+        return update.status(cfg, check=check)
+
+    @router.post("/update", dependencies=documented_key, summary="Update to the newest release, in the background")
+    def start_update():
+        return update.start_in_background(cfg)
 
     @app.post("/shutdown", summary="Stop the program")
     def shutdown():

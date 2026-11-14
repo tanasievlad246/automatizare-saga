@@ -7,7 +7,9 @@ import { cn } from '@/lib/utils'
 import { api } from '../api'
 import { countOf } from '../format'
 import { AnafConnectionBadge } from './AnafConnectionBadge'
+import { ProgramVersion } from './ProgramVersion'
 import { SagaFolderField } from './SagaFolderField'
+import { UpdateNotice } from './UpdateNotice'
 
 const SCREENS = [
   { to: '/', label: 'Clienți', icon: Users },
@@ -22,6 +24,7 @@ export function AppShell() {
   // Shown in the menu: an invoice Jev was sure about is never opened, so its proposed rule
   // would otherwise never be seen.
   const proposedRules = useQuery({ queryKey: ['proposed-rules'], queryFn: api.proposedRules }).data?.count ?? 0
+  const update = useQuery({ queryKey: ['program-update'], queryFn: () => api.updateStatus() }).data
   return (
     <div className="min-h-screen">
       <header className="flex flex-wrap items-center gap-x-7 gap-y-3 border-b bg-card px-7 py-3.5">
@@ -56,8 +59,10 @@ export function AppShell() {
               </span>
             </NavLink>
           ))}
+          {update && <ProgramVersion status={update} />}
         </nav>
         <main className="min-w-0 max-w-[66rem] flex-[999_1_560px] px-8 pt-7 pb-12">
+          {update?.update_available && <UpdateNotice status={update} />}
           <ErrorBoundary key={pathname}>
             <Outlet />
           </ErrorBoundary>

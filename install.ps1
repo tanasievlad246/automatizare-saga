@@ -23,7 +23,8 @@
          page, starting the program first if it is not running.
       6. Starts the program and opens the page.
 
-    Running it again later updates the program to the newest release.
+    Later updates are offered on the page itself ("Actualizeaza programul"). Running
+    this script again also updates the program to the newest release.
 
 .PARAMETER Repo
     The GitHub repository, as owner/name. Default: tanasievlad246/automatizare-saga
@@ -313,6 +314,6 @@ Write-Host ''
 Write-Host 'Done.' -ForegroundColor Green
 Write-Host "The page:      $page"
 Write-Host "The program:   $InstallDir"
-Write-Host 'To update:     run this script again.'
+Write-Host 'To update:     press the button the page shows when a new version exists, or run this script again.'
 Write-Host 'To remove:     run this script with -Uninstall.'
 Write-Host 'Next, on the page: "Chei si parole" for the ANAF and OpenRouter keys, then connect to ANAF.'

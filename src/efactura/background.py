@@ -182,12 +182,16 @@ def ask_to_stop(port: int, key: str) -> None:
 
 
 def spawn_server(config_path: Path, output: Path) -> None:
-    """Start the server so that it outlives this command and shows no window.
+    spawn_command(config_path, output, "serve")
+
+
+def spawn_command(config_path: Path, output: Path, *command: str) -> None:
+    """Start one of this program's commands so that it outlives this one and shows no window.
 
     What it prints goes to `output`: without a window there is nowhere else, and uvicorn
     refuses to start with no output at all.
     """
-    command = [_console_python(), "-m", "efactura", "--config", str(config_path), "serve"]
+    command = [_console_python(), "-m", "efactura", "--config", str(config_path), *command]
     output.parent.mkdir(parents=True, exist_ok=True)
     with open(output, "ab") as sink:
         streams = {"stdin": subprocess.DEVNULL, "stdout": sink, "stderr": sink, "cwd": config_path.parent}

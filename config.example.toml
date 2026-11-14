@@ -1,8 +1,8 @@
 # Copy this file to config.toml and fill it in. config.toml is ignored by git.
 
 [anaf]
-# From the ANAF portal:
-# Servicii Online > Inregistrare utilizatori > Dezvoltatori aplicatii > Profil OAuth > "Generare Client ID"
+# From the ANAF portal (the steps, in Romanian, are in README-ANAF.md):
+# https://www.anaf.ro/InregOauth > Editare profil Oauth > Gestionare aplicatii > "Generare Client ID"
 client_id = ""
 client_secret = ""
 # Must match the callback registered with ANAF exactly.
