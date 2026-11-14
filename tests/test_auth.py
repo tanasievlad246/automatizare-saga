@@ -183,12 +183,15 @@ def test_anaf_refusal_in_the_address_is_reported():
         auth.code_from_redirect(address)
 
     assert info.value.code == "login_refused"
+    # ANAF's own words are what whoever helps needs to see.
+    assert info.value.message == "ANAF refused the login: access_denied (No rights)"
 
 
 def test_an_address_saying_access_denied_is_a_refused_login_not_a_passing_error():
     with pytest.raises(EfacturaError) as refused:
         auth.code_from_redirect("https://localhost/callback?error=access_denied")
     assert refused.value.code == "login_refused"
+    assert refused.value.message == "ANAF refused the login: access_denied"
 
     with pytest.raises(EfacturaError) as other:
         auth.code_from_redirect("https://localhost/callback?error=server_error&error_description=down")

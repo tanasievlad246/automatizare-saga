@@ -194,7 +194,9 @@ def code_from_redirect(address: str) -> str:
         # access_denied with no certificate window is not a passing fault: waiting does not
         # help, the person has to check the certificate. It gets its own code and sentence.
         if params["error"][0] == "access_denied":
-            raise EfacturaError(LOGIN_REFUSED, "ANAF refused the login: access_denied")
+            # ANAF's own words, when it gave some, are what whoever helps needs to see.
+            said = params.get("error_description", [""])[0].strip()
+            raise EfacturaError(LOGIN_REFUSED, "ANAF refused the login: access_denied" + (f" ({said})" if said else ""))
         description = params.get("error_description", params["error"])[0]
         raise EfacturaError(ANAF_ERROR, f"ANAF refused the login: {description}")
     if "code" not in params:
