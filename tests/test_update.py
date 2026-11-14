@@ -405,6 +405,31 @@ def test_a_development_copy_can_still_look_for_the_newest_release(installed):
     assert (found["latest_release"], found["why_not_kind"], found["check_error"]) == ("v0.2.0", "development", None)
 
 
+def test_a_development_copy_asks_the_remote_only_when_asked(installed, monkeypatch):
+    # Opening the page of a development copy, or the demo, must not wait on `git ls-remote`.
+    installed.release("0.2.0")
+    git(installed.project, "checkout", "-q", "-b", "work")
+    asked = []
+    looking = update.latest_release
+    monkeypatch.setattr(update, "latest_release", lambda project: asked.append(project) or looking(project))
+
+    opened = update.status(installed.cfg, project=installed.project, now=NOW)  # nothing remembered yet
+    looked = update.status(installed.cfg, check=True, project=installed.project, now=NOW)
+    later = update.status(installed.cfg, project=installed.project, now=NOW + timedelta(hours=13))
+
+    assert len(asked) == 1  # only the look that was asked for
+    assert (opened["latest_release"], opened["checked_at"], opened["check_error"]) == (None, None, None)
+    assert (looked["latest_release"], later["latest_release"]) == ("v0.2.0", "v0.2.0")
+
+
+def test_an_installed_copy_still_asks_by_itself_once_its_answer_is_stale(installed):
+    installed.release("0.2.0")
+
+    found = update.status(installed.cfg, project=installed.project, now=NOW)  # nothing remembered yet
+
+    assert (found["latest_release"], found["update_available"], found["checked_at"]) == ("v0.2.0", True, NOW.isoformat())
+
+
 def test_a_development_copy_that_cannot_reach_the_remote_says_so(installed):
     git(installed.project, "checkout", "-q", "-b", "work")
     git(installed.project, "remote", "set-url", "origin", str(installed.remote.parent / "gone"))

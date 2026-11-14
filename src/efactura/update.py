@@ -42,8 +42,9 @@ SYNC_TIMEOUT = 900
 def status(cfg: Config, check: bool = False, project: Path | None = None, now: datetime | None = None) -> dict:
     """Which release is installed and whether a newer one exists.
 
-    The remote is asked when `check` is set or the last answer is older than CHECK_EVERY;
-    otherwise the remembered answer is given, so opening the page does not wait on GitHub.
+    An installed copy asks the remote when `check` is set or the last answer is older than
+    CHECK_EVERY; otherwise the remembered answer is given, so opening the page does not wait
+    on GitHub. A copy that cannot be updated asks only when `check` is set.
     """
     project, now = project or PROJECT, now or datetime.now().astimezone()
     why_not = _why_not_updatable(project)
@@ -53,8 +54,10 @@ def status(cfg: Config, check: bool = False, project: Path | None = None, now: d
     try:
         latest, checked_at, check_error = store.get_setting(LATEST), store.get_setting(CHECKED_AT), None
         stale = checked_at is None or now - datetime.fromisoformat(checked_at) >= CHECK_EVERY
-        # A development copy looks too, so the page can name the newest release; it just never updates.
-        if is_clone and (check or stale):
+        # A development copy looks too, so the page can name the newest release; it just never
+        # updates. It looks only when asked: on a development copy or the demo, the first page
+        # load would otherwise wait on `git ls-remote`, up to LOOK_TIMEOUT with no network.
+        if is_clone and (check or (stale and why_not is None)):
             try:
                 latest = latest_release(project) or ""
                 store.set_setting(LATEST, latest)
