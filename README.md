@@ -260,8 +260,11 @@ A window lists the certificates; pick the one used for SPV. The script prints on
 
 - `{"location": "...code=..."}`: it works. ANAF accepts the certificate when a program presents it. The address can be pasted into the program's window within a minute.
 - `{"location": "...error=access_denied..."}`: ANAF refuses this certificate.
+- `{"location": ""}`: ANAF answered with a page of its own instead of sending the request on, so there is no code. Send everything the script printed to whoever maintains the program.
 - `{"cancelled": true}`: the window was closed without a choice.
 - `{"error": "..."}`: the script could not finish; the text says why.
+
+Windows PowerShell 5.1 writes each `&` inside the address as `&`. Replace every `&` with `&` before pasting the address into the program.
 
 The script is run from the program's own folder, so no installation step is needed. It was written without being run on a Windows PC.
 
