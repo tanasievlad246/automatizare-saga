@@ -16,7 +16,7 @@ import time
 from collections import Counter
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, replace
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable
@@ -25,7 +25,7 @@ import httpx
 
 from . import __version__, auth, jev, journal, saga
 from .anaf import TYPE_PREFIXES, AnafService, normalize_cui, parse_created_at, type_slug
-from .classify import decide_by_rules, jev_request, read_jev_answer, subject_of
+from .classify import decide_by_rules, deciding_line, jev_request, read_jev_answer, subject_of
 from .clients_file import read_client_rows
 from .config import MAX_DAYS, Config
 from .errors import (
@@ -42,6 +42,8 @@ from .errors import (
 )
 from .invoice import (
     Invoice,
+    Line,
+    Party,
     decode_xml,
     extract_zip,
     normalise_company_id,
@@ -49,7 +51,7 @@ from .invoice import (
     parse_invoice_fields,
 )
 from .rules import CONDITIONS, Rule, Rulebook, Subject, any_of
-from .store import JEV_INSTRUCTIONS, Store
+from .store import JEV_INSTRUCTIONS, RULE_TEST, Store
 from .suggestions import propose, ticked_words, words_of
 
 log = logging.getLogger(__name__)
@@ -78,6 +80,9 @@ MAX_LISTED_CALLS = 1000
 RECENT_DAYS = 90
 MAX_LISTED_SUGGESTIONS = 20
 # A failure that may pass (no connection, rate limit, server error) is tried once more.
+MAX_TRIAL_LINES = 50
+MAX_TRIAL_TEXT = 500
+TRIAL_ASKS = ("rules_then_jev", "jev_only")
 JEV_ATTEMPTS = 2
 JEV_RETRY_DELAY = 2.0
 # An account as SAGA writes it: 628, 6022, or an analytic account such as 371.01.
@@ -923,15 +928,7 @@ class Service:
             return None
         if propose(subject, row["cont"]) is None or _rulebook_for(store, row["cui"]).rule_for(subject):
             return None
-        words = words_of(subject.description)
-        return {
-            "cont": row["cont"],
-            "line": subject.description,
-            "words": list(words),
-            "ticked": list(ticked_words(words)),
-            "supplier_cui": subject.supplier_cui,
-            "supplier_name": row["supplier_name"],
-        }
+        return _suggestion_dict(subject, row["cont"], row["supplier_name"])
 
     def set_min_confidence(self, value: float) -> dict:
         """The confidence below which a Jev answer goes to a person, from 0 to 1."""
@@ -946,6 +943,127 @@ class Service:
             store.close()
         log.info("Confidence level set to %s", value)
         return self.classification_settings()
+
+    def test_rules(
+        self, *, lines: list[dict], supplier_name: str = "", supplier_cui: str = "",
+        client_cui: str | None = None, currency: str = "RON", credit_note: bool = False,
+        ask: str = "rules_then_jev",
+    ) -> dict:
+        """Classify a made-up invoice the way a received one is, and save nothing but what
+        asking Jev cost. The order of the checks is that of _classify_one."""
+        if ask not in TRIAL_ASKS:
+            raise EfacturaError(INVALID_INPUT, f"ask must be one of: {', '.join(TRIAL_ASKS)}.")
+        client = normalize_cui(client_cui) if client_cui else None
+        invoice = _trial_invoice(lines, supplier_name, supplier_cui, currency, credit_note)
+        subject = subject_of(invoice)
+        store = self._open_store()
+        try:
+            # The rules for every client, plus those of the chosen one.
+            rulebook = _rulebook_for(store, client)
+            result = self._try_rules_then_jev(store, invoice, rulebook, client, ask == "jev_only")
+            cont = result["cont"] or (result["jev"] or {}).get("choice")
+            if cont and subject and not rulebook.rule_for(subject) and propose(subject, cont):
+                result["suggestion"] = _suggestion_dict(subject, cont, invoice.supplier.name)
+        finally:
+            store.close()
+        asked = result["jev"] is not None
+        journal.record(
+            "rules", "rule.tested", f"Rules tried on a trial invoice: {result['reason']}",
+            decided_by=result["decided_by"], cont=result["cont"], asked_jev=asked,
+            cost_usd=result["jev"]["cost_usd"] if asked else None,
+        )
+        return {"ok": True, **result}
+
+    def _try_rules_then_jev(
+        self, store: Store, invoice: Invoice, rulebook: Rulebook, client: str | None, jev_only: bool
+    ) -> dict:
+        heaviest = deciding_line(invoice)
+        result = {
+            "decided_by": "nobody", "cont": None, "account_description": None,
+            "deciding_line": heaviest.description if heaviest else None,
+            "rule": None, "jev": None, "why_not": None, "reason": "", "suggestion": None,
+        }
+
+        def decided(by: str, cont: str, reason: str) -> dict:
+            return {
+                **result, "decided_by": by, "cont": cont, "reason": reason,
+                "account_description": rulebook.accounts.get(cont) or None,
+            }
+
+        def left(why: str, reason: str, **more) -> dict:
+            return {**result, "why_not": why, "reason": reason, **more}
+
+        decision = None if jev_only else decide_by_rules(invoice, rulebook)
+        if decision:
+            reason = f'Rule "{decision.rule}" matched line {decision.line}, the largest on the invoice.'
+            return {**decided("rule", decision.cont, reason), "rule": {"name": decision.rule, "line": decision.line}}
+        if not invoice.lines:
+            return left("no_lines", "The invoice has no lines to decide from.")
+        if not self.cfg.openrouter_api_key:
+            return left(
+                "no_key",
+                "No rule matched, and OpenRouter is not set up ([openrouter] api_key in config.toml).",
+            )
+        if not rulebook.accounts:
+            return left("no_accounts", "No rule matched, and there are no accounts for Jev to choose from.")
+
+        request = jev_request(invoice, rulebook, self.cfg.jev_model)
+        if not request["state"]["linii"]:
+            return left(
+                "jev_failed", "The invoice and the list of accounts do not fit in one request to Jev."
+            )
+        # One attempt, whatever it costs: the person is waiting, and every attempt is paid for.
+        call = jev.ask(self._http, self.cfg.openrouter_api_key, request)
+        answer, error = None, call.error
+        if call.ok:
+            try:
+                answer = read_jev_answer(call.response, rulebook)
+            except EfacturaError as exc:
+                error = exc.message
+        store.add_jev_call(
+            message_id=RULE_TEST,
+            cui=client,
+            called_at=self._now().isoformat(),
+            model=call.model or self.cfg.jev_model,
+            request_json=json.dumps(request, ensure_ascii=False),
+            response_json=json.dumps(call.response, ensure_ascii=False) if call.response is not None else None,
+            http_status=call.status,
+            input_tokens=call.input_tokens,
+            output_tokens=call.output_tokens,
+            cost_usd=call.cost_usd,
+            duration_ms=call.duration_ms,
+            error=error,
+        )
+        level = _min_confidence(store)
+        said = {
+            "choice": answer.choice if answer else None,
+            "confidence": answer.confidence if answer else None,
+            "threshold": level,
+            "refused": answer.refused if answer else False,
+            "probabilities": dict(answer.probabilities) if answer else {},
+            "cost_usd": call.cost_usd,
+            "duration_ms": call.duration_ms,
+            "error": None if answer else (error or "Jev gave no answer."),
+        }
+        if answer is None:
+            return left("jev_failed", f"Jev could not decide this invoice: {said['error']}", jev=said)
+        if answer.refused:
+            return left("jev_declined", "Jev declined to answer.", jev=said)
+        if answer.choice is None:
+            return left("jev_declined", "Jev found that none of the accounts fits.", jev=said)
+        if answer.confidence is None:
+            return left(
+                "jev_declined", f"Jev suggested {answer.choice} without a confidence figure.", jev=said
+            )
+        if answer.confidence < level:
+            return left(
+                "below_threshold",
+                f"Jev suggested {answer.choice} with confidence {answer.confidence:.2f}, "
+                f"below the level of {level:.2f}.",
+                jev=said,
+            )
+        reason = f"Jev chose {answer.choice} with confidence {answer.confidence:.2f}."
+        return {**decided("jev", answer.choice, reason), "jev": said}
 
     def costs(
         self, since: str | None = None, cui: str | None = None, until: str | None = None,
@@ -970,8 +1088,9 @@ class Service:
             "cui": cui,
             "group": group,
             **totals,
+            # Only what the invoices cost: a trial in the rule test is in the total, not here.
             "average_cost_per_invoice_usd": (
-                totals["cost_usd"] / totals["invoices"] if totals["invoices"] else None
+                totals["invoice_cost_usd"] / totals["invoices"] if totals["invoices"] else None
             ),
         }
 
@@ -1605,6 +1724,89 @@ def _rulebook_for(store: Store, cui: str) -> Rulebook:
         ),
         instructions=store.get_setting(JEV_INSTRUCTIONS) or "",
     )
+
+
+def _trial_number(value, what: str, number: int) -> Decimal:
+    """A number as people type it: spaces around it, a decimal comma."""
+    try:
+        parsed = Decimal(str(value if value is not None else "").strip().replace(",", "."))
+    except InvalidOperation:
+        parsed = None
+    if parsed is None or not parsed.is_finite():
+        raise EfacturaError(INVALID_INPUT, f"The {what} of line {number} must be a number.")
+    return parsed
+
+
+def _trial_text(value, what: str, number: int) -> str | None:
+    text = str(value).strip() if value is not None else ""
+    if len(text) > MAX_TRIAL_TEXT:
+        raise EfacturaError(
+            INVALID_INPUT, f"The {what} of line {number} is longer than {MAX_TRIAL_TEXT} characters."
+        )
+    return text or None
+
+
+def _trial_invoice(
+    lines: list[dict], supplier_name: str, supplier_cui: str, currency: str, credit_note: bool
+) -> Invoice:
+    """An invoice built from what was typed on the rule-test screen."""
+    if not isinstance(lines, list) or not all(isinstance(item, dict) for item in lines):
+        raise EfacturaError(INVALID_INPUT, "lines must be a list of lines.")
+    if len(lines) > MAX_TRIAL_LINES:
+        raise EfacturaError(INVALID_INPUT, f"A trial invoice has at most {MAX_TRIAL_LINES} lines.")
+    built = []
+    for item in lines:
+        number = len(built) + 1
+        description = _trial_text(item.get("description"), "description", number)
+        if description is None:
+            continue  # an empty row on the screen
+        quantity = _trial_number(item.get("quantity"), "quantity", number)
+        unit_price = _trial_number(item.get("unit_price"), "unit price", number)
+        vat = item.get("vat_percent")
+        codes = item.get("commodity_codes") or []
+        built.append(Line(
+            number=number,
+            description=description,
+            seller_code=_trial_text(item.get("seller_code"), "seller code", number),
+            barcode=_trial_text(item.get("barcode"), "barcode", number),
+            commodity_codes=tuple(code for code in (_trial_text(c, "commodity code", number) for c in codes) if code),
+            unit=_trial_text(item.get("unit"), "unit", number),
+            quantity=quantity,
+            unit_price=unit_price,
+            value=quantity * unit_price,
+            vat_percent=_trial_number(vat, "VAT rate", number) if str(vat or "").strip() else None,
+            vat_category=None,
+        ))
+    cui = str(supplier_cui or "").strip()
+    if cui:
+        try:
+            cui = normalize_cui(cui)
+        except EfacturaError:
+            cui = normalise_company_id(cui)  # a foreign supplier, as a saved invoice carries it
+    nobody = {name: None for name in (
+        "vat_id", "registration", "country", "county", "city", "address", "phone", "email", "bank", "iban"
+    )}
+    return Invoice(
+        number="PROBA", issue_date=None, due_date=None, type_code="381" if credit_note else "380",
+        currency=str(currency or "").strip().upper() or "RON", note=None, is_credit_note=bool(credit_note),
+        vat_on_collection=False,
+        supplier=Party(name=str(supplier_name or "").strip() or None, cui=cui or None, **nobody),
+        customer=Party(name=None, cui=None, **nobody),
+        lines=tuple(built), adjustments=(),
+        total_without_vat=sum((item.value for item in built), Decimal(0)), total_vat=None, total_payable=None,
+    )
+
+
+def _suggestion_dict(subject: Subject, cont: str, supplier_name: str | None) -> dict:
+    words = words_of(subject.description)
+    return {
+        "cont": cont,
+        "line": subject.description,
+        "words": list(words),
+        "ticked": list(ticked_words(words)),
+        "supplier_cui": subject.supplier_cui,
+        "supplier_name": supplier_name,
+    }
 
 
 def _rule_from(name: str, cont: str, **conditions) -> Rule:

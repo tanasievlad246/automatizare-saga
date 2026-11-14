@@ -197,6 +197,9 @@ JEV_CALL_COLUMNS = (
     "http_status", "input_tokens", "output_tokens", "cost_usd", "duration_ms", "error",
 )
 
+# What stands in `message_id` of a Jev call made from the rule test: no invoice behind it.
+RULE_TEST = "rule-test"
+
 _CHUNK = 500  # stay well under SQLite's bound-parameter limit
 # How long to keep trying to switch a new database file to WAL (about five seconds).
 WAL_ATTEMPTS = 100
@@ -717,16 +720,19 @@ def _period(called_at: str, group: str) -> str:
 
 
 def _cost_summary(calls: list) -> dict:
+    belonging = [call for call in calls if call["message_id"] != RULE_TEST]
     return {
         "calls": len(calls),
         "failed_calls": sum(call["error"] is not None for call in calls),
         "calls_without_cost": sum(
             call["error"] is None and call["cost_usd"] is None for call in calls
         ),
-        "invoices": len({call["message_id"] for call in calls}),
+        # A trial from the rule test is a call, and costs, but is not an invoice.
+        "invoices": len({call["message_id"] for call in belonging}),
         "input_tokens": sum(call["input_tokens"] or 0 for call in calls),
         "output_tokens": sum(call["output_tokens"] or 0 for call in calls),
         "cost_usd": sum(call["cost_usd"] or 0 for call in calls),
+        "invoice_cost_usd": sum(call["cost_usd"] or 0 for call in belonging),
     }
 
 

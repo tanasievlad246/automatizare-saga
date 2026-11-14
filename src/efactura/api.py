@@ -145,6 +145,27 @@ class RulePreviewRequest(BaseModel):
     client_cui: Union[str, int, None] = None  # try it on this client's invoices only
 
 
+class TrialLine(BaseModel):
+    description: str
+    quantity: Union[str, int, float]
+    unit_price: Union[str, int, float]
+    seller_code: str | None = None
+    barcode: str | None = None
+    commodity_codes: list[str] = []
+    unit: str | None = None
+    vat_percent: Union[str, int, float, None] = None
+
+
+class RuleTestRequest(BaseModel):
+    lines: list[TrialLine]
+    supplier_name: str = ""
+    supplier_cui: Union[str, int] = ""
+    client_cui: Union[str, int, None] = None
+    currency: str = "RON"
+    credit_note: bool = False
+    ask: str = "rules_then_jev"
+
+
 class DismissSuggestionsRequest(BaseModel):
     invoice_ids: list[Union[str, int]]
 
@@ -495,6 +516,18 @@ def create_app(
         client_cui = conditions.pop("client_cui")
         return call(lambda s: s.rule_preview(
             **conditions, client_cui=str(client_cui) if client_cui is not None else None
+        ))
+
+    @router.post(
+        "/rules/test", dependencies=documented_key,
+        summary="Classify a trial invoice as a real one is; saves nothing but the cost of asking Jev",
+    )
+    def rule_test(body: RuleTestRequest):
+        fields = body.model_dump()
+        client_cui = fields.pop("client_cui")
+        fields["supplier_cui"] = str(fields["supplier_cui"])
+        return call(lambda s: s.test_rules(
+            **fields, client_cui=str(client_cui) if client_cui is not None else None
         ))
 
     @router.post(
