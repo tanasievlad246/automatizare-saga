@@ -1,3 +1,3 @@
 """ANAF e-Factura sync: commands and a local API for Power Automate Desktop."""
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"

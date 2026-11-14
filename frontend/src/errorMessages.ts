@@ -12,6 +12,7 @@ const MESSAGES: Record<string, string> = {
   no_spv_rights: 'Certificatul nu are drepturi în SPV pentru această firmă.',
   anaf_limit_reached: 'ANAF a limitat numărul de cereri pentru azi. Încercați mâine.',
   login_refused: 'ANAF nu a acceptat certificatul. Verificați că este certificatul cu care intrați în SPV și că nu a expirat.',
+  login_cancelled: 'Nu a fost ales niciun certificat.',
   anaf_error: 'ANAF a răspuns cu o eroare. Încercați din nou puțin mai târziu.',
   network_error: 'Nu am putut ajunge la ANAF. Verificați conexiunea la internet.',
   not_found: 'Nu am găsit ce ați cerut. Poate a fost șters între timp.',

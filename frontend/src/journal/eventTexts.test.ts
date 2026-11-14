@@ -60,6 +60,11 @@ describe('a line of the journal, in Romanian', () => {
     expect(describeEvent(line('invoices.unmarked', { invoices: 25 }))).toBe('25 de facturi nu mai sunt bifate ca importate în SAGA.')
   })
 
+  it('says Windows was asked for the certificate', () => {
+    expect(describeEvent(line('anaf.certificate_asked', { outcome: 'answered', tries: 2, opened_first: false }, { area: 'anaf' })))
+      .toBe('Programul a cerut certificatul de la Windows.')
+  })
+
   it('says for how many days back a download looks', () => {
     expect(describeEvent(line('sync.started', { client: 'Alfa Construct SRL', window_days: 60 })))
       .toBe('A început descărcarea pentru Alfa Construct SRL, pentru ultimele 60 de zile.')

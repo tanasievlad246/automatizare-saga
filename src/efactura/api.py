@@ -40,6 +40,7 @@ from .errors import (
     INVALID_CUI,
     INVALID_INPUT,
     JEV_ERROR,
+    LOGIN_CANCELLED,
     LOGIN_CODE_EXPIRED,
     LOGIN_NEEDED,
     LOGIN_REFUSED,
@@ -65,6 +66,7 @@ HTTP_STATUS = {
     LOGIN_NEEDED: 409,
     LOGIN_CODE_EXPIRED: 409,
     LOGIN_REFUSED: 409,
+    LOGIN_CANCELLED: 409,
     BUSY: 409,
     NOT_CLASSIFIABLE: 409,
     UPDATE_ERROR: 409,
@@ -357,6 +359,11 @@ def create_app(
     @router.post("/auth/login/finish", dependencies=documented_key, summary="Save the login")
     def login_finish(body: LoginFinishRequest):
         return call(lambda s: s.login_finish(body.address))
+
+    @router.post("/auth/login/certificate", dependencies=documented_key, summary="Log in with the Windows certificate")
+    def login_certificate():
+        # Waits for Windows and the person (minutes): a plain `def` runs off the event loop.
+        return call(lambda s: s.login_with_certificate())
 
     @router.get("/anaf/messages", dependencies=documented_key, summary="Preview; saves nothing")
     def anaf_messages(cui: str = Query(...), days: int | None = None):

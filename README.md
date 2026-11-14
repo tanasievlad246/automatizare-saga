@@ -29,6 +29,8 @@ The key on the USB signature token cannot be read or copied, so this tool never 
 
 So the token and PIN are needed about once a year. The PIN is typed into Windows' own prompt; this tool never sees it.
 
+There are two ways to log in. On Windows the page offers **Conectează-mă cu certificatul** first: the program starts a PowerShell helper (`src/efactura/certificate_login.ps1`, no browser) that shows Windows' own certificate window, makes the token ask for its PIN in the token's own prompt, and then follows ANAF's login to the address it ends on. The key never leaves the token and the program never sees the PIN. The address holds a one-time code; the program exchanges it at once and neither the address nor the code is shown, logged or written to the journal (the journal keeps only that Windows was asked, how long it took, how many tries ANAF needed and whether the token was opened first). The other way, on any system, is the browser: ANAF's own page, then the address copied back (see below). `POST /auth/login/certificate` and the page's button are offered only where `certificate_login` in the login status is true: on Windows, with Windows PowerShell found, and not in the demo.
+
 ## Installing on the accountant's PC
 
 `install.ps1` does it in one go. Open an ordinary PowerShell window, signed in to Windows as the person who will work with the program (not "Run as administrator"). Download the script:
@@ -250,7 +252,7 @@ After the certificate and PIN step, ANAF sends the browser to `https://localhost
 
 ### Trying the certificate login by hand
 
-When ANAF answers `error=access_denied` and the browser never showed the certificate window, this small script presents a certificate to ANAF itself, without a browser, and prints what ANAF answers. Run these three lines in Windows PowerShell, with the token in:
+When a login with the certificate does not work, this is the helper the program itself starts, run by hand. It presents a certificate to ANAF without a browser, follows ANAF's hops on its own host (`/anaf-oauth2/v1/authorize`, then `/my.policy`, `/my.policy_nonce`, with the cookies kept and the certificate offered at each) and prints the address ANAF ends on. Run these three lines in Windows PowerShell, with the token in:
 
 ```powershell
 cd $env:LOCALAPPDATA\AutoSaga
@@ -258,17 +260,18 @@ $env:AUTOSAGA_AUTHORIZE_URL = (uv run efactura login-start | Out-String | Conver
 powershell -NoProfile -ExecutionPolicy Bypass -File src\efactura\certificate_login.ps1
 ```
 
-A window lists the certificates; pick the one used for SPV. The script prints one line of JSON:
+A window lists the certificates; pick the one used for SPV. The token then asks for its PIN. The script prints one line of JSON:
 
-- `{"location": "...code=..."}`: it works. ANAF accepts the certificate when a program presents it. The address can be pasted into the program's window within a minute.
-- `{"location": "...error=access_denied..."}`: ANAF refuses this certificate.
-- `{"location": ""}`: ANAF answered with a page of its own instead of sending the request on, so there is no code. Send everything the script printed to whoever maintains the program.
+- `{"location": "...code=...", "tries": 1, "opened": true}`: it works. The address holds a one-time code: use it within a minute and send it to nobody. It can be pasted into the program's window.
+- `{"location": "...error=access_denied...", "tries": 2, "opened": ...}`: ANAF refuses, even after the second try.
 - `{"cancelled": true}`: the window was closed without a choice.
-- `{"error": "..."}`: the script could not finish; the text says why.
+- `{"error": "...", "tries": ..., "opened": ...}`: the script could not finish; the text is what Windows or ANAF said (for a wrong Client ID, ANAF's own `Invalid client_id ...`).
 
-Windows PowerShell 5.1 writes each `&` inside the address as `\u0026`. Replace every `\u0026` with `&` before pasting the address into the program.
+`tries` is how many times ANAF was asked and `opened` says whether using the key first (which makes the token ask for its PIN before ANAF is contacted) worked. If ANAF still refuses after that, the helper asks once more by itself.
 
-The script is run from the program's own folder, so no installation step is needed. It was written without being run on a Windows PC.
+Windows PowerShell 5.1 writes each `&` inside the address as the six characters backslash, `u`, `0026`. The program reads that as an ampersand; when pasting the address by hand, replace each of those with `&` first.
+
+The script is run from the program's own folder, so no installation step is needed.
 
 ## Output
 
@@ -322,6 +325,7 @@ Failure (from any command):
 |---|---|
 | `login_needed` | No saved login, or ANAF no longer accepts it. |
 | `login_code_expired` | The pasted address was too old or already used. Repeat the login. |
+| `login_cancelled` | No certificate was chosen in Windows' window, or the time (five minutes) ran out. Try again. |
 | `login_refused` | ANAF did not accept the certificate (`error=access_denied`). Waiting does not help: check the certificate and the token, then log in again. |
 | `invalid_cui` | Not a CUI, or the check digit does not match. |
 | `invalid_input` | A wrong or missing argument. |
@@ -351,9 +355,10 @@ The screen uses the same routes under `/api/...` and needs no key. That is safe 
 | Route | Same as |
 |---|---|
 | `GET /health` | (no key needed) is the API running? |
-| `GET /auth/status` | `auth-status` |
+| `GET /auth/status` | `auth-status`; also carries `certificate_login`, true where the certificate way is offered |
 | `POST /auth/login/start` | `login-start` |
 | `POST /auth/login/finish` with `{"address": "..."}` | `login-finish` |
+| `POST /auth/login/certificate` | (the page's button) asks Windows for the certificate and saves the login; can last minutes, answers like `login-finish`; `invalid_input` where `certificate_login` is false |
 | `GET /anaf/messages?cui=...&days=...` | `list` |
 | `POST /sync` with `{"cui": "...", "days": 7, "classify": true}` (`days`, `classify` optional; or `"start"` and `"end"` dates; `"cover_gap": true` makes `days` a minimum) | `sync` |
 | `GET /invoices?cui=...&pending=true&type=...&since=...&classification=...` | `invoices` |
@@ -397,7 +402,7 @@ Routes that exist for the screen and have no command:
 | `GET /events?details=true&problems=true&area=...&q=...&since=...&trace=...&before=...&limit=...` | The journal, newest line first, 200 at a time (`before` is the `id` of the last line read; `has_more` says whether older ones exist). `problems` keeps warnings and errors; `trace` gives one whole operation |
 | `GET /events/export` with the same filters | Every line that matches, as a text file. `details` is true here unless `details=false` is sent |
 
-The body is the same JSON the command prints. Every answer carries an `X-Trace-Id` header: the number under which the journal holds what that request did. HTTP status: 200 success; 400 bad input; 401 missing or wrong key; 404 unknown id or route; 409 `login_needed`, `login_code_expired`, `login_refused`, `busy`, `not_classifiable`, `update_error` or `backup_error`; 502 ANAF or OpenRouter refused or was unreachable; 500 a bug or a settings problem.
+The body is the same JSON the command prints. Every answer carries an `X-Trace-Id` header: the number under which the journal holds what that request did. HTTP status: 200 success; 400 bad input; 401 missing or wrong key; 404 unknown id or route; 409 `login_needed`, `login_code_expired`, `login_refused`, `login_cancelled`, `busy`, `not_classifiable`, `update_error` or `backup_error`; 502 ANAF or OpenRouter refused or was unreachable; 500 a bug or a settings problem.
 
 ## Testing the rules
 
@@ -592,7 +597,13 @@ The first real run on the Windows PC should confirm:
 For the demo and the certificate login:
 
 - **`efactura demo`** was run on macOS only.
-- **The certificate helper script `src/efactura/certificate_login.ps1`** has never been run: it needs Windows and the token.
+- **The certificate helper**: its steps were run by hand on the Windows PC on 2026-11-15 (Windows PowerShell 5.1, the token in), and ANAF answered with an address containing `code=`. That run showed:
+  - ANAF's login address answers in several hops on its own host (`/anaf-oauth2/v1/authorize`, `/my.policy` twice, `/my.policy_nonce`) before it sends the request to the callback. The cookies have to be kept from hop to hop and the certificate offered at each.
+  - With no certificate ANAF ends on `<callback>?error=access_denied` after three hops, which is what the browser on that PC gets: it never shows its certificate window.
+  - A wrong Client ID is answered at once with HTTP 400 and `invalid_client`; a callback that differs from the registered one with HTTP 400 and `invalid_request` ("Redirect-URI ... does not match").
+  - With the certificate, the first run ended in `access_denied` and the second brought a code, twice. The first run is the one during which the PIN is typed. The helper therefore opens the token first and tries once more by itself; whether the first step alone is enough is not known.
+
+  Still open: the script file as it is now (the owner's run used the same steps, typed by hand), the program starting it by itself without a console window, where Windows puts the certificate and PIN windows then, and the one refusal nobody could explain.
 
 For classification, nothing has yet run against the real OpenRouter or the real SAGA:
 

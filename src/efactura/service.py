@@ -23,7 +23,7 @@ from typing import Callable
 
 import httpx
 
-from . import __version__, auth, jev, journal, saga
+from . import __version__, auth, certificate_login, jev, journal, saga
 from .anaf import TYPE_PREFIXES, AnafService, normalize_cui, parse_created_at, type_slug
 from .classify import decide_by_rules, deciding_line, jev_request, read_jev_answer, subject_of
 from .clients_file import read_client_rows
@@ -137,7 +137,11 @@ class Service:
     def auth_status(self) -> dict:
         """Reads the saved login only; contacts nothing."""
         tokens = auth.load_tokens(self.cfg.token_file)
-        return {"ok": True, **_login_summary(tokens, self._now())}
+        return {
+            "ok": True,
+            **_login_summary(tokens, self._now()),
+            "certificate_login": certificate_login.available(self.cfg),
+        }
 
     def login_start(self) -> dict:
         return {
@@ -156,6 +160,16 @@ class Service:
             journal.record("anaf", "anaf.connected", "Connected to ANAF with the certificate.")
         log.info("Logged in; access valid until %s", tokens.access_expires_at.isoformat())
         return {"ok": True, **_login_summary(tokens, now)}
+
+    def login_with_certificate(self) -> dict:
+        """Log in with the certificate Windows holds, with no browser and no pasted address.
+
+        The program's lock is not held while Windows asks, which can take minutes;
+        login_finish takes it for the exchange."""
+        if not certificate_login.available(self.cfg):
+            raise EfacturaError(INVALID_INPUT, "Logging in with the Windows certificate is not available here.")
+        address = certificate_login.ask_windows(auth.authorize_url(self.cfg))
+        return self.login_finish(address)
 
     # --- ANAF ---------------------------------------------------------------
 

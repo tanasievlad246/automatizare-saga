@@ -60,6 +60,7 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
   'anaf.call': (_, line) => `ANAF a răspuns${line.duration_ms === null ? '' : ` în ${formatDuration(line.duration_ms)}`}.`,
   'anaf.unreachable': () => 'Nu am putut ajunge la ANAF. Verificați conexiunea la internet.',
   'anaf.connected': () => 'Conectarea la ANAF a reușit.',
+  'anaf.certificate_asked': () => 'Programul a cerut certificatul de la Windows.',
   'anaf.renewed': () => 'Conectarea la ANAF a fost reînnoită automat, fără tokenul USB.',
 
   'account.by_rule': (data) => `${invoice(data)} a primit contul ${text(data.cont)}, după o regulă a dumneavoastră.`,

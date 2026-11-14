@@ -78,6 +78,7 @@ def test_command_prints_exactly_one_json_document(run):
         "refresh_expires_at": None,
         "access_days_left": None,
         "refresh_days_left": None,
+        "certificate_login": False,  # not Windows, or no PowerShell: the test machine
     }
 
 

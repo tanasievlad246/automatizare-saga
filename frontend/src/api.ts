@@ -63,6 +63,7 @@ const MOST_LINES_AT_ONCE = 1000
 export const api = {
   authStatus: () => call<AuthStatus>('GET', '/auth/status'),
   startLogin: () => call<{ authorize_url: string }>('POST', '/auth/login/start'),
+  loginWithCertificate: () => call<AuthStatus>('POST', '/auth/login/certificate'),
   finishLogin: (address: string) => call<AuthStatus>('POST', '/auth/login/finish', { address }),
 
   sagaFolder: () => call<{ saga_folder: string; demo?: boolean }>('GET', '/settings'),

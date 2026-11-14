@@ -88,6 +88,7 @@ def test_status_without_a_saved_login(service):
         "refresh_expires_at": None,
         "access_days_left": None,
         "refresh_days_left": None,
+        "certificate_login": False,  # not Windows, or no PowerShell: the test machine
     }
 
 

@@ -4,6 +4,7 @@ export type AuthStatus = {
   state: 'valid' | 'needs_refresh' | 'needs_login'
   refresh_expires_at: string | null
   refresh_days_left: number | null
+  certificate_login?: boolean // the program can ask Windows for the certificate (only on Windows)
 }
 
 export type Client = {

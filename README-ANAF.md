@@ -56,8 +56,12 @@ Aplicația apare în listă. **Dați clic pe rândul ei**: se afișează Grant T
 ## Pasul 5 — Vă conectați la ANAF
 
 1. Introduceți tokenul USB în calculator.
-2. În bara de sus a programului apăsați **Conectați-vă la ANAF** și urmați cei trei pași din fereastră: se deschide pagina ANAF, alegeți certificatul și scrieți PIN-ul.
-3. Browserul arată apoi o pagină de eroare („nu se poate accesa pagina”). **Este normal.** Copiați toată adresa din bara de adrese și lipiți-o în program, **în cel mult un minut**.
+2. În bara de sus a programului apăsați **Conectați-vă la ANAF**.
+3. Apăsați **Conectează-mă cu certificatul**. Windows vă arată certificatele: alegeți-l pe al dumneavoastră, apoi scrieți PIN-ul în fereastra tokenului. Fereastra poate apărea în spatele browserului; dacă nu o vedeți, uitați-vă în bara de jos a ecranului.
+
+Atât: programul primește singur răspunsul de la ANAF.
+
+**Dacă butonul „Conectează-mă cu certificatul” lipsește sau nu merge**, alegeți **Conectare prin browser** și urmați cei trei pași din fereastră: se deschide pagina ANAF, alegeți certificatul și scrieți PIN-ul. Browserul arată apoi o pagină de eroare („nu se poate accesa pagina”). **Este normal.** Copiați toată adresa din bara de adrese și lipiți-o în program, **în cel mult un minut**. Butonul cu certificatul există doar pe Windows.
 
 După aceasta programul rămâne conectat și își reînnoiește singur accesul. Tokenul USB și PIN-ul sunt necesare din nou cam o dată pe an: cheia de acces ține 90 de zile, iar cea de reînnoire 365 de zile.
 
@@ -65,11 +69,13 @@ După aceasta programul rămâne conectat și își reînnoiește singur accesul
 
 - **Ați greșit Callback URL sau serviciul.** Procedura ANAF nu descrie modificarea unei aplicații, doar ștergerea ei. În „Editare profil Oauth” alegeți **Renunțare Oauth**, selectați aplicația și apăsați **Șterge aplicația**. Apoi înregistrați-o din nou la Pasul 3 și scrieți în program cheile noi.
 - **ANAF spune că nu aveți drepturi pentru o firmă.** Certificatul cu care v-ați conectat nu are drepturi în SPV pentru acea firmă. Cheile sunt bune; lipsește împuternicirea în SPV.
-- **ANAF a refuzat certificatul („access_denied”).** Programul vă spune că ANAF nu a acceptat certificatul, de obicei fără ca browserul să fi arătat fereastra de alegere a certificatului. Verificați, pe rând:
-  1. Tokenul USB este introdus în calculator.
-  2. Închideți complet browserul (toate ferestrele lui) și apăsați din nou **Conectați-vă la ANAF**. Uneori fereastra cu certificatul apare abia la a doua încercare.
-  3. Certificatul este cel cu care intrați în SPV și nu a expirat.
-  4. Încercați să intrați în SPV cu același certificat, în același browser. Dacă nici acolo nu merge, problema este la certificat sau la token, nu la program.
+- **ANAF a refuzat certificatul („access_denied”).** ANAF răspunde așa când nu primește niciun certificat. De obicei browserul nu a arătat fereastra de alegere a certificatului, deci nu a trimis nimic. Ce faceți:
+  1. Verificați că tokenul USB este introdus în calculator.
+  2. Pe Windows, folosiți **Conectează-mă cu certificatul** din fereastra „Conectare la ANAF”. Programul cere certificatul direct de la Windows, fără browser.
+  3. Dacă ANAF refuză și așa, apăsați **Încearcă din nou**. La o probă, a doua încercare a mers fără nicio altă schimbare.
+  4. Dacă tot nu merge, intrați în SPV cu același certificat. Dacă nici acolo nu merge, problema este la certificat sau la token, nu la program.
+- **ANAF răspunde cu `invalid_client`.** Client ID-ul scris în program nu este cel dat de ANAF. Copiați-l din nou de la ANAF (Pasul 3) și scrieți-l în program (Pasul 4).
+- **ANAF răspunde cu `invalid_request` și cu textul „Redirect-URI … does not match”.** Callback URL de la ANAF diferă de adresa pe care o trimite programul, `https://localhost/callback`. Vedeți mai sus „Ați greșit Callback URL sau serviciul”.
 - **Ați lipit adresa prea târziu.** Codul din adresă ține cam un minut și merge o singură dată. Apăsați din nou **Conectați-vă la ANAF** și repetați Pasul 5.
 - **Aveți nevoie de ajutor de la ANAF.** Folosiți Formularul de contact de pe anaf.ro, categoria „Asistență tehnică servicii informatice”, subcategoria „OAUTH”.
 
@@ -83,3 +89,5 @@ Din procedura ANAF „Înregistrare aplicații profil OAUTH”, citită la 14 no
 <https://static.anaf.ro/static/10/Anaf/Informatii_R/API/Oauth_procedura_inregistrare_aplicatii_portal_ANAF.pdf>
 
 Numele butoanelor și ale meniurilor sunt cele din acel document. Dacă ANAF își schimbă site-ul, ele pot arăta altfel; documentul de mai sus are și capturi de ecran.
+
+Răspunsurile ANAF de la „Dacă ceva nu merge” sunt cele primite la o probă pe un calculator cu Windows, la 15 noiembrie 2026.
