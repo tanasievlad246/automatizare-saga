@@ -1762,6 +1762,10 @@ def _trial_invoice(
             continue  # an empty row on the screen
         quantity = _trial_number(item.get("quantity"), "quantity", number)
         unit_price = _trial_number(item.get("unit_price"), "unit price", number)
+        # Carried from a saved invoice, whose value may not be quantity × price (a line
+        # discount, a price per several units). It decides which line counts, as it did there.
+        carried = item.get("value")
+        value = _trial_number(carried, "value", number) if str(carried or "").strip() else quantity * unit_price
         vat = item.get("vat_percent")
         codes = item.get("commodity_codes") or []
         built.append(Line(
@@ -1773,7 +1777,7 @@ def _trial_invoice(
             unit=_trial_text(item.get("unit"), "unit", number),
             quantity=quantity,
             unit_price=unit_price,
-            value=quantity * unit_price,
+            value=value,
             vat_percent=_trial_number(vat, "VAT rate", number) if str(vat or "").strip() else None,
             vat_category=None,
         ))

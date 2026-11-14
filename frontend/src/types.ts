@@ -52,10 +52,14 @@ export type Party = {
 export type InvoiceLine = {
   number: number
   description: string
-  unit_name: string | null
+  seller_code: string | null
+  barcode: string | null
+  commodity_codes: string[] // CPV or NC
+  unit: string | null // the unit code ANAF carries (KGM, H87); this is what Jev is asked with
+  unit_name: string | null // the unit as SAGA shows it (KG, BUC)
   quantity: string
   unit_price: string
-  value: string
+  value: string // without VAT; not always quantity × price (a line discount)
   vat_percent: string | null
 }
 
@@ -222,6 +226,7 @@ export type TrialLine = {
   commodityCodes: string // typed with commas between the codes
   unit: string | null // carried from a saved invoice, not shown
   vatPercent: string | null // carried from a saved invoice, not shown
+  value: string | null // carried from a saved invoice, not shown; dropped once quantity or price is changed
 }
 
 export type TrialInvoice = {

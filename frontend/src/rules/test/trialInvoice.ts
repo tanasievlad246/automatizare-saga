@@ -1,7 +1,7 @@
 import type { InvoiceView, TrialAsk, TrialInvoice, TrialLine } from '../../types'
 
 const BLANK_LINE: TrialLine = {
-  description: '', quantity: '', unitPrice: '', sellerCode: '', barcode: '', commodityCodes: '', unit: null, vatPercent: null,
+  description: '', quantity: '', unitPrice: '', sellerCode: '', barcode: '', commodityCodes: '', unit: null, vatPercent: null, value: null,
 }
 
 export const EMPTY: TrialInvoice = {
@@ -45,17 +45,30 @@ export function toRequest(trial: TrialInvoice, ask: TrialAsk) {
       commodity_codes: row.commodityCodes.split(',').map((code) => code.trim()).filter(Boolean),
       unit: row.unit,
       vat_percent: row.vatPercent,
+      value: row.value,
     })),
   }
 }
 
 /**
- * A trial invoice started from a saved one. The page's copy of an invoice has no codes on its
- * lines, so those stay blank. The unit, VAT rate and currency are kept, so Jev is asked what
- * it was asked for that invoice.
+ * A trial invoice started from a saved one, so that sent unchanged it puts the question the
+ * real invoice put. The codes are shown; the unit code, VAT rate, currency and each line's
+ * value are kept without being shown. The value is kept because it is not always quantity ×
+ * price (a line discount), and the largest value is what decides the line the rules read.
  */
 export function fromDocument(view: InvoiceView): TrialInvoice {
   const document = view.document
+  const lines = (document?.lines ?? []).map((row) => ({
+    description: row.description,
+    quantity: row.quantity.replace('.', ','),
+    unitPrice: row.unit_price.replace('.', ','),
+    sellerCode: row.seller_code ?? '',
+    barcode: row.barcode ?? '',
+    commodityCodes: row.commodity_codes.join(', '),
+    unit: row.unit, // the code Jev was asked with (KGM), not the name SAGA shows (KG)
+    vatPercent: row.vat_percent,
+    value: row.value,
+  }))
   return {
     clientCui: view.invoice.cui,
     supplierName: document?.supplier.name ?? '',
@@ -63,15 +76,19 @@ export function fromDocument(view: InvoiceView): TrialInvoice {
     currency: document?.currency || 'RON',
     creditNote: document?.is_credit_note ?? false,
     startedFrom: document?.number ?? null,
-    lines: (document?.lines ?? []).map((row) => ({
-      ...BLANK_LINE,
-      description: row.description,
-      quantity: row.quantity,
-      unitPrice: row.unit_price.replace('.', ','),
-      unit: row.unit_name,
-      vatPercent: row.vat_percent,
-    })),
+    lines: lines.length > 0 ? lines : EMPTY.lines,
   }
+}
+
+/** A row as changed by the person. A new quantity or price makes the carried value untrue. */
+export function changeLine(line: TrialLine, changed: Partial<TrialLine>): TrialLine {
+  const recomputed = 'quantity' in changed || 'unitPrice' in changed
+  return { ...line, ...changed, ...(recomputed ? { value: null } : {}) }
+}
+
+/** Whether any row has a code, so the codes are shown without being asked for. */
+export function hasCodes(trial: TrialInvoice): boolean {
+  return trial.lines.some((row) => !blank(row.sellerCode) || !blank(row.barcode) || !blank(row.commodityCodes))
 }
 
 /** The form started again from an empty invoice or an example; the client chosen stays. */

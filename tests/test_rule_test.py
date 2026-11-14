@@ -101,6 +101,36 @@ def test_what_a_saved_invoice_carries_reaches_jev(desk, openrouter):
     assert str(asked["linii"][0]["cota_tva"]).startswith("9")
 
 
+def test_the_codes_of_a_line_let_the_rules_decide_as_they_did_for_the_real_invoice(desk, openrouter):
+    desk.save_rule(name="cod articol", cont="302", item_codes=["ART-77"])
+    desk.save_rule(name="servicii it", cont="628", commodity_prefixes=["7226"])
+    plain = {"description": "Diverse", "quantity": "1", "unit_price": "10"}
+
+    by_code = desk.test_rules(lines=[{**plain, "seller_code": "ART-77"}])
+    by_prefix = desk.test_rules(lines=[{**plain, "commodity_codes": ["72260000"]}])
+
+    assert (by_code["decided_by"], by_code["rule"]["name"]) == ("rule", "cod articol")
+    assert (by_prefix["decided_by"], by_prefix["rule"]["name"]) == ("rule", "servicii it")
+    assert openrouter.requests == []  # a rule decided, so Jev was neither asked nor paid
+
+
+def test_a_value_carried_with_a_line_is_its_value_and_decides_which_line_counts(cfg, desk, openrouter):
+    # A line discount: 10 × 100 would be 1000, but the invoice says 400, less than the fuel line.
+    lines = [
+        {"description": "Ciment Portland", "quantity": "10", "unit_price": "100", "value": "400.00"},
+        {"description": "Motorina Euro 5", "quantity": "1", "unit_price": "600", "value": "600.00"},
+    ]
+    api = TestClient(create_app(cfg, service_factory=lambda cfg: desk))
+
+    desk.test_rules(lines=lines, ask="jev_only")
+    reply = api.post("/rules/test", headers=KEY, json={"lines": lines}).json()  # the route closes the service
+
+    assert (reply["decided_by"], reply["deciding_line"], reply["rule"]["line"]) == ("rule", "Motorina Euro 5", 2)
+    asked = openrouter.requests[-1]["state"]
+    assert [line["valoare_fara_tva"] for line in asked["linii"]] == ["400.00", "600.00"]
+    assert asked["linia_cu_valoarea_cea_mai_mare"] == 2
+
+
 def test_a_rule_for_one_client_applies_only_when_that_client_is_chosen(desk):
     desk.save_client(VALID_CUI, "Alfa Construct SRL")
     desk.save_rule(name="chirie", cont="612", keywords=["chirie"], client_cui=VALID_CUI)

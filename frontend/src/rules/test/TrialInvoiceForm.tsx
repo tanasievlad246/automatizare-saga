@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import type { Client, TrialAsk, TrialInvoice, TrialLine } from '../../types'
-import { EMPTY } from './trialInvoice'
+import { EMPTY, changeLine, hasCodes } from './trialInvoice'
 
 /** Where the trial invoice starts from: one of the four choices the person is given. */
 export type StartFrom = 'empty' | 'saved' | 'materiale' | 'combustibil'
@@ -21,11 +21,18 @@ export function TrialInvoiceForm({
   onAsk: (ask: TrialAsk) => void
   onStartFrom: (start: StartFrom) => void
 }) {
-  // The codes are rarely there; they stay folded away unless a line already has one.
-  const [codesShown, setCodesShown] = useState(false)
+  // The codes are rarely there; they stay folded away unless a line has one. They open by
+  // themselves when codes arrive (a saved invoice picked); folding them again is the person's choice.
+  const withCodes = hasCodes(trial)
+  const [codesShown, setCodesShown] = useState(withCodes)
+  const [hadCodes, setHadCodes] = useState(withCodes)
+  if (withCodes !== hadCodes) {
+    setHadCodes(withCodes)
+    if (withCodes) setCodesShown(true)
+  }
   const set = (changed: Partial<TrialInvoice>) => onChange({ ...trial, ...changed })
   const setLine = (index: number, changed: Partial<TrialLine>) =>
-    set({ lines: trial.lines.map((line, at) => (at === index ? { ...line, ...changed } : line)) })
+    set({ lines: trial.lines.map((line, at) => (at === index ? changeLine(line, changed) : line)) })
   const removeLine = (index: number) => {
     const rest = trial.lines.filter((_, at) => at !== index)
     set({ lines: rest.length > 0 ? rest : EMPTY.lines })

@@ -156,6 +156,7 @@ class TrialLine(BaseModel):
     commodity_codes: list[str] = []
     unit: str | None = None
     vat_percent: Union[str, int, float, None] = None
+    value: Union[str, int, float, None] = None  # without VAT; when missing, quantity × price
 
 
 class RuleTestRequest(BaseModel):
