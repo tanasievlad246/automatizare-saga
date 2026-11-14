@@ -16,8 +16,8 @@
          config.toml and the data folder are never touched.
       3. Installs what the program needs inside that folder (uv fetches Python too,
          if the PC has none).
-      4. Writes the first config.toml: a key of its own for the local API, and port 80
-         when it is free, so the address needs no port.
+      4. Writes the first config.toml: a key of its own for the local API, and port
+         8765, or the next free port after it when that one is taken.
       5. Makes two shortcuts. One in the Startup folder starts the program, without a
          window, every time this user signs in to Windows. One on the Desktop opens the
          page, starting the program first if it is not running.

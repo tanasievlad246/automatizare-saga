@@ -201,7 +201,7 @@ def _parser() -> argparse.ArgumentParser:
     dev.add_argument("--port", type=int)
 
     setup = commands.add_parser("setup", help="write the first config.toml, once (used by the installer)")
-    setup.add_argument("--port", type=int, help="default: 80 when it is free, else 8765")
+    setup.add_argument("--port", type=int, help="default: 8765, or the next free port after it")
     commands.add_parser("start", help="run the program in the background, unless it already runs")
     commands.add_parser("open", help="start it if needed, then open the page in the browser")
     commands.add_parser("stop", help="stop the program running in the background")

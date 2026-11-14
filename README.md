@@ -46,20 +46,20 @@ What it does:
 1. **Git and uv.** Installs them if they are missing. Windows asks an administrator to approve only when Git has to be installed; uv is installed for the user alone.
 2. **The latest release** of [tanasievlad246/automatizare-saga](https://github.com/tanasievlad246/automatizare-saga) is cloned into `%LOCALAPPDATA%\AutoSaga` (`-InstallDir` chooses another folder). `-Repo owner/name` installs from another repository; a private one works too, as Git asks the PC to sign in to GitHub once. Without any release, the main branch is installed and the script says so.
 3. **The dependencies** go into that folder (`.venv`). uv downloads Python as well if the PC has none.
-4. **`config.toml`** is written with a random key for the local API. The port is 80 when it is free, so the address needs no port; otherwise 8765.
+4. **`config.toml`** is written with a random key for the local API. The port is 8765, or the next free port after it when that one is taken. Port 80 is never used: other programs expect to find it free.
 5. **Two shortcuts.** One in the Windows Startup folder starts the program, without a window, each time that user signs in. One on the Desktop, "e-Factura pentru SAGA", opens the page and starts the program first if it is not running.
-6. The program is started and the page opens at **`http://autosaga.localhost`** (or `http://autosaga.localhost:8765`).
+6. The program is started and the page opens at **`http://autosaga.localhost:8765`** (with the port from step 4).
 
 Then, on the page: fill in the ANAF client ID and secret and the OpenRouter key under "Chei și parole", and connect to ANAF. Step 2 of [One-time setup](#one-time-setup) below, registering the application with ANAF, still has to be done by hand.
 
 - **Updating:** run the script again. It stops the program, moves the folder to the newest release and starts it again. `config.toml` and `data\` are not touched.
 - **Removing:** `install.ps1 -Uninstall` stops the program and removes the two shortcuts. The folder, with the settings and every saved invoice, stays until it is deleted by hand.
-- **Other programs** (a Power Automate flow) reach the local API at `http://127.0.0.1` when the port is 80, and at `http://127.0.0.1:8765` otherwise, with the key from `config.toml`.
+- **Other programs** (a Power Automate flow) reach the local API at `http://127.0.0.1:8765` (the port in `config.toml`), with the key from the same file.
 - **Why the address needs no hosts-file entry.** Chrome, Edge and Firefox open any name ending in `.localhost` on the computer itself, and treat it as they treat `localhost`. A made-up name such as `local.autosaga` would need the hosts file, would be marked "Not secure", and the page could no longer prove itself to the program.
 - **Why it starts at sign-in, not at boot.** The saved ANAF login belongs to one Windows user, and the folder dialog and "Deschide folderul" need that user's desktop.
 - **The built page must be in the repository** (`src/efactura/ui/`), so the accountant's PC needs no Node. Run `pnpm --dir frontend build` before tagging a release.
 
-`install.ps1` itself has not been run: this was written on a Mac without PowerShell. Its Git and uv steps, and the program's `setup`, `start` and `stop`, were replayed by hand against a copy of the project (install, update to a newer release, no release at all). See [Not yet confirmed](#not-yet-confirmed-against-the-real-services).
+`install.ps1` was written on a Mac without PowerShell and has had one run on Windows so far, which got as far as starting the program. See [Not yet confirmed](#not-yet-confirmed-against-the-real-services).
 
 ## One-time setup
 
@@ -86,7 +86,7 @@ Double-click `start.bat`, or run
 uv run efactura serve --open
 ```
 
-The page opens at `http://autosaga.localhost:8765/ui/` (without `:8765` when the port is 80). `http://127.0.0.1:8765/ui/` is the same page. It only works on this computer.
+The page opens at `http://autosaga.localhost:8765/ui/`. `http://127.0.0.1:8765/ui/` is the same page. It only works on this computer.
 
 | Screen | What it is for |
 |---|---|
@@ -148,7 +148,7 @@ Run them from this folder. Use `--config PATH` before the command if `config.tom
 | `uv run efactura costs [--since DATE] [--until DATE] [--group day\|week\|month\|year] [--cui CUI]` | What the Jev calls have cost, in total and per period. |
 | `uv run efactura serve [--port N] [--open]` | Starts the screen and the local API; `--open` also opens the browser. |
 | `uv run efactura dev [--port N]` | For development: the API and the page's dev server together, both reloading on change. |
-| `uv run efactura setup [--port N]` | Writes the first `config.toml` from `config.example.toml`, with a random API key; port 80 when free, else 8765. Leaves an existing `config.toml` alone. |
+| `uv run efactura setup [--port N]` | Writes the first `config.toml` from `config.example.toml`, with a random API key and port 8765, or the next free port after it. Leaves an existing `config.toml` alone. |
 | `uv run efactura start` | Runs the program in the background, without a window, unless it already runs. What it prints goes to `data/server.log`. |
 | `uv run efactura open` | `start`, then opens the page in the browser. This is what the Desktop shortcut runs. |
 | `uv run efactura stop` | Stops the program running in the background. |
@@ -455,9 +455,10 @@ For classification, nothing has yet run against the real OpenRouter or the real 
 
 For the installer:
 
-- **`install.ps1` has never been run.** It is plain Windows PowerShell 5.1, checked by reading only. Run it first on a spare Windows account or a test PC.
+- **`install.ps1` has had one run on Windows**, which reached the last step. It is plain Windows PowerShell 5.1 and was otherwise checked by reading only.
 - **Starting without a window** (`start`, `open`, the two shortcuts) uses Windows-only process flags that could not be tried on a Mac. The same commands start and stop the program correctly on macOS. If the background start fails on Windows, `start.bat` still works.
-- **Port 80** is chosen when nothing listens on it at install time. If another program takes it later, the program will not start; change `[api] port` in `config.toml`. A double click on the Desktop shortcut then shows the reason in a message box.
+- **The port** is chosen at install time: 8765, or the next free one. If another program takes it later, the program will not start; change `[api] port` in `config.toml`. A double click on the Desktop shortcut then shows the reason in a message box.
+- **First run on Windows, 2026-11-14:** `install.ps1` ran as far as starting the program, which then reported the port as taken, for port 80 and for a free port alike. The cause was this program's own check: Windows takes about two seconds to refuse a connection to a port nobody listens on, and that wait was read as another program holding the port. Fixed in 0.1.1; the start itself is still to be confirmed.
 - **`winget`** is needed only when Git is missing; on a Windows without it the script stops and names the Git download page.
 
 For the screen:

@@ -26,15 +26,19 @@ from .config import DEFAULT_PORT, Config, load_config, page_address
 from .errors import CONFIG_ERROR, INTERNAL_ERROR, EfacturaError
 
 EXAMPLE_SETTINGS = "config.example.toml"
-# On this port the address needs no port: http://autosaga.localhost
-FRIENDLY_PORT = 80
+# setup takes the usual port, or the first free one of this many after it. Port 80 is never
+# taken: other programs on the PC expect to find it free.
+PORTS_TRIED = 20
 SERVICE = "efactura"  # what GET /health answers with
 SERVER_OUTPUT = "server.log"  # in the data folder: what the background program printed
 
 START_TIMEOUT = 30.0  # seconds; a first start behind an antivirus scan can be slow
 STOP_TIMEOUT = 15.0
 POLL = 0.25
-PROBE_TIMEOUT = 2.0
+# A program listening on this computer accepts a connection at once, so a short wait is
+# enough to know that nothing listens. The answer itself may take longer while it starts.
+CONNECT_TIMEOUT = 1.0
+ANSWER_TIMEOUT = 5.0
 
 # The two lines of the example that setup fills in.
 _EMPTY_KEY = re.compile(r'(?m)^key = ""[ \t]*$')
@@ -54,7 +58,7 @@ def first_settings(config_path: Path, port: int | None = None) -> dict:
             CONFIG_ERROR, f"{EXAMPLE_SETTINGS} was not found beside {config_path}; nothing to start from."
         )
     if port is None:
-        port = FRIENDLY_PORT if port_is_free(FRIENDLY_PORT) else DEFAULT_PORT
+        port = free_port()
     key = secrets.token_urlsafe(32)
     text = _EMPTY_KEY.sub(f'key = "{key}"', example.read_text(encoding="utf-8"), count=1)
     text = _PORT.sub(f"port = {port}", text, count=1)
@@ -118,9 +122,29 @@ def is_running(port: int) -> bool:
 # --- touching the computer: replaced in tests ------------------------------------------------
 
 
-def port_is_free(port: int) -> bool:
-    """Can this program listen on the port? Tried the way the server will."""
+def free_port() -> int:
+    """The usual port when nothing listens on it, else the next free one after it."""
+    for port in range(DEFAULT_PORT, DEFAULT_PORT + PORTS_TRIED):
+        if port_is_free(port):
+            return port
+    return any_free_port()
+
+
+def any_free_port() -> int:
+    """A port the computer itself picks as free."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        return listener.getsockname()[1]
+
+
+def port_is_free(port: int) -> bool:
+    """Can this program listen on the port?"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        # Windows lets a second program bind a port that another holds on every address,
+        # unless the bind asks to be the only one. Without this, a taken port looks free.
+        only_one = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+        if only_one is not None:
+            listener.setsockopt(socket.SOL_SOCKET, only_one, 1)
         try:
             listener.bind(("127.0.0.1", port))
         except OSError:
@@ -133,11 +157,13 @@ def probe(port: int) -> dict | None:
     when this program does, and an empty answer when something else does."""
     try:
         # trust_env off: a proxy set on the PC must never be asked for this computer itself.
-        reply = httpx.get(f"http://127.0.0.1:{port}/health", timeout=PROBE_TIMEOUT, trust_env=False)
-    except httpx.TimeoutException:
-        return {}  # something holds the port without answering
-    except httpx.TransportError:
+        reply = httpx.get(f"http://127.0.0.1:{port}/health", timeout=_timeouts(), trust_env=False)
+    except (httpx.ConnectError, httpx.ConnectTimeout):
+        # Nothing listens there. Windows takes a couple of seconds to refuse such a
+        # connection, so running out of time while connecting means the same as a refusal.
         return None
+    except httpx.TransportError:
+        return {}  # something took the connection, then did not answer as a web server
     try:
         answer = reply.json()
     except ValueError:
@@ -149,7 +175,7 @@ def ask_to_stop(port: int, key: str) -> None:
     try:
         httpx.post(
             f"http://127.0.0.1:{port}/shutdown", headers={"X-API-Key": key},
-            timeout=PROBE_TIMEOUT, trust_env=False,
+            timeout=_timeouts(), trust_env=False,
         )
     except httpx.TransportError:
         pass  # it may close the connection as it goes; stop() checks what happened
@@ -180,6 +206,11 @@ def pause(seconds: float) -> None:
     time.sleep(seconds)
 
 
+def clock() -> float:
+    """Seconds that only ever go forward, for measuring a wait."""
+    return time.monotonic()
+
+
 # --- small helpers ---------------------------------------------------------------------------
 
 
@@ -192,13 +223,17 @@ def _console_python() -> str:
     return str(here)
 
 
+def _timeouts() -> httpx.Timeout:
+    return httpx.Timeout(ANSWER_TIMEOUT, connect=CONNECT_TIMEOUT)
+
+
 def _wait_until(happened, timeout: float) -> bool:
-    waited = 0.0
+    """By the clock: asking can itself take seconds, so counting tries measures nothing."""
+    deadline = clock() + timeout
     while not happened():
-        if waited >= timeout:
+        if clock() >= deadline:
             return False
         pause(POLL)
-        waited += POLL
     return True
 
 

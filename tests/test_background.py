@@ -4,9 +4,11 @@ import json
 import shutil
 import socket
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from efactura import background, cli
@@ -49,21 +51,30 @@ def test_setup_writes_settings_the_program_can_start_with(folder, command, monke
 
     cfg = load_config(folder / "config.toml")
     assert (code, out["ok"], out["created"]) == (0, True, True)
-    assert (out["port"], out["page"]) == (80, "http://autosaga.localhost/ui/")
+    assert (out["port"], out["page"]) == (8765, "http://autosaga.localhost:8765/ui/")
     assert out["config"] == str(folder / "config.toml")
-    assert (cfg.api_port, len(cfg.api_key) >= 32) == (80, True)
+    assert (cfg.api_port, len(cfg.api_key) >= 32) == (8765, True)
     assert cfg.api_key not in json.dumps(out)  # the key stays in the file
 
 
-def test_setup_keeps_the_usual_port_when_80_is_taken(folder, command, monkeypatch):
+def test_setup_takes_the_next_free_port_when_the_usual_one_is_taken(folder, command, monkeypatch):
     asked = []
-    monkeypatch.setattr(background, "port_is_free", lambda port: asked.append(port) or False)
+    monkeypatch.setattr(background, "port_is_free", lambda port: asked.append(port) or port == 8767)
 
     _, out = command(folder / "config.toml", "setup")
 
-    assert asked == [80]
-    assert (out["port"], out["page"]) == (8765, "http://autosaga.localhost:8765/ui/")
-    assert load_config(folder / "config.toml").api_port == 8765
+    assert asked == [8765, 8766, 8767]  # never port 80, which other programs want
+    assert (out["port"], out["page"]) == (8767, "http://autosaga.localhost:8767/ui/")
+    assert load_config(folder / "config.toml").api_port == 8767
+
+
+def test_setup_lets_the_computer_choose_when_the_usual_ports_are_all_taken(folder, command, monkeypatch):
+    monkeypatch.setattr(background, "port_is_free", lambda port: False)
+    monkeypatch.setattr(background, "any_free_port", lambda: 51234)
+
+    _, out = command(folder / "config.toml", "setup")
+
+    assert (out["port"], load_config(folder / "config.toml").api_port) == (51234, 51234)
 
 
 def test_setup_takes_the_port_it_is_given(folder, command, monkeypatch):
@@ -140,6 +151,7 @@ def computer(monkeypatch):
     monkeypatch.setattr(background, "spawn_server", spawn_server)
     monkeypatch.setattr(background, "ask_to_stop", ask_to_stop)
     monkeypatch.setattr(background, "pause", pause)
+    monkeypatch.setattr(background, "clock", lambda: state.waited)  # time passes only while waiting
     monkeypatch.setattr(cli, "open_browser", state.opened.append)
     return state
 
@@ -257,6 +269,88 @@ def test_a_command_started_without_a_window_has_nowhere_to_print(settings, compu
 
     assert cli.main(["--config", str(settings), "start"]) == 0
     assert len(computer.spawned) == 1
+
+
+# --- telling a free port from a taken one -------------------------------------------------------
+
+
+def free_port_here():
+    with socket.socket() as chosen:
+        chosen.bind(("127.0.0.1", 0))
+        return chosen.getsockname()[1]
+
+
+def test_a_port_nobody_listens_on_is_free(settings):
+    port = free_port_here()
+
+    assert background.probe(port) is None
+    assert background.is_running(port) is False
+
+
+@pytest.mark.parametrize("slow_refusal", [httpx.ConnectTimeout("timed out"), httpx.ConnectError("refused")])
+def test_a_port_that_is_slow_to_refuse_is_still_free(monkeypatch, slow_refusal):
+    # Windows takes about two seconds to refuse a connection to a port nobody listens on.
+    # Read as "another program is there", that made every port look taken.
+    def get(*args, **kwargs):
+        raise slow_refusal
+
+    monkeypatch.setattr(background.httpx, "get", get)
+
+    assert background.probe(8080) is None
+    assert background.is_running(8080) is False
+
+
+def test_the_wait_for_a_refusal_is_shorter_than_the_wait_for_an_answer(monkeypatch):
+    asked = {}
+
+    def get(url, timeout, **kwargs):
+        asked["timeout"] = timeout
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(background.httpx, "get", get)
+    background.probe(8080)
+
+    assert asked["timeout"].connect <= 1.0 < asked["timeout"].read
+
+
+def test_something_that_accepts_but_never_answers_is_another_program(monkeypatch):
+    def get(*args, **kwargs):
+        raise httpx.ReadTimeout("no answer")
+
+    monkeypatch.setattr(background.httpx, "get", get)
+
+    assert background.probe(8080) == {}
+
+
+def test_a_program_that_does_not_speak_like_ours_is_another_program(settings, command):
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+
+        def answer_once():
+            connection, _ = listener.accept()
+            with connection:
+                connection.recv(1024)
+                connection.sendall(b"220 some other service ready\r\n")
+
+        threading.Thread(target=answer_once, daemon=True).start()
+
+        assert background.probe(port) == {}
+
+
+def test_waiting_gives_up_by_the_clock_not_by_counting_tries(monkeypatch):
+    # A try can itself take seconds (see above), so tries are no measure of time.
+    moment = {"now": 0.0}
+    monkeypatch.setattr(background, "clock", lambda: moment["now"])
+    monkeypatch.setattr(background, "pause", lambda seconds: None)
+
+    def never(seconds_per_try=2.0):
+        moment["now"] += seconds_per_try
+        return False
+
+    assert background._wait_until(never, timeout=30.0) is False
+    assert moment["now"] <= 34.0
 
 
 # --- for real: this computer, a free port -----------------------------------------------------
