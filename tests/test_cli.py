@@ -1,4 +1,5 @@
 import io
+import os
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -357,6 +358,8 @@ def test_one_bad_round_of_housekeeping_does_not_end_it_for_good(monkeypatch, tmp
 def test_the_demo_command_builds_the_demo_once_and_starts_on_it(monkeypatch, tmp_path, capsys):
     from efactura import cli, demo
 
+    monkeypatch.delenv("EFACTURA_CONFIG", raising=False)  # registered, so what the command sets is undone
+
     started = []
     monkeypatch.setattr(demo, "FOLDER", tmp_path / "demo")
     monkeypatch.setattr(cli, "run_dev", lambda cfg, port: started.append(("dev", cfg.demo, port)))
@@ -369,6 +372,7 @@ def test_the_demo_command_builds_the_demo_once_and_starts_on_it(monkeypatch, tmp
     still_there = kept.exists()
     cli.main(["demo", "--fresh", "--port", "9100"])
 
+    assert os.environ["EFACTURA_CONFIG"] == str(tmp_path / "demo" / "config.toml")
     assert still_there and not kept.exists()
     assert started == [("dev", True, 9100)] * 3
 
@@ -377,6 +381,8 @@ def test_without_pnpm_the_demo_serves_the_built_page(monkeypatch, tmp_path, caps
     import json
 
     from efactura import cli, demo
+
+    monkeypatch.delenv("EFACTURA_CONFIG", raising=False)  # registered, so what the command sets is undone
 
     started = []
     monkeypatch.setattr(demo, "FOLDER", tmp_path / "demo")
@@ -391,6 +397,8 @@ def test_without_pnpm_the_demo_serves_the_built_page(monkeypatch, tmp_path, caps
 
 def test_a_demo_folder_left_by_an_earlier_version_is_built_again(monkeypatch, tmp_path):
     from efactura import cli, demo
+
+    monkeypatch.delenv("EFACTURA_CONFIG", raising=False)  # registered, so what the command sets is undone
 
     old = tmp_path / "demo"
     (old / "data").mkdir(parents=True)
