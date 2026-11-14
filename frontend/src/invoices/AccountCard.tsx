@@ -24,10 +24,14 @@ export function AccountCard({
   const queryClient = useQueryClient()
   const [changing, setChanging] = useState(false)
   const afterChange = {
+    // Returned, so the buttons stay busy until the invoice has been read again: a second
+    // press must not repeat the request (and ask Jev twice).
     onSuccess: () => {
       setChanging(false)
       // A new account can also bring, change or remove a proposed rule.
-      for (const key of ['invoice', 'invoices', 'clients', 'proposed-rules']) queryClient.invalidateQueries({ queryKey: [key] })
+      return Promise.all(
+        ['invoice', 'invoices', 'clients', 'proposed-rules'].map((key) => queryClient.invalidateQueries({ queryKey: [key] })),
+      )
     },
     onError: showError,
   }
@@ -45,7 +49,14 @@ export function AccountCard({
   })
   const busy = accept.isPending || choose.isPending || decide.isPending
   const chooser = (
-    <AccountChooser accounts={accounts} likelihoods={jev?.probabilities ?? null} busy={busy} onChoose={choose.mutate} />
+    <AccountChooser
+      accounts={accounts}
+      likelihoods={jev?.probabilities ?? null}
+      busy={busy}
+      label={invoice.cont || invoice.suggested_cont ? 'Alegeți alt cont' : 'Alegeți contul'}
+      takeFocus={changing}
+      onChoose={choose.mutate}
+    />
   )
 
   // The program holds back an invoice it has seen before (same supplier, number and date)
@@ -70,8 +81,8 @@ export function AccountCard({
             <Link to={`/clienti/${invoice.cui}/facturi/${invoice.possible_duplicate_of}`}>Vezi factura salvată mai devreme</Link>
           </Button>
           <p>
-            Dacă este aceeași factură, bifați mai jos „Am importat factura în SAGA” și nu va mai apărea la verificat.
-            Dacă este altă factură, alegeți-i contul:
+            Dacă este aceeași factură, nu o importați: bifați mai jos „Am importat factura în SAGA”, ca să nu mai
+            apară la verificat. Dacă este altă factură, alegeți-i contul:
           </p>
           {chooser}
         </div>

@@ -13,8 +13,15 @@ const CONDITIONS: [keyof Rule & ('keywords' | 'supplier_cuis' | 'item_codes' | '
 
 /** One rule, read as a sentence: if this is on the invoice, then that account. */
 export function RuleRow({
-  rule, position, clientName, onEdit, onMove,
-}: { rule: Rule; position: number; clientName: string | null; onEdit: () => void; onMove: (up: boolean) => void }) {
+  rule, position, isLast, clientName, onEdit, onMove,
+}: {
+  rule: Rule
+  position: number
+  isLast: boolean
+  clientName: string | null
+  onEdit: () => void
+  onMove: (up: boolean) => void
+}) {
   const conditions = CONDITIONS.filter(([field]) => rule[field].length > 0)
     .map(([field, words]) => `${words}: ${rule[field].join(', ')}`)
     .join(' sau ')
@@ -36,13 +43,13 @@ export function RuleRow({
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="outline" size="icon" aria-label={`Mută regula ${rule.name} mai sus`} onClick={() => onMove(true)}>
+        <Button variant="outline" size="icon" aria-label={`Mută regula ${rule.name} mai sus`} disabled={position === 1} onClick={() => onMove(true)}>
           <ChevronUp aria-hidden />
         </Button>
-        <Button variant="outline" size="icon" aria-label={`Mută regula ${rule.name} mai jos`} onClick={() => onMove(false)}>
+        <Button variant="outline" size="icon" aria-label={`Mută regula ${rule.name} mai jos`} disabled={isLast} onClick={() => onMove(false)}>
           <ChevronDown aria-hidden />
         </Button>
-        <Button variant="outline" onClick={onEdit}>Modifică</Button>
+        <Button variant="outline" aria-label={`Modifică regula ${rule.name}`} onClick={onEdit}>Modifică</Button>
       </div>
     </div>
   )

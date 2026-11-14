@@ -109,6 +109,22 @@ CREATE TABLE IF NOT EXISTS rules (
     enabled            INTEGER NOT NULL DEFAULT 1
 );
 
+-- The journal: what the program did, line by line (see journal.py). `trace` ties together
+-- the lines of one operation; `data` is a JSON object of details, never a key or a token.
+CREATE TABLE IF NOT EXISTS events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    at          TEXT NOT NULL,
+    level       TEXT NOT NULL,                      -- detail | info | warning | error
+    area        TEXT NOT NULL,
+    event       TEXT,                               -- a stable code; NULL for a plain log line
+    message     TEXT NOT NULL,
+    data        TEXT NOT NULL DEFAULT '{}',
+    trace       TEXT,
+    duration_ms INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_events_at ON events (at);
+CREATE INDEX IF NOT EXISTS idx_events_trace ON events (trace);
+
 -- The companies whose invoices are fetched. Removing one leaves its invoices in place.
 CREATE TABLE IF NOT EXISTS clients (
     cui      TEXT PRIMARY KEY,

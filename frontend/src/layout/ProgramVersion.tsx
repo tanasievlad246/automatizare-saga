@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { api } from '../api'
 import type { UpdateStatus } from '../types'
-import { shownVersion } from './programUpdate'
+import { COULD_NOT_LOOK, shownVersion, whatTheLookFound } from './programUpdate'
 
 /** At the foot of the menu: the version installed, and a way to look for a newer one now. */
 export function ProgramVersion({ status }: { status: UpdateStatus }) {
@@ -12,7 +12,6 @@ export function ProgramVersion({ status }: { status: UpdateStatus }) {
     // What it found is what the rest of the page shows, the notice on top included.
     onSuccess: (found) => queryClient.setQueryData(['program-update'], found),
   })
-  const found = look.data
 
   return (
     <div className="mt-6 flex flex-col gap-1 px-3.5 text-[0.95rem]">
@@ -22,10 +21,10 @@ export function ProgramVersion({ status }: { status: UpdateStatus }) {
           {look.isPending ? 'Se caută…' : 'Caută o versiune nouă'}
         </Button>
       )}
+      {/* Said from the status the page has now, not from what this look found: read again
+          later, the status may know of a newer version, and the notice on top would say so. */}
       <span aria-live="polite" className="text-muted-foreground">
-        {look.isError || found?.check_error
-          ? 'Nu am putut căuta. Verificați conexiunea la internet.'
-          : found && (found.update_available ? `Există versiunea ${shownVersion(found.latest_release)}.` : 'Aveți cea mai nouă versiune.')}
+        {look.isError ? COULD_NOT_LOOK : look.isSuccess && whatTheLookFound(status)}
       </span>
     </div>
   )

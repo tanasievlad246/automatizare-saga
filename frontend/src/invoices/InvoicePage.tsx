@@ -36,7 +36,14 @@ export function InvoicePage() {
     </Link>
   )
   if (error) return <div className="flex flex-col gap-5">{back}<Notice tone="attention">{errorMessage(error)}</Notice></div>
-  if (!view) return <div className="flex flex-col gap-5">{back}</div>
+  if (!view) {
+    return (
+      <div className="flex flex-col gap-5">
+        {back}
+        <p role="status" className="text-lg text-muted-foreground">Se încarcă factura…</p>
+      </div>
+    )
+  }
 
   const { invoice, document } = view
   return (
@@ -52,8 +59,11 @@ export function InvoicePage() {
         <InvoiceStateBadges invoice={invoice} />
       </div>
 
-      <div className="flex flex-wrap items-start gap-5">
-        <section aria-label="Factura" className="min-w-0 flex-[999_1_520px] rounded-2xl border bg-card">
+      {/* Two columns when there is room for both. Otherwise one, with the account first:
+          it is what the person came for, and must not end up under a long invoice. */}
+      <div className="@container">
+      <div className="grid items-start gap-5 @[58rem]:grid-cols-[minmax(0,1fr)_23rem]">
+        <section aria-label="Factura" className="min-w-0 rounded-2xl border bg-card @max-[58rem]:order-last">
           <div className="border-b px-4 py-3.5">
             <PillTabs label="Cum se vede factura" options={WAYS_TO_SEE_IT} value={shown} onChange={setShown} />
           </div>
@@ -78,7 +88,7 @@ export function InvoicePage() {
             />
           )}
         </section>
-        <div className="flex min-w-0 flex-[1_1_330px] flex-col gap-5">
+        <div className="flex min-w-0 flex-col gap-5">
           <AccountCard invoice={invoice} jev={view.jev} accounts={accounts} />
           {view.rule_suggestion && (
             // Another invoice, or another account for this one, is a different proposal: start it afresh.
@@ -90,6 +100,7 @@ export function InvoicePage() {
           )}
           <SagaFileCard invoice={invoice} />
         </div>
+      </div>
       </div>
     </div>
   )

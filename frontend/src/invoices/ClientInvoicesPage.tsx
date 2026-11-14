@@ -29,7 +29,7 @@ export function ClientInvoicesPage() {
   const [search, setSearch] = useSearchParams()
   const [syncing, setSyncing] = useState(false)
   const client = useQuery({ queryKey: ['clients'], queryFn: api.clients }).data?.clients.find((each) => each.cui === cui)
-  const { data, error } = useQuery({ queryKey: ['invoices', cui], queryFn: () => api.receivedInvoices(cui) })
+  const { data, error, isPending } = useQuery({ queryKey: ['invoices', cui], queryFn: () => api.receivedInvoices(cui) })
   const invoices = data?.invoices ?? []
 
   const chosen = search.get('arata') ?? VIEWS.find((view) => invoices.some(view.includes))?.value ?? 'toate'
@@ -45,7 +45,8 @@ export function ClientInvoicesPage() {
       <div className="flex flex-wrap items-center gap-x-6 gap-y-3.5">
         <div className="min-w-0 flex-[1_1_320px]">
           <PageTitle title={client?.name ?? `CUI ${cui}`}>
-            CUI {cui} · Ultima descărcare: {formatWhen(client?.last_sync_at ?? null)}
+            CUI {cui}
+            {client && ` · Ultima descărcare: ${formatWhen(client.last_sync_at)}`}
           </PageTitle>
         </div>
         <Button size="lg" onClick={() => setSyncing(true)}>
@@ -59,9 +60,23 @@ export function ClientInvoicesPage() {
         label="Ce facturi se văd"
         value={chosen}
         onChange={(view) => setSearch({ arata: view }, { replace: true })}
-        options={VIEWS.map((view) => ({ value: view.value, label: `${view.label} (${invoices.filter(view.includes).length})` }))}
+        // No counts until the invoices have arrived: "(0)" would read as "none".
+        options={VIEWS.map((view) => ({
+          value: view.value,
+          label: data ? `${view.label} (${invoices.filter(view.includes).length})` : view.label,
+        }))}
       />
-      <InvoicesTable invoices={shown} />
+      {!error && (
+        <InvoicesTable
+          invoices={shown}
+          loading={isPending}
+          whenEmpty={
+            invoices.length === 0
+              ? 'Nu ați descărcat încă facturi pentru acest client. Apăsați „Descarcă facturile”.'
+              : 'Nicio factură în această listă. Alegeți altă listă de mai sus.'
+          }
+        />
+      )}
       <ImportedInSagaCard ready={ready} />
 
       <SyncDialog

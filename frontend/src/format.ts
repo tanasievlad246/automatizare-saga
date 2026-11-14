@@ -24,6 +24,13 @@ export function formatWhen(iso: string | null, now = new Date()): string {
   return `${day}, ${TIME.format(moment)}`
 }
 
+/** The same moment after a noun ("copia …"): "de azi, 09:30", "de ieri, 16:02" or "din 09.11.2026, 14:02". */
+export function formatFromWhen(iso: string, now = new Date()): string {
+  const when = formatWhen(iso, now)
+  // Romanian says "de azi" and "de ieri", but "din" before a date.
+  return `${/^\d/.test(when) ? 'din' : 'de'} ${when}`
+}
+
 function startOfDay(moment: Date): number {
   return new Date(moment.getFullYear(), moment.getMonth(), moment.getDate()).getTime()
 }
@@ -72,6 +79,17 @@ function capitalise(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
+/** "41 MB" or "850 KB": how much room a file takes. */
+export function formatSize(bytes: number): string {
+  const megabytes = bytes / (1024 * 1024)
+  return megabytes >= 1 ? `${Math.round(megabytes).toLocaleString('ro-RO')} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`
+}
+
+/** "09:31:07" from a moment the program wrote, in the PC's own time. */
+export function formatClock(iso: string): string {
+  return iso.slice(11, 19)
+}
+
 /** Today as the date fields and the API write it: "2026-11-13". */
 export function today(): string {
   const now = new Date()
@@ -83,6 +101,13 @@ export function countOf(count: number, one: string, many: string): string {
   if (count === 1) return one
   const needsDe = count % 100 >= 20 || (count >= 100 && count % 100 === 0)
   return `${count} ${needsDe ? 'de ' : ''}${many}`
+}
+
+/** A long path cut to its last two parts ("…\\data\\SAGA Import"), which say where it is. */
+export function shortPath(path: string): string {
+  const separator = path.includes('\\') ? '\\' : '/'
+  const parts = path.split(/[\\/]/).filter(Boolean)
+  return parts.length <= 3 ? path : `…${separator}${parts.slice(-2).join(separator)}`
 }
 
 /** The folder a file is in: its path without the last part, with either kind of slash. */

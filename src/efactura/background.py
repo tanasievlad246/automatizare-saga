@@ -15,9 +15,11 @@ import os
 import re
 import secrets
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -102,6 +104,19 @@ def stop(cfg: Config) -> dict:
             INTERNAL_ERROR, f"The program is still running {STOP_TIMEOUT:.0f} seconds after being asked to stop."
         )
     return {"ok": True, "stopped": True}
+
+
+def keep_house(cfg: Config, now=None) -> None:
+    """What the running program does every quarter of an hour: the daily backup when it is
+    due, and the journal's clean-up. Never raises: it runs where nobody is watching."""
+    from . import backup, journal  # here, because both of them import this module
+
+    with journal.trace(fresh=True):  # each round is its own story, not part of the program's start
+        backup.run_if_due(cfg, now)
+        try:
+            journal.prune(cfg.db_path, now or datetime.now().astimezone())
+        except sqlite3.Error:
+            pass
 
 
 def is_running(port: int) -> bool:

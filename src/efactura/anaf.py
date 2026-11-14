@@ -9,11 +9,13 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from datetime import datetime
 from typing import Callable
 
 import httpx
 
+from . import journal
 from .config import Config
 from .errors import (
     ANAF_ERROR,
@@ -23,6 +25,7 @@ from .errors import (
     NETWORK_ERROR,
     NO_SPV_RIGHTS,
     EfacturaError,
+    said_by,
 )
 
 log = logging.getLogger(__name__)
@@ -142,10 +145,25 @@ class AnafService:
 
     def _send(self, endpoint: str, params: dict, renew_token: bool) -> httpx.Response:
         headers = {"Authorization": f"Bearer {self._get_token(renew_token)}"}
+        started = time.monotonic()
         try:
-            return self._http.get(f"{self._base}/{endpoint}", params=params, headers=headers)
+            response = self._http.get(f"{self._base}/{endpoint}", params=params, headers=headers)
         except httpx.RequestError as exc:
-            raise EfacturaError(NETWORK_ERROR, f"Could not reach ANAF: {exc}") from None
+            journal.record(
+                "anaf", "anaf.unreachable", f"ANAF could not be reached for {endpoint}.", level="warning",
+                endpoint=endpoint, error=type(exc).__name__, duration_ms=_elapsed_ms(started),
+            )
+            raise EfacturaError(NETWORK_ERROR, f"Could not reach ANAF: {said_by(exc)}") from None
+        # The address and what was asked for, never the login sent with it.
+        journal.record(
+            "anaf", "anaf.call", f"ANAF answered {response.status_code} for {endpoint}.", level="detail",
+            endpoint=endpoint, status=response.status_code, duration_ms=_elapsed_ms(started),
+        )
+        return response
+
+
+def _elapsed_ms(started: float) -> int:
+    return round((time.monotonic() - started) * 1000)
 
 
 def _millis(moment: datetime) -> str:

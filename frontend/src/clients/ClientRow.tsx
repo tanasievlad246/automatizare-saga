@@ -21,13 +21,15 @@ export function ClientRow({ client, onSync }: { client: Client; onSync: () => vo
   }
 
   return (
+    // Name, details and what is new on the left; the buttons on the right. When the buttons
+    // do not fit beside them they drop to a row of their own, still at the right, so every
+    // card lines up the same way.
     <div className="flex flex-wrap items-center gap-x-6 gap-y-3.5 rounded-2xl border bg-card px-5.5 py-4.5">
-      <div className="min-w-0 flex-[1_1_260px]">
+      <div className="flex min-w-0 flex-[1_1_320px] flex-col gap-1.5">
         <div className="text-xl font-bold">{client.name}</div>
         <div className="text-muted-foreground">
           CUI {client.cui} · Ultima descărcare: {formatWhen(client.last_sync_at)}
         </div>
-      </div>
       <div className="flex flex-wrap items-center gap-2">
         {client.new_count > 0 && (
           <Badge className="bg-fresh text-fresh-foreground">
@@ -41,12 +43,18 @@ export function ClientRow({ client, onSync }: { client: Client; onSync: () => vo
           <span className="text-muted-foreground">Nimic nou</span>
         )}
       </div>
-      <div className="flex flex-wrap items-center gap-2.5">
-        <Button variant="outline" className="border-2 border-primary text-primary" onClick={onSync}>
+      </div>
+      <div className="ml-auto flex flex-wrap items-center gap-2.5">
+        <Button
+          variant="outline"
+          className="border-2 border-primary text-primary"
+          aria-label={`Descarcă facturile pentru ${client.name}`}
+          onClick={onSync}
+        >
           Descarcă facturile
         </Button>
         <Button asChild variant="link">
-          <Link to={`/clienti/${client.cui}`}>Vezi facturile</Link>
+          <Link to={`/clienti/${client.cui}`} aria-label={`Vezi facturile clientului ${client.name}`}>Vezi facturile</Link>
         </Button>
         <Button
           variant="ghost"

@@ -14,18 +14,22 @@ import hmac
 import json
 import logging
 import os
+import time
+from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Callable, Union
 
 from fastapi import APIRouter, Depends, FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import __version__, update
+from . import __version__, backup, journal, update
 from .config import PAGE_HOSTNAME, Config, load_config
 from .errors import (
     ANAF_ERROR,
@@ -41,6 +45,7 @@ from .errors import (
     NETWORK_ERROR,
     NO_SPV_RIGHTS,
     NOT_CLASSIFIABLE,
+    BACKUP_ERROR,
     NOT_FOUND,
     UNAUTHORIZED,
     UPDATE_ERROR,
@@ -61,6 +66,7 @@ HTTP_STATUS = {
     BUSY: 409,
     NOT_CLASSIFIABLE: 409,
     UPDATE_ERROR: 409,
+    BACKUP_ERROR: 409,
     JEV_ERROR: 502,
     NO_SPV_RIGHTS: 502,
     ANAF_LIMIT_REACHED: 502,
@@ -142,6 +148,14 @@ class DismissSuggestionsRequest(BaseModel):
     invoice_ids: list[Union[str, int]]
 
 
+class BackupFolderRequest(BaseModel):
+    folder: str
+
+
+class RestoreRequest(BaseModel):
+    name: str  # the file name of a snapshot in the backup folder
+
+
 class MoveRequest(BaseModel):
     up: bool
 
@@ -187,6 +201,13 @@ def _from_own_page(request: Request, own_hosts: set[str]) -> bool:
     )
 
 
+def _worth_a_line(path: str) -> bool:
+    """Should this request be written in the journal? Not the journal's own requests
+    (reading it would write to it), nor the page's files, nor "are you there"."""
+    plain = path.removeprefix(PAGE_API_PREFIX)
+    return not (path in OPEN_PATHS or path.startswith(PAGE_PREFIX) or plain.startswith("/events") or plain == "/health")
+
+
 def _own_hosts(port: int) -> set[str]:
     """The names the page may be opened under, as a browser writes them in the Host
     header: with the port, except port 80, which browsers leave out."""
@@ -211,6 +232,7 @@ def create_app(
     # Create or upgrade the database now, once, rather than in the first requests, which
     # arrive several at a time when the page opens.
     Store(cfg.db_path).close()
+    journal.configure(cfg.db_path)
 
     app = FastAPI(
         title="efactura local API",
@@ -233,12 +255,34 @@ def create_app(
         allowed = is_open or _from_own_page(request, own_hosts) or hmac.compare_digest(
             request.headers.get("x-api-key", "").encode(), expected_key
         )
-        response = (
-            await call_next(request)
-            if allowed
-            else _failure(EfacturaError(UNAUTHORIZED, "Missing or wrong X-API-Key header."))
-        )
+        # One trace per request: every line written while it is served carries the same number.
+        # Fresh, because the server itself runs inside the trace of the command that started it.
+        with journal.trace(fresh=True) as trace_id:
+            began = time.monotonic()
+            if not allowed:
+                response = _failure(EfacturaError(UNAUTHORIZED, "Missing or wrong X-API-Key header."))
+            else:
+                try:
+                    response = await call_next(request)
+                except Exception as exc:
+                    # Left alone, a bug is answered by the outermost layer, after this trace has
+                    # ended: its traceback would be filed under no request, and the answer
+                    # would name no trace.
+                    log.exception("Unexpected failure in %s %s", request.method, path)
+                    response = _failure(EfacturaError(INTERNAL_ERROR, f"{type(exc).__name__}: {exc}"))
+            if _worth_a_line(path):
+                # The method, the path and how it ended. Never the body: it may hold a key.
+                # Written from a worker thread: the line may wait for a busy database, and
+                # every other request would wait behind it here.
+                await run_in_threadpool(partial(
+                    journal.record,
+                    "page", "page.request", f"{request.method} {path} answered {response.status_code}.",
+                    level="detail" if response.status_code < 500 else "error",
+                    method=request.method, path=path, status=response.status_code,
+                    duration_ms=round((time.monotonic() - began) * 1000),
+                ))
         response.headers.update(NO_FRAMING)
+        response.headers["X-Trace-Id"] = trace_id
         return response
 
     @app.exception_handler(EfacturaError)
@@ -493,8 +537,8 @@ def create_app(
         "/settings/choose-folder", dependencies=documented_key,
         summary="Pick a folder in the computer's own dialog",
     )
-    def choose_folder():
-        return call(lambda s: s.choose_folder())
+    def choose_folder(purpose: str = "saga"):
+        return call(lambda s: s.choose_folder(purpose))
 
     @router.post("/folders/open", dependencies=documented_key, summary="Show the SAGA folder")
     def open_folder(body: OpenFolderRequest):
@@ -509,6 +553,55 @@ def create_app(
     @router.put("/secrets/{key}", dependencies=documented_key, summary="Change a key")
     def change_secret(key: str, body: SecretRequest):
         return call(lambda s: s.set_secret(key, body.value))
+
+    # --- backups of the database (the "Copii de siguranță" screen) ---
+
+    @router.get("/backups", dependencies=documented_key, summary="The backup folder, the snapshots and when the next is due")
+    def backups():
+        return backup.status(cfg)
+
+    @router.put("/backups/folder", dependencies=documented_key, summary="Choose where backups go")
+    def set_backup_folder(body: BackupFolderRequest):
+        return backup.set_folder(cfg, body.folder)
+
+    @router.post("/backups", dependencies=documented_key, summary="Make a backup now")
+    def make_backup():
+        return backup.snapshot(cfg, "manual")
+
+    @router.post("/backups/restore", dependencies=documented_key, summary="Put a snapshot back, in the background")
+    def restore_backup(body: RestoreRequest):
+        return backup.start_restore_in_background(cfg, body.name)
+
+    @router.post("/backups/open-folder", dependencies=documented_key, summary="Show the backup folder")
+    def open_backup_folder():
+        return call(lambda s: s.open_folder(backup.status(cfg)["folder"]))
+
+    # --- the journal (the "Jurnal" screen) ---
+
+    def journal_lines(details, problems, area, q, since, trace, before, limit, everything=False) -> dict:
+        return journal.events(
+            cfg.db_path, details=details, problems_only=problems, area=area, text=q, since=since,
+            trace=trace, before=before, limit=limit, everything=everything,
+        )
+
+    @router.get("/events", dependencies=documented_key, summary="The journal, newest line first")
+    def events(
+        details: bool = False, problems: bool = False, area: str | None = None, q: str | None = None,
+        since: str | None = None, trace: str | None = None, before: int | None = None, limit: int = journal.PAGE,
+    ):
+        return journal_lines(details, problems, area, q, since, trace, before, limit)
+
+    @router.get("/events/export", dependencies=documented_key, summary="The same lines as a text file")
+    def export_events(
+        details: bool = True, problems: bool = False, area: str | None = None, q: str | None = None,
+        since: str | None = None, trace: str | None = None,
+    ):
+        # Whole: a file cut short without saying so would send whoever reads it down the wrong path.
+        lines = journal_lines(details, problems, area, q, since, trace, None, journal.PAGE, everything=True)["events"]
+        name = f"autosaga-jurnal-{datetime.now():%Y%m%d-%H%M}.txt"
+        return PlainTextResponse(
+            journal.as_text(lines) + "\n", headers={"Content-Disposition": f'attachment; filename="{name}"'}
+        )
 
     # --- updating the installed program ---
 

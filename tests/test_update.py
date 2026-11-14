@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from efactura import background, cli, update
+from efactura import backup, background, cli, update
 from efactura.api import create_app
 from efactura.config import load_config
 from efactura.errors import EfacturaError
@@ -271,6 +271,25 @@ def test_a_successful_update_is_recorded_for_the_page(installed):
     assert (found["version"], found["update_available"]) == ("v0.2.0", False)
 
 
+def test_an_update_that_fails_before_anything_is_stopped_is_recorded_too(installed):
+    # The page waits for this record. Without it the update window would wait for ever.
+    git(installed.project, "remote", "set-url", "origin", str(installed.remote.parent / "gone"))
+
+    with pytest.raises(EfacturaError):
+        update.update(installed.cfg, project=installed.project, now=NOW)
+
+    record = update.status(installed.cfg, project=installed.project, now=NOW)["last_update"]
+    assert (record["at"], record["ok"], record["from"], record["to"]) == (NOW.isoformat(), False, "v0.1.0", None)
+    assert "Reading the releases" in record["error"]
+
+
+def test_finding_nothing_newer_is_recorded_as_done(installed):
+    update.update(installed.cfg, project=installed.project, now=NOW)
+
+    record = update.status(installed.cfg, project=installed.project, now=NOW)["last_update"]
+    assert record == {"at": NOW.isoformat(), "ok": True, "from": "v0.1.0", "to": "v0.1.0", "error": None}
+
+
 @pytest.mark.parametrize("smuggled", ["config.toml", "data/efactura.db"])
 def test_a_release_that_would_replace_settings_or_data_is_refused(installed, computer, smuggled):
     # Git overwrites ignored files without a word, so this has to be checked by hand.
@@ -282,6 +301,7 @@ def test_a_release_that_would_replace_settings_or_data_is_refused(installed, com
 
     assert refused.value.code == "update_error" and smuggled in refused.value.message
     assert held(installed) == "v0.1.0"
+    assert update.status(installed.cfg, project=installed.project, now=NOW)["last_update"]["ok"] is False
     assert computer.asked_to_stop == []  # the program was never stopped
     assert clients_in(installed.cfg.db_path) == ["Alfa Construct SRL"]  # still the PC's own database
     assert (installed.project / "config.toml").read_text(encoding="utf-8").startswith("[api]")
@@ -340,3 +360,36 @@ def test_the_update_command_checks_or_updates(installed, monkeypatch, capsys):
 
     assert (checked, found["update_available"], held(installed)) == (0, True, "v0.2.0")
     assert (updated, result["updated"], result["to"]) == (0, True, "v0.2.0")
+
+
+def test_the_program_is_started_again_when_the_copy_before_an_update_cannot_be_made(installed, computer, monkeypatch):
+    installed.release("0.2.0")
+    computer.answer = HEALTHY
+
+    def disk_full(source, target):
+        raise sqlite3.OperationalError("database or disk is full")
+
+    monkeypatch.setattr(backup, "copy_database", disk_full)
+
+    with pytest.raises(EfacturaError) as failed:
+        update.update(installed.cfg, project=installed.project, now=NOW)
+
+    assert failed.value.code == "update_error" and "disk is full" in failed.value.message
+    assert computer.answer == HEALTHY  # stopped for the update, and running again
+    record = update.status(installed.cfg, project=installed.project, now=NOW)["last_update"]
+    assert record["ok"] is False and "disk is full" in record["error"]  # the page is told how it ended
+
+
+def test_an_update_is_not_called_failed_because_the_program_did_not_start_again(installed, computer, monkeypatch):
+    installed.release("0.2.0")
+    computer.answer = HEALTHY
+
+    def will_not_start(cfg, config_path):
+        raise EfacturaError("config_error", "Port 9001 on this computer is used by another program.")
+
+    monkeypatch.setattr(background, "start", will_not_start)
+
+    result = update.update(installed.cfg, project=installed.project, now=NOW)
+
+    assert (result["updated"], result["restarted"], held(installed)) == (True, False, "v0.2.0")
+    assert update.status(installed.cfg, project=installed.project, now=NOW)["last_update"]["ok"] is True

@@ -19,7 +19,7 @@ function StateBadge({ invoice }: { invoice: Invoice }) {
     case 'classified':
       return <Badge className="bg-done text-done-foreground">Gata pentru SAGA</Badge>
     case 'pending':
-      return <Badge className="bg-muted text-foreground">Așteaptă clasificarea</Badge>
+      return <Badge className="bg-muted text-foreground">Așteaptă contul</Badge>
     default:
       return <Badge className="bg-muted text-foreground">Fără cont</Badge>
   }

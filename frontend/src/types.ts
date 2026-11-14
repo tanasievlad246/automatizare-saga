@@ -169,6 +169,36 @@ export type JevCall = {
 
 export type Secret = { key: string; value: string; editable: boolean }
 
+/** One copy of the database in the backup folder. */
+export type Snapshot = { name: string; at: string; kind: 'auto' | 'manual' | 'before-restore'; size: number }
+
+/** Where backups go, which ones are kept, and how the last attempts ended. */
+export type BackupStatus = {
+  folder: string | null
+  folder_found: boolean
+  snapshots: Snapshot[]
+  count: number
+  max: number
+  last_at: string | null
+  next_due_at: string | null
+  due_now: boolean // true: the program makes one at its next look, within a quarter of an hour
+  last_failure: { at: string; error: string } | null
+  last_restore: { at: string; ok: boolean; name: string; error: string | null } | null
+}
+
+/** One line of the journal: something the program did. */
+export type JournalLine = {
+  id: number
+  at: string
+  level: 'detail' | 'info' | 'warning' | 'error'
+  area: string
+  event: string | null // a code the page can say in Romanian; null for a plain log line
+  message: string // the program's own English line
+  data: Record<string, unknown>
+  trace: string | null // shared by every line of one operation
+  duration_ms: number | null
+}
+
 /** Which release of the program is installed, and whether a newer one exists. */
 export type UpdateStatus = {
   version: string

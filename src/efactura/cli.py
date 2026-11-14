@@ -14,7 +14,7 @@ import threading
 import webbrowser
 from pathlib import Path
 
-from . import background, update
+from . import __version__, backup, background, journal, update
 from .anaf import TYPE_PREFIXES
 from .config import Config, load_config, page_address
 from .errors import (
@@ -66,7 +66,7 @@ def show_in_a_box(text: str) -> None:
     if os.name == "nt":
         import ctypes
 
-        ctypes.windll.user32.MessageBoxW(None, text, "e-Factura pentru SAGA", 0x10)  # 0x10: the stop sign
+        ctypes.windll.user32.MessageBoxW(None, text, "AutoSaga", 0x10)  # 0x10: the stop sign
 
 
 def open_page_soon(url: str) -> None:
@@ -81,7 +81,28 @@ def run_server(cfg: Config, port: int) -> None:
     app = create_app(cfg, port=port)
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
     app.state.stop = lambda: setattr(server, "should_exit", True)  # what POST /shutdown calls
-    server.run()
+    stopped = threading.Event()
+    threading.Thread(target=_keep_house_until, args=(cfg, stopped), daemon=True).start()
+    try:
+        server.run()
+    finally:
+        stopped.set()
+
+
+FIRST_HOUSEKEEPING = 60  # seconds after the program starts
+HOUSEKEEPING_EVERY = 15 * 60
+
+
+def _keep_house_until(cfg: Config, stopped: threading.Event) -> None:
+    """Beside the server: the daily backup and the journal's clean-up, looked at soon after
+    the program starts (a PC that was off overnight is behind) and every quarter of an hour."""
+    wait = FIRST_HOUSEKEEPING
+    while not stopped.wait(wait):
+        try:
+            background.keep_house(cfg)
+        except Exception:  # this thread has nobody above it: one bad round must not be the last
+            log.exception("Housekeeping failed; it is tried again at the next round")
+        wait = HOUSEKEEPING_EVERY
 
 
 def run_dev(cfg: Config, port: int) -> None:
@@ -205,6 +226,9 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("start", help="run the program in the background, unless it already runs")
     commands.add_parser("open", help="start it if needed, then open the page in the browser")
     commands.add_parser("stop", help="stop the program running in the background")
+    commands.add_parser("backup", help="make a backup of the database now, in the chosen folder")
+    put_back = commands.add_parser("restore", help="replace the database with a backup")
+    put_back.add_argument("name", help="the file name of a backup in the backup folder")
     newer = commands.add_parser("update", help="move this installed copy to the newest release")
     newer.add_argument("--check", action="store_true", help="only say whether a newer release exists")
     return parser
@@ -221,14 +245,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.config:  # so a restarted dev server reads the same settings file
             os.environ["EFACTURA_CONFIG"] = str(Path(args.config).resolve())
         configure_logging(cfg)
-        result = _dispatch(args, cfg, config_path)
+        with journal.trace():  # everything this command writes in the journal belongs together
+            result = _dispatch(args, cfg, config_path)
     except EfacturaError as exc:
         _emit(exc.to_dict())
         if sys.stdout is None:
             # A shortcut started this, so nobody saw that reply. Without this, a double
             # click on the Desktop would simply do nothing.
             log.error("%s", exc.message)
-            show_in_a_box(f"e-Factura pentru SAGA nu a putut porni.\n\nDetalii tehnice: {exc.message}")
+            show_in_a_box(f"AutoSaga nu a putut porni.\n\nDetalii tehnice: {exc.message}")
         return EXIT_LOGIN_NEEDED if exc.code == LOGIN_NEEDED else EXIT_FAILURE
     except Exception as exc:  # a bug: still answer in JSON, keep the traceback in the log
         log.exception("Unexpected failure")
@@ -249,6 +274,10 @@ def _dispatch(args: argparse.Namespace, cfg: Config, config_path: Path) -> dict 
             return started
         case "stop":
             return background.stop(cfg)
+        case "backup":
+            return backup.snapshot(cfg, "manual")
+        case "restore":
+            return backup.restore(cfg, args.name)
         case "update":
             return update.status(cfg, check=True) if args.check else update.update(cfg)
 
@@ -265,7 +294,10 @@ def _dispatch(args: argparse.Namespace, cfg: Config, config_path: Path) -> dict 
         _emit({"ok": True, "page": page, "listening": address, "routes": f"{address}/openapi.json"})
         if args.open:
             open_page_soon(page)
+        journal.record("program", "program.started", f"The program started: version {__version__}, port {port}.",
+                       version=__version__, port=port)
         run_server(cfg, port)
+        journal.record("program", "program.stopped", "The program stopped.")
         return None
 
     service = build_service(cfg)

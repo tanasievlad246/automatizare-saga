@@ -1,7 +1,8 @@
 // Every call the page makes to the Python program, in one place.
 
 import type {
-  AuthStatus, Client, CostGroup, Costs, ImportResult, Invoice, InvoiceView, JevCall, ProposedRules,
+  AuthStatus, BackupStatus, Client, CostGroup, Costs, ImportResult, Invoice, InvoiceView, JevCall, JournalLine,
+  ProposedRules,
   RuleEvidence, RuleFields, RulesOverview, Secret, SyncResult, UpdateStatus,
 } from './types'
 
@@ -44,8 +45,20 @@ function query(params: Record<string, string | number | boolean | undefined | nu
 // complete download was longer ago, so no day is skipped.
 export type SyncPeriod = { days: number; cover_gap: true } | { start: string; end: string }
 export type CostRange = { since?: string; until?: string }
+/** What narrows the journal. `trace` shows one whole operation. */
+export type JournalFilter = {
+  details?: boolean
+  problems?: boolean
+  area?: string
+  q?: string
+  since?: string
+  trace?: string
+}
+
 /** The most Jev calls the program lists at once. */
 export const MOST_CALLS_LISTED = 1000
+/** The most journal lines the program gives in one answer. */
+const MOST_LINES_AT_ONCE = 1000
 
 export const api = {
   authStatus: () => call<AuthStatus>('GET', '/auth/status'),
@@ -54,7 +67,9 @@ export const api = {
 
   sagaFolder: () => call<{ saga_folder: string }>('GET', '/settings'),
   setSagaFolder: (saga_folder: string) => call<{ saga_folder: string }>('PUT', '/settings', { saga_folder }),
-  chooseFolder: () => call<{ folder: string | null }>('POST', '/settings/choose-folder'),
+  /** `purpose` says which folder is being picked, so the dialog is titled for it and opens where that folder is. */
+  chooseFolder: (purpose?: 'backups') =>
+    call<{ folder: string | null }>('POST', `/settings/choose-folder${query({ purpose })}`),
   /** Opens the folder that invoice's SAGA file is really in, which may be an earlier SAGA folder. */
   openFolderOf: (invoiceId: string) => call('POST', '/folders/open', { invoice_id: invoiceId }),
 
@@ -95,6 +110,25 @@ export const api = {
     call<Costs>('GET', `/classification/costs${query({ ...range, group })}`),
   jevCalls: (range: CostRange) =>
     call<{ calls: JevCall[] }>('GET', `/classification/calls${query({ ...range, limit: MOST_CALLS_LISTED })}`),
+
+  backups: () => call<BackupStatus>('GET', '/backups'),
+  setBackupFolder: (folder: string) => call<BackupStatus>('PUT', '/backups/folder', { folder }),
+  makeBackup: () => call('POST', '/backups'),
+  /** The program stops, puts the snapshot in place of the database and starts again. */
+  restoreBackup: (name: string) => call('POST', '/backups/restore', { name }),
+  openBackupFolder: () => call('POST', '/backups/open-folder'),
+
+  /** One operation is asked for as whole as the program gives it: it is read from its first step. */
+  journal: (filter: JournalFilter, before?: number) =>
+    call<{ events: JournalLine[]; has_more: boolean }>(
+      'GET', `/events${query({ ...filter, before, limit: filter.trace ? MOST_LINES_AT_ONCE : undefined })}`,
+    ),
+  /**
+   * Where the browser saves the same lines as a text file from. Whether the details are in
+   * it is always said: left out, the program would add them even when the page hides them.
+   */
+  journalFileAddress: (filter: JournalFilter) =>
+    `/api/events/export${query({ ...filter, details: filter.details ?? false })}`,
 
   /** `lookNow` asks GitHub at once; otherwise the answer of the last twelve hours is given. */
   updateStatus: (lookNow = false) => call<UpdateStatus>('GET', `/update${query({ check: lookNow || undefined })}`),

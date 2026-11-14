@@ -29,6 +29,7 @@ from .errors import (
     LOGIN_NEEDED,
     NETWORK_ERROR,
     EfacturaError,
+    said_by,
 )
 
 log = logging.getLogger(__name__)
@@ -245,7 +246,7 @@ def _token_call(cfg: Config, http: httpx.Client, form: dict, rejected: EfacturaE
     try:
         response = http.post(TOKEN_URL, data=form, auth=(cfg.client_id, cfg.client_secret))
     except httpx.RequestError as exc:
-        raise EfacturaError(NETWORK_ERROR, f"Could not reach ANAF's login service: {exc}") from None
+        raise EfacturaError(NETWORK_ERROR, f"Could not reach ANAF's login service: {said_by(exc)}") from None
 
     try:
         payload = response.json()

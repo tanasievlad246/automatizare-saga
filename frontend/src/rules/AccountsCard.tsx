@@ -27,9 +27,11 @@ export function AccountsCard({ accounts }: { accounts: Record<string, string> })
       <div className="rounded-2xl border bg-card">
         {Object.entries(accounts).map(([cont, description]) => (
           <div key={cont} className="flex flex-wrap items-center gap-x-5 gap-y-2.5 border-b px-5 py-3.5 last:border-b-0">
-            <div className="w-20 shrink-0 font-heading text-2xl font-bold">{cont}</div>
+            <div className="min-w-20 shrink-0 font-heading text-2xl font-bold">{cont}</div>
             <div className="min-w-0 flex-[1_1_320px]">{description}</div>
-            <Button variant="outline" size="sm" onClick={() => setEditing({ cont, description })}>Modifică</Button>
+            <Button variant="outline" size="sm" aria-label={`Modifică contul ${cont}`} onClick={() => setEditing({ cont, description })}>
+              Modifică
+            </Button>
           </div>
         ))}
         {Object.keys(accounts).length === 0 && (

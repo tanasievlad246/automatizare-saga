@@ -7,10 +7,18 @@ import type { Invoice } from '../types'
 import { InvoiceStateBadges } from './InvoiceStateBadges'
 import { needsAnAccount } from './invoiceState'
 
-/** A client's invoices, one per row, each leading to the invoice itself. */
-export function InvoicesTable({ invoices }: { invoices: Invoice[] }) {
+/**
+ * A client's invoices, one per row, each leading to the invoice itself. While they are
+ * still being read it says so, instead of claiming there are none.
+ */
+export function InvoicesTable({
+  invoices, loading, whenEmpty,
+}: { invoices: Invoice[]; loading: boolean; whenEmpty: string }) {
+  if (loading) {
+    return <p role="status" className="rounded-2xl border bg-card px-6 py-8 text-lg text-muted-foreground">Se încarcă facturile…</p>
+  }
   if (invoices.length === 0) {
-    return <p className="rounded-2xl border bg-card px-6 py-8 text-lg">Nicio factură aici.</p>
+    return <p className="rounded-2xl border bg-card px-6 py-8 text-lg">{whenEmpty}</p>
   }
   return (
     <div className="overflow-hidden rounded-2xl border bg-card">
@@ -31,7 +39,13 @@ export function InvoicesTable({ invoices }: { invoices: Invoice[] }) {
             const waiting = needsAnAccount(invoice)
             return (
               <TableRow key={invoice.id} className={cn(waiting && 'bg-attention/40 hover:bg-attention/50')}>
-                <TableCell className="font-semibold">{invoice.supplier_name}</TableCell>
+                {/* The name itself opens the invoice, so it can be reached even when the
+                    last column is scrolled out of a narrow window. */}
+                <TableCell className="font-semibold">
+                  <Link to={`/clienti/${invoice.cui}/facturi/${invoice.id}`} className="text-foreground">
+                    {invoice.supplier_name}
+                  </Link>
+                </TableCell>
                 <TableCell>{invoice.invoice_number}</TableCell>
                 <TableCell className="whitespace-nowrap">{formatDate(invoice.invoice_issue_date)}</TableCell>
                 <TableCell className="text-right whitespace-nowrap">
@@ -52,7 +66,10 @@ export function InvoicesTable({ invoices }: { invoices: Invoice[] }) {
                     variant={waiting ? 'default' : 'outline'}
                     className={cn(waiting && 'bg-attention-foreground hover:bg-attention-foreground/85')}
                   >
-                    <Link to={`/clienti/${invoice.cui}/facturi/${invoice.id}`}>
+                    <Link
+                      to={`/clienti/${invoice.cui}/facturi/${invoice.id}`}
+                      aria-label={`${waiting ? 'Alege contul pentru' : 'Deschide'} factura ${invoice.invoice_number ?? ''} de la ${invoice.supplier_name ?? ''}`}
+                    >
                       {waiting ? 'Alege contul' : 'Deschide'}
                     </Link>
                   </Button>

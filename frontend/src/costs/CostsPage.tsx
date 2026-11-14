@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Notice } from '@/components/Notice'
 import { PageTitle } from '@/components/PageTitle'
@@ -25,13 +25,16 @@ export function CostsPage() {
   const [until, setUntil] = useState(today)
   const [group, setGroup] = useState<CostGroup>('month')
   const range = { since, until }
-  const costs = useQuery({ queryKey: ['costs', range, group], queryFn: () => api.costs(range, group) })
-  const calls = useQuery({ queryKey: ['jev-calls', range], queryFn: () => api.jevCalls(range) })
+  // The figures of the period before stay on screen while the new ones are read, so the
+  // screen does not empty and jump at every change of date.
+  const costs = useQuery({ queryKey: ['costs', range, group], queryFn: () => api.costs(range, group), placeholderData: keepPreviousData })
+  const calls = useQuery({ queryKey: ['jev-calls', range], queryFn: () => api.jevCalls(range), placeholderData: keepPreviousData })
 
   return (
     <div className="flex flex-col gap-6">
       <PageTitle title="Costuri Jev">
-        Cât a costat clasificarea facturilor de către Jev. Regulile dumneavoastră nu costă nimic.
+        Cât a costat Jev, programul de inteligență artificială care alege contul când nicio regulă nu se
+        potrivește. Regulile dumneavoastră nu costă nimic.
       </PageTitle>
 
       <div className="flex flex-wrap items-end gap-x-5 gap-y-3.5 rounded-2xl border bg-card px-5 py-4.5">
@@ -65,7 +68,11 @@ export function CostsPage() {
       )}
       <section className="flex flex-col gap-3">
         <h2 className="text-2xl">Ce a clasificat Jev</h2>
-        <JevCallsTable calls={calls.data?.calls ?? []} />
+        {calls.error ? (
+          <Notice tone="attention">{errorMessage(calls.error)}</Notice>
+        ) : (
+          <JevCallsTable calls={calls.data?.calls ?? []} loading={calls.isPending} />
+        )}
         {calls.data?.calls.length === MOST_CALLS_LISTED && (
           <p className="text-muted-foreground">
             Se văd cele mai recente {MOST_CALLS_LISTED.toLocaleString('ro-RO')}. Alegeți o perioadă mai scurtă ca să le vedeți pe celelalte.

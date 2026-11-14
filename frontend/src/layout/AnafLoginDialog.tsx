@@ -25,7 +25,8 @@ export function AnafLoginDialog({ open, onClose }: { open: boolean; onClose: () 
   const connect = useMutation({
     mutationFn: () => api.finishLogin(address),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['auth'] })
+      // The keys screen shows the tokens this login brought.
+      for (const key of ['auth', 'secrets']) queryClient.invalidateQueries({ queryKey: [key] })
       toast.success('Conectat la ANAF.')
       setAddress('')
       onClose()
@@ -56,7 +57,7 @@ export function AnafLoginDialog({ open, onClose }: { open: boolean; onClose: () 
           </Step>
           <Step number={3}>
             <p className="text-lg font-semibold">La sfârșit apare o pagină cu eroare. Este normal.</p>
-            <p>Copiați toată adresa din bara de sus a acelei pagini și lipiți-o aici, în cel mult un minut.</p>
+            <p>Copiați toată adresa din bara de adrese a acelei pagini și lipiți-o aici, în cel mult un minut.</p>
             <p className="rounded-lg bg-background px-3.5 py-2.5 font-mono text-[0.9rem] text-muted-foreground">
               Adresa arată așa: https://localhost/callback?code=…
             </p>
@@ -72,7 +73,7 @@ export function AnafLoginDialog({ open, onClose }: { open: boolean; onClose: () 
               disabled={!address.trim() || connect.isPending}
               onClick={() => connect.mutate()}
             >
-              Conectează
+              {connect.isPending ? 'Se conectează…' : 'Termină conectarea'}
             </Button>
           </Step>
         </ol>

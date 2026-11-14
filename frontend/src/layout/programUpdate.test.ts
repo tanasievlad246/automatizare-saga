@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { shownVersion, updateOutcome } from './programUpdate'
+import { shownVersion, updateOutcome, whatTheLookFound } from './programUpdate'
 import type { UpdateStatus } from '../types'
 
 const status = (last: UpdateStatus['last_update']): UpdateStatus => ({
@@ -13,6 +13,18 @@ describe('the version on screen', () => {
     expect(shownVersion('v0.2.0')).toBe('0.2.0')
     expect(shownVersion('0.1.1')).toBe('0.1.1')
     expect(shownVersion(null)).toBe('')
+  })
+})
+
+describe('what looking for a newer version found', () => {
+  it('is said from the status the whole page shows, so it cannot contradict the notice on top', () => {
+    expect(whatTheLookFound(status(null))).toBe('Există versiunea 0.2.0.')
+    expect(whatTheLookFound({ ...status(null), latest_release: 'v0.1.1', update_available: false })).toBe('Aveți cea mai nouă versiune.')
+  })
+
+  it('says so when GitHub could not be asked', () => {
+    expect(whatTheLookFound({ ...status(null), update_available: false, check_error: 'timed out' }))
+      .toBe('Nu am putut căuta. Verificați conexiunea la internet.')
   })
 })
 

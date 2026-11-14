@@ -12,6 +12,8 @@ from dataclasses import dataclass
 
 import httpx
 
+from .errors import said_by
+
 DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
 TIMEOUT = 60.0
 # A 402 with this marker means "too many requests in flight", not "out of credit".
@@ -81,7 +83,7 @@ def ask(http: httpx.Client, api_key: str, request: dict) -> JevCall:
             timeout=TIMEOUT,
         )
     except httpx.RequestError as exc:
-        return finished(None, None, f"Could not reach OpenRouter: {exc}", transient=True)
+        return finished(None, None, f"Could not reach OpenRouter: {said_by(exc)}", transient=True)
 
     try:
         body = reply.json()

@@ -49,19 +49,43 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  onOpenAutoFocus,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
 }) {
+  // The windows here are opened from a button's click, not from a DialogTrigger, so Radix
+  // does not know where focus was. Remember it, and put it back when the window closes.
+  // It is remembered when the window opens, not when this is first drawn: a window that
+  // stays on the page while closed is first drawn with the page, long before its button is pressed.
+  const opener = React.useRef<Element | null>(null)
   return (
     <DialogPortal>
       <DialogOverlay />
       <DialogPrimitive.Content
         data-slot="dialog-content"
+        // max-h and overflow: on a small or scaled screen a tall window scrolls inside
+        // itself instead of losing its title and its buttons off the screen.
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-5 rounded-2xl bg-popover p-8 text-base text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-2xl data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "fixed top-1/2 left-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-5 overflow-y-auto rounded-2xl bg-popover p-8 text-base text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-2xl data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className
         )}
+        // Called just before focus moves into the window: it is still on what opened it.
+        onOpenAutoFocus={(event) => {
+          opener.current = document.activeElement
+          onOpenAutoFocus?.(event)
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault()
+          if (opener.current instanceof HTMLElement && opener.current.isConnected) opener.current.focus()
+        }}
+        // A message shown over the window (a toast) is not "outside": pressing it, to read
+        // it or to close it, must not close the window and lose what was typed.
+        onInteractOutside={(event) => {
+          if (event.target instanceof Element && event.target.closest("[data-sonner-toaster]")) {
+            event.preventDefault()
+          }
+        }}
         {...props}
       >
         {children}
@@ -105,7 +129,7 @@ function DialogFooter({
     <div
       data-slot="dialog-footer"
       className={cn(
-        "-mx-4 -mb-4 flex flex-col-reverse gap-2 rounded-b-xl border-t bg-muted/50 p-4 sm:flex-row sm:justify-end",
+        "-mx-8 -mb-8 flex flex-col-reverse gap-2 rounded-b-2xl border-t bg-muted/50 px-8 py-4 sm:flex-row sm:justify-end",
         className
       )}
       {...props}

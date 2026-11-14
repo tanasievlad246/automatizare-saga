@@ -223,13 +223,28 @@ def test_a_saga_folder_that_cannot_be_created_is_refused(api, tmp_path):
 
 
 def test_choosing_a_folder_asks_the_computer_and_returns_the_answer(api, monkeypatch, tmp_path):
-    monkeypatch.setattr(service_module, "_ask_for_folder", lambda start: str(tmp_path / "ales"))
+    monkeypatch.setattr(service_module, "_ask_for_folder", lambda start, title: str(tmp_path / "ales"))
     picked = api.post("/settings/choose-folder").json()
-    monkeypatch.setattr(service_module, "_ask_for_folder", lambda start: None)
+    monkeypatch.setattr(service_module, "_ask_for_folder", lambda start, title: None)
     cancelled = api.post("/settings/choose-folder").json()
 
     assert picked == {"ok": True, "folder": str(tmp_path / "ales")}
     assert cancelled == {"ok": True, "folder": None}
+
+
+def test_the_dialog_for_the_backup_folder_has_its_own_title_and_starts_in_that_folder(api, monkeypatch, tmp_path):
+    asked = []
+    monkeypatch.setattr(service_module, "_ask_for_folder", lambda start, title: asked.append((start, title)))
+    chosen = tmp_path / "stick" / "Copii AutoSaga"
+    api.put("/backups/folder", json={"folder": str(chosen)})
+
+    api.post("/settings/choose-folder?purpose=backups")
+    api.post("/settings/choose-folder")
+    unknown = api.post("/settings/choose-folder?purpose=altceva")
+
+    assert asked[0] == (str(chosen), "Folderul pentru copiile de siguranță")
+    assert asked[1][1] == "Folderul pentru SAGA" and asked[1][0] != str(chosen)
+    assert (unknown.status_code, len(asked)) == (400, 2)
 
 
 def test_opening_a_clients_saga_folder_reveals_it_on_the_computer(api, anaf, cfg, monkeypatch):

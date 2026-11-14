@@ -9,8 +9,10 @@ const TYPED_BY_HAND = 'altul'
 
 /** Picking an account from the list Jev chooses from, or typing one that is not in it. */
 export function AccountChooser({
-  accounts, likelihoods, busy, onChoose,
+  accounts, likelihoods, busy, label, takeFocus = false, onChoose,
 }: {
+  label: string // "Alegeți contul" when the invoice has none, "Alegeți alt cont" when it has
+  takeFocus?: boolean // true when a button was just replaced by this list
   accounts: Record<string, string>
   likelihoods: Record<string, number> | null // what Jev thought of each account, when it was asked
   busy: boolean
@@ -24,8 +26,8 @@ export function AccountChooser({
 
   return (
     <div className="flex flex-col gap-2">
-      <Label htmlFor="other-account">Alegeți alt cont</Label>
-      <NativeSelect id="other-account" className="w-full" value={picked} onChange={(event) => setPicked(event.target.value)}>
+      <Label htmlFor="other-account">{label}</Label>
+      <NativeSelect id="other-account" className="w-full" autoFocus={takeFocus} value={picked} onChange={(event) => setPicked(event.target.value)}>
         <NativeSelectOption value="">Alegeți din listă…</NativeSelectOption>
         {offered.map(([account, description]) => (
           <NativeSelectOption key={account} value={account}>

@@ -5,7 +5,10 @@ import { formatPercent, formatUsd, formatWhen } from '../format'
 import type { JevCall } from '../types'
 
 /** Each question put to Jev: when, about which invoice, what it answered and what that cost. */
-export function JevCallsTable({ calls }: { calls: JevCall[] }) {
+export function JevCallsTable({ calls, loading }: { calls: JevCall[]; loading: boolean }) {
+  if (loading) {
+    return <p role="status" className="rounded-2xl border bg-card px-6 py-6 text-lg text-muted-foreground">Se încarcă…</p>
+  }
   if (calls.length === 0) {
     return <p className="rounded-2xl border bg-card px-6 py-6 text-lg">Nicio factură clasificată de Jev în această perioadă.</p>
   }

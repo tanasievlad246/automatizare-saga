@@ -26,7 +26,7 @@ const ANAF_KEYS_GUIDE = 'https://github.com/tanasievlad246/automatizare-saga/blo
 export function SecretsPage() {
   const [loginOpen, setLoginOpen] = useState(false)
   const { data, error } = useQuery({ queryKey: ['secrets'], queryFn: api.secrets })
-  const login = useQuery({ queryKey: ['auth'], queryFn: api.authStatus }).data
+  const { data: login, isError: programSilent } = useQuery({ queryKey: ['auth'], queryFn: api.authStatus })
 
   return (
     <div className="flex max-w-[54rem] flex-col gap-5">
@@ -56,13 +56,17 @@ export function SecretsPage() {
         <div className="min-w-0 flex-[1_1_320px]">
           <div className="text-lg font-bold">Conectarea la ANAF</div>
           <div className="text-muted-foreground">
-            {login && login.state !== 'needs_login'
-              ? `Valabilă până la ${formatDate(login.refresh_expires_at)}, adică încă ${countOf(login.refresh_days_left ?? 0, 'o zi', 'zile')}. Apoi este nevoie din nou de tokenul USB.`
-              : 'Nu sunteți conectat. Este nevoie de tokenul USB și de PIN.'}
+            {programSilent
+              ? 'Programul nu răspunde, așa că nu se știe.'
+              : !login
+                ? 'Se verifică…'
+                : login.state !== 'needs_login'
+                  ? `Valabilă până la ${formatDate(login.refresh_expires_at)}, adică încă ${countOf(login.refresh_days_left ?? 0, 'o zi', 'zile')}. Apoi este nevoie din nou de tokenul USB.`
+                  : 'Programul nu este conectat la ANAF. Este nevoie de tokenul USB și de PIN.'}
           </div>
         </div>
         <Button variant="outline" onClick={() => setLoginOpen(true)}>
-          {login && login.state !== 'needs_login' ? 'Conectează din nou' : 'Conectare la ANAF'}
+          {login && login.state !== 'needs_login' ? 'Reînnoiește conectarea' : 'Conectare la ANAF'}
         </Button>
       </div>
       <AnafLoginDialog open={loginOpen} onClose={() => setLoginOpen(false)} />

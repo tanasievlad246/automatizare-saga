@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
+import { Notice } from '@/components/Notice'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -8,7 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { api } from '../api'
-import { showError } from '../errorMessages'
+import { errorMessage } from '../errorMessages'
 import type { Client, Rule, RuleFields } from '../types'
 import { reloadWhatARuleChanges } from './proposedRule'
 
@@ -36,7 +37,6 @@ export function RuleDialog({
       reloadWhatARuleChanges(queryClient)
       onClose()
     },
-    onError: showError,
   }
   const save = useMutation({
     mutationFn: () => (existing ? api.changeRule(existing.id, fields) : api.addRule(fields)),
@@ -50,7 +50,8 @@ export function RuleDialog({
         <DialogHeader>
           <DialogTitle className="font-heading text-3xl">{existing ? 'Modifică regula' : 'Adaugă o regulă'}</DialogTitle>
           <DialogDescription className="text-lg">
-            Regula se potrivește dacă măcar una dintre condiții este adevărată pentru linia cea mai mare a facturii.
+            Regula se potrivește dacă măcar una dintre condiții este adevărată pentru linia cu valoarea cea mai
+            mare a facturii.
           </DialogDescription>
         </DialogHeader>
         <form
@@ -109,6 +110,8 @@ export function RuleDialog({
             <Checkbox id="rule-enabled" checked={fields.enabled} onCheckedChange={(checked) => set({ enabled: checked === true })} />
             <Label htmlFor="rule-enabled">Regula este pornită</Label>
           </div>
+          {/* Said here, beside what was typed, not in a message that goes away. */}
+          {(save.error ?? remove.error) && <Notice tone="attention">{errorMessage(save.error ?? remove.error)}</Notice>}
           <DialogFooter className="sm:justify-between">
             {existing ? (
               <Button type="button" variant="destructive" disabled={remove.isPending} onClick={() => remove.mutate()}>

@@ -55,6 +55,7 @@ export function SyncDialog({ clients, onClose }: { clients: Client[] | null; onC
     queryClient.invalidateQueries({ queryKey: ['clients'] })
     queryClient.invalidateQueries({ queryKey: ['invoices'] })
     queryClient.invalidateQueries({ queryKey: ['proposed-rules'] })
+    queryClient.invalidateQueries({ queryKey: ['auth'] }) // a refused login must show in the top bar
   }
   const close = () => {
     setOutcomes(null)

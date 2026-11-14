@@ -1,4 +1,6 @@
-# efactura
+# AutoSaga (efactura)
+
+On screen, in the shortcuts and in its messages the program is called **AutoSaga**. The command, the Python package and the files keep the name `efactura`.
 
 Fetches ANAF e-Factura messages for a company CUI and keeps them locally:
 
@@ -11,7 +13,7 @@ Each newly received invoice is then given an account (`cont`) and rewritten as a
 
 There are three ways to use it, all on the same data:
 
-- **The screen** (in Romanian), for the accountant: clients, invoices, accounts, rules, costs. See [The screen](#the-screen).
+- **The screen** (in Romanian), for the accountant: clients, invoices, accounts, rules, costs, backups, the journal. See [The screen](#the-screen).
 - **Terminal commands**, each printing one JSON document.
 - **A local REST API** with the same steps, so a Power Automate Desktop flow can call them and read the result.
 
@@ -47,7 +49,7 @@ What it does:
 2. **The latest release** of [tanasievlad246/automatizare-saga](https://github.com/tanasievlad246/automatizare-saga) is cloned into `%LOCALAPPDATA%\AutoSaga` (`-InstallDir` chooses another folder). `-Repo owner/name` installs from another repository; a private one works too, as Git asks the PC to sign in to GitHub once. Without any release, the main branch is installed and the script says so.
 3. **The dependencies** go into that folder (`.venv`). uv downloads Python as well if the PC has none.
 4. **`config.toml`** is written with a random key for the local API. The port is 8765, or the next free port after it when that one is taken. Port 80 is never used: other programs expect to find it free.
-5. **Two shortcuts.** One in the Windows Startup folder starts the program, without a window, each time that user signs in. One on the Desktop, "e-Factura pentru SAGA", opens the page and starts the program first if it is not running.
+5. **Two shortcuts**, both named "AutoSaga". One in the Windows Startup folder starts the program, without a window, each time that user signs in. One on the Desktop opens the page and starts the program first if it is not running. Shortcuts left by an earlier install under the old name, "e-Factura pentru SAGA", are removed.
 6. The program is started and the page opens at **`http://autosaga.localhost:8765`** (with the port from step 4).
 
 Then, on the page: fill in the ANAF client ID and secret and the OpenRouter key under "Chei și parole", and connect to ANAF. Getting the client ID and secret from ANAF is done by hand, once: [README-ANAF.md](README-ANAF.md) explains it in Romanian, and the "Chei și parole" screen links to it.
@@ -74,12 +76,58 @@ What an update does: it stops the program, copies the database, moves the folder
 
 - `config.toml` and `data\` are not part of any release, so changing release does not touch them.
 - Git would silently overwrite such a file if a release ever came to contain one. Before anything is stopped, the update checks the new release for files at those two places and refuses it if there are any.
-- A copy of the database is written to `data\backups\` before each update, named after the release being left and the time. The last three are kept.
+- A copy of the database is written to `data\backups\` before each update, named after the release being left and the time. The last three are kept. These are apart from the [backups](#backups) in the folder chosen on screen.
 - A newer release may add columns to the database when it first opens it; nothing is removed.
 
 Only a copy made by `install.ps1` can be updated this way: a folder standing on a release tag. A development checkout on a branch is refused, and the page shows no update button there. Every tag counts as a release, and the highest version is the newest.
 
 How the last update ended is kept in `data\last-update.json`, and what it printed in `data\update.log`.
+
+## Backups
+
+The database holds everything: clients, invoices, accounts, rules, settings, and the keys typed on screen. The screen "Copii de siguranță" keeps copies of it in a folder the accountant chooses.
+
+- **The folder** is typed, or picked with "Alege folderul", and is made if it does not exist. It has to be a whole path (`E:\Copii AutoSaga`). Until one is chosen, no copy is made, and the screen says so. A stick, another disk or a folder that syncs to the internet is the point: a copy on the program's own disk does not survive that disk.
+- **A copy on a click:** "Fă o copie acum", or `efactura backup`.
+- **A copy every 24 hours,** counted from the newest good copy in the folder, whoever made it. The running program looks a minute after it starts and then every quarter of an hour, so a PC that was off overnight gets its copy soon after it is switched on. If the folder is missing (stick unplugged), the failure is shown on the screen and written in the journal, and the next look tries again.
+- **At most 25 copies.** When a new one arrives the oldest are removed. The limit counts every copy in the folder, however it was made. Only files with the program's own names are ever deleted; anything else in the folder is left alone. The copy just made is never the one removed. Copies named later than today (made while the PC's clock was ahead) count as the oldest, and do not hold up the daily copy.
+- **What a copy is:** one zip, `autosaga-20261114-161217-manual.zip` (the PC's date and time, then `auto`, `manual` or `before-restore`), holding `efactura.db`. It is made with SQLite's own copy, so it is complete while the program works; it is checked (`PRAGMA quick_check`, then the zip is read back) and written under a `.partial` name first, so a half-written file is never taken for a copy. A `.partial` left by a PC switched off mid-copy is removed at the next copy, once it is an hour old.
+- **A copy is not encrypted** and holds the keys from "Chei și parole". The folder is as private as `config.toml`.
+
+**Restoring.** "Restaurează" next to a copy, after a ticked confirmation, or `efactura restore <file name>`:
+
+1. The chosen zip is opened, checked and made ready next to the database. A file that is not a usable database is refused here, before anything is touched. So is a restore while invoices are being downloaded, or while an update runs.
+2. The program is stopped.
+3. The database as it is now is kept. Normally as one more copy in the folder (`…-before-restore.zip`), so the restore can be undone by restoring that one. If no sound copy can be made, because the folder has gone or the database is damaged, the old file itself is kept in `data\` as `efactura.db.replaced-<date>-<time>`, and the journal says so.
+4. The chosen copy replaces the database. The backup folder setting is carried over, so copies go on to the same folder. A file that Windows says is still in use is tried again for a few seconds.
+5. The program is started again, whatever happened at steps 3 and 4.
+
+Everything saved after the chosen copy is gone from the program: downloaded invoices, chosen accounts, the "imported in SAGA" ticks, rules, clients, settings and keys changed since, and the journal's lines since then. Files already written for SAGA stay on disk. If the copy cannot be put in place, the database that was there is kept and the screen says the restore failed. How the last restore ended is kept in `data\last-restore.json`, and what it printed in `data\restore.log`.
+
+**When the database itself is damaged.** This is what the copies are for, and it is done from the terminal, because a program that cannot read its database does not start:
+
+```powershell
+uv run efactura restore "E:\Copii AutoSaga\autosaga-20261114-090000-auto.zip"
+```
+
+The whole path is needed there: where the backup folder is was written in the database that cannot be read. A database that still opens but has a damaged part can be restored from the page as usual. In both cases the damaged file is kept beside the new one (step 3).
+
+**By hand,** if that does not work either: stop the program (`efactura stop`), unzip the copy, and put its `efactura.db` in `data\` in place of the old one, deleting `efactura.db-wal` and `efactura.db-shm` if they are there.
+
+## The journal
+
+The screen "Jurnal" shows what the program did, line by line. It is for the moment something does not work and someone has to find out why.
+
+- **What is written:** the program starting and stopping; every download (its start, each call to ANAF with how long it took and how it ended, each message that could not be saved, the end); every account decision (by a rule, by Jev with its confidence, by a person, or left to check); every call to Jev (duration, cost, failure); rules, accounts and clients added, changed or removed; settings changed; connecting to ANAF and the login being renewed; invoices marked as imported; backups, restores and updates; and every error, with its technical detail. The program's ordinary log lines land there too.
+- **What is never written:** keys, passwords, the ANAF login tokens, the pasted login address, the body of any request. A changed key is recorded as "this key was changed" and nothing more. On top of that, any detail whose name contains `key`, `secret`, `token`, `password`, `pin` or `authorization` is stored as `[hidden]`.
+- **One operation, one trace.** Every line written during one request from the page, one terminal command or one round of the background job carries the same trace number. "Arată tot ce s-a întâmplat în această operațiune" on a line shows the whole story in order, details included. Each answer of the local API names its trace in the `X-Trace-Id` header.
+- **Four levels:** `info`, `warning`, `error` and `detail`. Details are the page's own requests and each call to ANAF; the screen hides them until "Arată și detaliile" is ticked.
+- **On screen in Romanian, underneath in English.** Each kind of event has a code (`sync.finished`, `account.by_jev`, `backup.made`). The page turns the codes it knows into a Romanian sentence and shows the program's English line under "Detalii tehnice".
+- **"Descarcă jurnalul"** saves every line that matches the filters on screen as a text file to send to whoever helps.
+- **30 days are kept, and at most 50,000 lines.** The running program removes the rest once a quarter of an hour.
+- **Writing the journal never breaks the work.** A line that cannot be written (the database is busy) is dropped, and the download or the click carries on.
+
+The journal is a table in the database (`events`), so restoring a backup also brings back the journal as it was then. `data\efactura.log` is still written as before and is not replaced by a restore.
 
 ## One-time setup
 
@@ -115,11 +163,18 @@ The page opens at `http://autosaga.localhost:8765/ui/`. `http://127.0.0.1:8765/u
 | **One invoice** | The invoice as a person reads it, ANAF's XML, the SAGA XML; its account and who chose it; accept Jev's proposal or pick another; a rule proposed from it when no rule decided it; the path of the SAGA file |
 | **Reguli de clasificare** | Rules proposed from recent decisions, the rules, the accounts Jev chooses from, how sure Jev must be, the question Jev is asked |
 | **Costuri Jev** | Cost between two dates, by day, week, month or year, and every invoice Jev classified |
+| **Copii de siguranță** | The folder for the copies of the database, when the last one was made and when the next is due, "Fă o copie acum", and the copies kept, each with "Restaurează". See [Backups](#backups) |
+| **Jurnal** | What the program did, line by line: everything or only the problems, by area, period or a word; one line opens to its technical details and to the whole operation it belongs to. See [The journal](#the-journal) |
 | **Chei și parole** | The OpenRouter key and ANAF client details (hidden until asked for, changeable), and when the ANAF login expires |
 
 On every screen, a notice appears on top when a newer release of the program exists, and the foot of the menu shows the installed version; see [Updating](#updating).
 
-On every screen, the top bar holds the **folder for SAGA** (type it, or "Alege folderul" opens Windows' own folder dialog) and the **ANAF connection** with the days left; clicking it opens the login steps.
+On every screen, the top bar holds the name, the **folder for SAGA** and the **ANAF connection**:
+
+- "Folder SAGA" shows the end of the path; "Schimbă" opens a small window where the folder is typed, or "Alege folderul" opens Windows' own folder dialog.
+- The ANAF chip says one of: connected, with the days left; expiring, from 30 days before the end; not connected. Clicking it opens the login steps. While the program does not answer it says that instead, and does not ask for a login.
+
+The menu on the left has a fixed width and the screen's content takes the rest. In a window narrower than about 1020 px the menu moves above the content.
 
 **"New"** means: a received invoice brought in by that client's latest download that brought anything, and not yet marked as imported in SAGA.
 
@@ -175,6 +230,8 @@ Run them from this folder. Use `--config PATH` before the command if `config.tom
 | `uv run efactura open` | `start`, then opens the page in the browser. This is what the Desktop shortcut runs. |
 | `uv run efactura stop` | Stops the program running in the background. |
 | `uv run efactura update [--check]` | Moves an installed copy to the newest release, keeping `config.toml` and the data; `--check` only reports. See [Updating](#updating). |
+| `uv run efactura backup` | Makes a copy of the database now, in the folder chosen on screen. See [Backups](#backups). |
+| `uv run efactura restore <file name or whole path>` | Replaces the database with that copy: stops the program, keeps the database as it is, puts the chosen one in place, starts the program again. A file name is looked for in the backup folder; a whole path works even when the database cannot be read. |
 
 Notes:
 
@@ -300,13 +357,20 @@ Routes that exist for the screen and have no command:
 | `PUT /classification/settings` with `{"min_confidence", "jev_instructions"}` | The confidence level and the question for Jev |
 | `GET /classification/calls?since=...&until=...&cui=...&limit=...` | What Jev was asked, newest first |
 | `GET /settings`, `PUT /settings` with `{"saga_folder"}` | The folder for SAGA |
-| `POST /settings/choose-folder`, `POST /folders/open` with `{"invoice_id"}` or `{"cui"}` | Open the computer's folder dialog; show in Explorer the folder an invoice's SAGA file is in, or a client's folder |
+| `POST /settings/choose-folder?purpose=saga` (or `backups`), `POST /folders/open` with `{"invoice_id"}` or `{"cui"}` | Open the computer's folder dialog, titled for the SAGA folder or the backup folder and starting there; show in Explorer the folder an invoice's SAGA file is in, or a client's folder |
 | `GET /secrets`, `PUT /secrets/{key}` with `{"value"}` | The keys, in full |
 | `POST /shutdown` | Stops the program (what `efactura stop` calls). With the key only; the page cannot reach it |
 | `GET /update?check=true` | The installed release, the newest one, whether an update exists and how the last update ended. `check` asks the remote now |
 | `POST /update` | Starts the update as a process of its own and answers at once; the program stops and comes back on the new release |
+| `GET /backups` | The backup folder and whether it is there, the copies kept (newest first), the limit, when the last was made and the next is due, the last failure, and how the last restore ended |
+| `PUT /backups/folder` with `{"folder"}` | Choose the backup folder (a whole path; made if missing) |
+| `POST /backups` | Make a copy now (`backup`) |
+| `POST /backups/restore` with `{"name"}` | Starts the restore of that copy as a process of its own and answers at once; the program stops and comes back with the restored database. `name` is a file in the backup folder, never a path. Answers `busy` while invoices are being downloaded |
+| `POST /backups/open-folder` | Show the backup folder in Explorer |
+| `GET /events?details=true&problems=true&area=...&q=...&since=...&trace=...&before=...&limit=...` | The journal, newest line first, 200 at a time (`before` is the `id` of the last line read; `has_more` says whether older ones exist). `problems` keeps warnings and errors; `trace` gives one whole operation |
+| `GET /events/export` with the same filters | Every line that matches, as a text file. `details` is true here unless `details=false` is sent |
 
-The body is the same JSON the command prints. HTTP status: 200 success; 400 bad input; 401 missing or wrong key; 404 unknown id or route; 409 `login_needed`, `login_code_expired`, `busy` or `not_classifiable`; 502 ANAF or OpenRouter refused or was unreachable; 500 a bug or a settings problem.
+The body is the same JSON the command prints. Every answer carries an `X-Trace-Id` header: the number under which the journal holds what that request did. HTTP status: 200 success; 400 bad input; 401 missing or wrong key; 404 unknown id or route; 409 `login_needed`, `login_code_expired`, `busy`, `not_classifiable`, `update_error` or `backup_error`; 502 ANAF or OpenRouter refused or was unreachable; 500 a bug or a settings problem.
 
 ## Classification and SAGA
 
@@ -439,6 +503,9 @@ data/
   server.log           what the program printed while running in the background
   update.log           what the last update printed
   last-update.json     how the last update ended
+  restore.log          what the last restore printed
+  last-restore.json    how the last restore ended
+  efactura.db.replaced-…   a database that a restore replaced and could not copy to the backup folder
   backups/             copies of the database made before each update (the last three)
   invoices/
     11-11-2026/        the day the messages were saved (not the invoice date)
@@ -448,10 +515,11 @@ data/
       F_87654321_FV-1042_09.11.2026.xml    F_<supplier code>_<number>_<date>.xml
 ```
 
-- **Database:** table `messages` (one row per ANAF message: list details, invoice fields read from the XML, the full invoice XML and ANAF's signature XML, `uploaded_to_accounting`, `uploaded_at`, the classification fields), `sync_runs` (one row per run), `jev_calls` (every request to Jev with its reply and cost), `clients`, `accounts`, `rules`, and `settings` (the confidence level, the question for Jev, and what was changed on screen: the SAGA folder and the keys). Any SQLite tool can read it. A database made by an earlier version gains the new columns when it is first opened; nothing is lost.
+- **Database:** table `messages` (one row per ANAF message: list details, invoice fields read from the XML, the full invoice XML and ANAF's signature XML, `uploaded_to_accounting`, `uploaded_at`, the classification fields), `sync_runs` (one row per run), `jev_calls` (every request to Jev with its reply and cost), `clients`, `accounts`, `rules`, `events` (the [journal](#the-journal)), and `settings` (the confidence level, the question for Jev, and what was changed on screen: the SAGA folder, the backup folder and the keys). Any SQLite tool can read it. A database made by an earlier version gains the new columns when it is first opened; nothing is lost.
 - **Saved login:** `%LOCALAPPDATA%\efactura\tokens.json`, in the Windows user's private folder and outside this project. Treat it like the token and PIN: whoever copies it can read e-Factura data for every company the certificate covers until it expires.
 - **`config.toml`** holds the client secret, the API key and the OpenRouter key. It is ignored by git; do not share it.
-- **Keys changed on screen** are stored in the database as plain text, like those in `config.toml`. Treat `data/efactura.db` as a secret too.
+- **Keys changed on screen** are stored in the database as plain text, like those in `config.toml`. Treat `data/efactura.db` as a secret too, and with it every copy in the backup folder.
+- **The backups** are in the folder chosen on the "Copii de siguranță" screen, outside this project: `autosaga-<date>-<time>-<auto|manual|before-restore>.zip`, 25 at most.
 - **Changing the SAGA folder** affects new files only. Files already written stay where they are; each invoice remembers its own path, and the screen names every folder that still holds files waiting for SAGA.
 - The folder name format can be changed in `config.toml` (`DD-MM-YYYY` or `YYYY-MM-DD`, which sorts by date in Explorer).
 
@@ -489,6 +557,14 @@ For the installer:
 - **First run on Windows, 2026-11-14:** `install.ps1` ran as far as starting the program, which then reported the port as taken, for port 80 and for a free port alike. The cause was this program's own check: Windows takes about two seconds to refuse a connection to a port nobody listens on, and that wait was read as another program holding the port. Fixed in 0.1.1; the start itself is still to be confirmed.
 - **Updating from the page or with `efactura update`** was run for real on macOS (page button and terminal, with a running program, the database kept and copied). On Windows it has not been run: files in use there cannot be replaced, so if installing the new release's dependencies fails, the update goes back to the old release and says so; running `install.ps1` again remains the fallback.
 - **`winget`** is needed only when Git is missing; on a Windows without it the script stops and names the Git download page.
+
+For backups and the journal:
+
+- **Making copies, the 25 limit, the 24-hour rule and a missing folder** are covered by tests and were run for real on macOS.
+- **Restoring from the page** was run for real on macOS, with a running program: a client added after the copy was gone afterwards, the copy made before the restore held it, the program came back by itself and went on backing up to the same folder. On Windows it has not been run. There a file that some program still holds open cannot be replaced; if that happens the restore must fail, keep the database it had and say so. That path is tested, but with a stand-in for the failure.
+- **Stopping the program for a restore or an update** waits until it no longer answers, not until its process has gone. A request still being served at that moment finishes afterwards. A download is refused beforehand and a file still in use is tried again for a few seconds; anything slower than that makes the restore fail and keep the database it had. On macOS and Linux nothing refuses a file in use, so there a restore should not be started while something else works on the database.
+- **The job that makes the daily copy** runs inside the program started without a window. That start is itself unconfirmed on Windows (see above); if the program runs, the job runs.
+- **The folder dialog** for the backup folder is the same one the SAGA folder uses, with the same caveat.
 
 For the screen:
 

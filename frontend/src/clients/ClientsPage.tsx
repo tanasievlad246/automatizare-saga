@@ -16,7 +16,8 @@ import { SyncDialog } from './SyncDialog'
 
 /** The first screen: every client, what is new for each, and the button that downloads. */
 export function ClientsPage() {
-  const { data, error, isPending } = useQuery({ queryKey: ['clients'], queryFn: api.clients })
+  // Read again when the window is returned to, so counts from this morning are not shown as today's.
+  const { data, error, isPending } = useQuery({ queryKey: ['clients'], queryFn: api.clients, refetchOnWindowFocus: true })
   const clients = data?.clients ?? []
   const [clientsToSync, setClientsToSync] = useState<Client[] | null>(null)
   const [importing, setImporting] = useState(false)
@@ -26,8 +27,10 @@ export function ClientsPage() {
   const firstWaiting = clients.find((client) => client.review_count > 0)
 
   return (
-    <div className="flex flex-col gap-6">
-      <PageTitle title="Clienți">Alegeți un client și descărcați facturile lui de la ANAF.</PageTitle>
+    <div className="flex max-w-[66rem] flex-col gap-6">
+      <PageTitle title="Clienți">
+        Descărcați de la ANAF facturile primite, pentru toți clienții sau pentru unul singur.
+      </PageTitle>
 
       <div className="flex flex-wrap gap-3">
         {/* The longest label on the page: allowed to wrap, so a narrow window never scrolls sideways. */}
@@ -48,7 +51,11 @@ export function ClientsPage() {
         <Notice tone="attention" className="flex-wrap items-center">
           <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
             <p className="min-w-0 flex-[1_1_320px] text-lg font-semibold">
-              {countOf(waitingForAnAccount, 'O factură așteaptă', 'facturi așteaptă')} să alegeți contul.
+              {countOf(
+                waitingForAnAccount,
+                'O factură este de verificat: trebuie să îi alegeți contul.',
+                'facturi sunt de verificat: trebuie să le alegeți contul.',
+              )}
             </p>
             <Button asChild className="bg-attention-foreground hover:bg-attention-foreground/85">
               <Link to={`/clienti/${firstWaiting.cui}?arata=de-verificat`}>Vezi facturile de verificat</Link>
@@ -58,6 +65,7 @@ export function ClientsPage() {
       )}
 
       {error && <Notice tone="attention">{errorMessage(error)}</Notice>}
+      {isPending && <p role="status" className="text-lg text-muted-foreground">Se încarcă clienții…</p>}
       {!isPending && !error && clients.length === 0 && (
         <p className="rounded-2xl border bg-card px-6 py-8 text-lg">
           Nu aveți încă niciun client. Importați lista din Excel sau adăugați primul client.

@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError } from './api'
-import { errorMessage } from './errorMessages'
-import { countOf, formatAmount, formatDate, formatMoney, formatPercent, formatPeriod, formatUsd, formatWhen } from './format'
+import { errorDetail, errorMessage } from './errorMessages'
+import {
+  countOf, formatAmount, formatDate, formatFromWhen, formatMoney, formatPercent, formatPeriod, formatUsd, formatSize, formatWhen,
+  shortPath,
+} from './format'
 
 // Intl separates thousands with a narrow no-break space in some places; compare without caring which.
 const plain = (text: string) => text.replace(/\s/g, ' ')
@@ -70,8 +73,8 @@ describe('failures', () => {
   })
 
   it('fall back to a general sentence when the code is unknown', () => {
-    expect(errorMessage(new ApiError('something_new', 'x'))).toBe('A apărut o problemă în program.')
-    expect(errorMessage(new Error('boom'))).toBe('A apărut o problemă în program.')
+    expect(errorMessage(new ApiError('something_new', 'x'))).toContain('A apărut o problemă în program.')
+    expect(errorMessage(new Error('boom'))).toContain('A apărut o problemă în program.')
   })
 })
 
@@ -120,5 +123,54 @@ describe('the folder of a file', () => {
   it('is its path without the last part, on Windows and elsewhere', () => {
     expect(folderOf('C:\\SAGA Import\\12345674\\F_1_A_09.11.2026.xml')).toBe('C:\\SAGA Import\\12345674')
     expect(folderOf('/data/SAGA Import/12345674/F_1.xml')).toBe('/data/SAGA Import/12345674')
+  })
+})
+
+describe('a long folder path', () => {
+  it('keeps its last two parts, which say where it is', () => {
+    expect(shortPath('C:\\Users\\Maria\\AppData\\Local\\AutoSaga\\data\\SAGA Import')).toBe('…\\data\\SAGA Import')
+    expect(shortPath('/Users/maria/Projects/demo/data/SAGA Import')).toBe('…/data/SAGA Import')
+  })
+
+  it('is left alone when it is short already', () => {
+    expect(shortPath('C:\\SAGA Import')).toBe('C:\\SAGA Import')
+    expect(shortPath('E:\\Copii\\AutoSaga')).toBe('E:\\Copii\\AutoSaga')
+    expect(shortPath('')).toBe('')
+  })
+})
+
+describe('a moment said after a noun ("copia …")', () => {
+  it('takes "de" before today and yesterday, and "din" before a date', () => {
+    const now = new Date('2026-11-13T15:00:00')
+    expect(formatFromWhen('2026-11-13T09:30:00', now)).toBe('de azi, 09:30')
+    expect(formatFromWhen('2026-11-12T16:02:00', now)).toBe('de ieri, 16:02')
+    expect(formatFromWhen('2026-11-09T14:02:00', now)).toBe('din 09.11.2026, 14:02')
+  })
+})
+
+describe('a failure that means something else in one place', () => {
+  const HERE = { backup_error: 'Restaurarea nu a putut începe: copia nu mai este în folder.' }
+
+  it('is said in that place’s own words', () => {
+    expect(errorMessage(new ApiError('backup_error', 'Snapshot not found.'), HERE)).toBe(HERE.backup_error)
+  })
+
+  it('keeps the usual sentence for every other code', () => {
+    expect(errorMessage(new ApiError('busy', 'A sync is running.'), HERE)).toContain('Se descarcă deja facturi')
+    expect(errorMessage(new ApiError('backup_error', 'x'))).toContain('Copia de siguranță nu a reușit')
+    expect(errorMessage(new Error('boom'), HERE)).toContain('A apărut o problemă în program.')
+  })
+
+  it('keeps the program’s own words as the detail', () => {
+    expect(errorDetail(new ApiError('internal_error', 'No such drive: E:'))).toBe('No such drive: E:')
+    expect(errorDetail('boom')).toBe('boom')
+  })
+})
+
+describe('the size of a file', () => {
+  it('is in megabytes, or kilobytes when small', () => {
+    expect(formatSize(41 * 1024 * 1024)).toBe('41 MB')
+    expect(formatSize(850 * 1024)).toBe('850 KB')
+    expect(formatSize(12)).toBe('1 KB')
   })
 })

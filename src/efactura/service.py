@@ -23,7 +23,7 @@ from typing import Callable
 
 import httpx
 
-from . import __version__, auth, jev, saga
+from . import __version__, auth, jev, journal, saga
 from .anaf import TYPE_PREFIXES, AnafService, normalize_cui, parse_created_at, type_slug
 from .classify import decide_by_rules, jev_request, read_jev_answer, subject_of
 from .clients_file import read_client_rows
@@ -111,6 +111,7 @@ class Service:
         self.cfg = _with_saved_settings(cfg)
         self._http = http or httpx.Client(timeout=httpx.Timeout(60.0))
         self._now = now or (lambda: datetime.now().astimezone())
+        journal.configure(self.cfg.db_path)  # the journal lives in the same database
 
     def close(self) -> None:
         self._http.close()
@@ -138,6 +139,7 @@ class Service:
         with self._lock():
             tokens = auth.exchange_code(self.cfg, self._http, code, now)
             auth.save_tokens(self.cfg.token_file, tokens)
+            journal.record("anaf", "anaf.connected", "Connected to ANAF with the certificate.")
         log.info("Logged in; access valid until %s", tokens.access_expires_at.isoformat())
         return {"ok": True, **_login_summary(tokens, now)}
 
@@ -207,13 +209,21 @@ class Service:
                     self.cfg.default_days, covered_until, days, start, end, now, cover_gap
                 )
                 run_id = store.start_run(cui, window.days, now.isoformat())
+                began, client = time.monotonic(), store.client_name(cui)
+                journal.record(
+                    "sync", "sync.started", f"Download started for {cui}, {window.days} day(s) back.",
+                    cui=cui, client=client, window_days=window.days,
+                )
                 try:
                     result = self._run_sync(store, cui, window, run_id, now, classify)
                 except Exception as exc:
                     detail = (
                         f"{exc.code}: {exc.message}" if isinstance(exc, EfacturaError) else repr(exc)
                     )
-                    log.error("Sync for %s failed: %s", cui, detail)
+                    journal.record(
+                        "sync", "sync.failed", f"Download for {cui} failed: {detail}", level="error",
+                        cui=cui, client=client, error=detail, duration_ms=_since(began),
+                    )
                     try:
                         store.finish_run(
                             run_id, self._now().isoformat(),
@@ -230,10 +240,6 @@ class Service:
                     error=f"{result['failed_count']} message(s) failed" if result["failed"] else None,
                     advances_coverage=not result["failed"] and window.reaches_back,
                 )
-                log.info(
-                    "Sync for %s: %d listed, %d new, %d failed",
-                    cui, result["listed"], result["new_count"], result["failed_count"],
-                )
                 result["classification"] = result["saga_folder"] = None
                 if classify:
                     try:
@@ -242,6 +248,16 @@ class Service:
                         # The messages are saved; what is still waiting is picked up next time.
                         log.exception("Classification for %s stopped", cui)
                         result["classification"] = result["saga_folder"] = None
+                decided = result["classification"] or {}
+                journal.record(
+                    "sync", "sync.finished",
+                    f"Download for {cui} finished: {result['listed']} listed, {result['new_count']} new, "
+                    f"{result['failed_count']} failed.",
+                    level="warning" if result["failed_count"] else "info",
+                    cui=cui, client=client, listed=result["listed"], new=result["new_count"],
+                    failed=result["failed_count"], classified=decided.get(CLASSIFIED), review=decided.get(REVIEW),
+                    waiting=decided.get(PENDING), duration_ms=_since(began),
+                )
                 return result
             finally:
                 store.close()
@@ -273,6 +289,10 @@ class Service:
                 log.exception("Could not save message %s", entry["id"])
                 error = EfacturaError(INTERNAL_ERROR, f"Could not save the message: {exc}")
             failed.append(_failure(entry, error))
+            journal.record(
+                "sync", "sync.message_failed", f"Message {entry['id']} could not be saved: {error.message}",
+                level="warning", id=entry["id"], cui=cui, error=error.message,
+            )
             log.warning("Message %s failed: %s: %s", entry["id"], error.code, error.message)
             network_failures = network_failures + 1 if error.code == NETWORK_ERROR else 0
             if network_failures >= MAX_NETWORK_FAILURES:
@@ -403,6 +423,10 @@ class Service:
         store = self._open_store()
         try:
             store.set_uploaded(ids, not undo, when)
+            journal.record(
+                "accounts", "invoices.unmarked" if undo else "invoices.marked_imported",
+                f"{len(ids)} invoice(s) {'no longer marked' if undo else 'marked'} as imported in SAGA.", invoices=len(ids),
+            )
         finally:
             store.close()
         return {
@@ -503,6 +527,7 @@ class Service:
         store = self._open_store()
         try:
             store.set_setting(JEV_INSTRUCTIONS, text)
+            journal.record("settings", "settings.jev_question", "The question put to Jev was changed.")
         finally:
             store.close()
         return self.classification_settings()
@@ -526,6 +551,7 @@ class Service:
         store = self._open_store()
         try:
             store.save_client(cui, name, self._now().isoformat())
+            journal.record("clients", "client.saved", f"Client {cui} saved.", cui=cui, client=name)
         finally:
             store.close()
         return self.clients()
@@ -535,6 +561,7 @@ class Service:
         store = self._open_store()
         try:
             store.delete_client(normalize_cui(cui))
+            journal.record("clients", "client.removed", f"Client {normalize_cui(cui)} taken off the list.", cui=normalize_cui(cui))
         finally:
             store.close()
         return self.clients()
@@ -564,8 +591,12 @@ class Service:
                     unchanged += 1
         finally:
             store.close()
-        log.info("Clients imported from %s: %d added, %d updated, %d rejected",
-                 filename, len(added), len(updated), len(rejected))
+        journal.record(
+            "clients", "clients.imported",
+            f"Clients imported from {filename}: {len(added)} added, {len(updated)} updated, {len(rejected)} rejected.",
+            level="warning" if rejected else "info",
+            file=filename, added=len(added), updated=len(updated), rejected=len(rejected),
+        )
         return {
             "ok": True, "rows": len(rows), "added": added, "updated": updated,
             "unchanged": unchanged, "rejected": rejected,
@@ -592,9 +623,20 @@ class Service:
         self._save_setting("saga_dir", str(path))
         return self.app_settings()
 
-    def choose_folder(self) -> dict:
-        """Let the person pick a folder in the computer's own dialog; None if they cancel."""
-        return {"ok": True, "folder": _ask_for_folder(str(self.cfg.saga_dir))}
+    def choose_folder(self, purpose: str = "saga") -> dict:
+        """Let the person pick a folder in the computer's own dialog; None if they cancel.
+        The dialog says which folder it is asking for, and starts where that one is now."""
+        if purpose == "saga":
+            start, title = str(self.cfg.saga_dir), "Folderul pentru SAGA"
+        elif purpose == "backups":
+            from . import backup  # here, because that module imports this one
+
+            now = backup.status(self.cfg)
+            start = now["folder"] if now["folder_found"] else str(Path.home())
+            title = "Folderul pentru copiile de siguranță"
+        else:
+            raise EfacturaError(INVALID_INPUT, "purpose must be 'saga' or 'backups'.")
+        return {"ok": True, "folder": _ask_for_folder(start, title)}
 
     def open_saga_folder(self, cui: str | None = None, message_id: str | None = None) -> dict:
         """Show a folder in the file manager: the one holding an invoice's SAGA file, or
@@ -609,6 +651,13 @@ class Service:
             folder = self.cfg.saga_dir / normalize_cui(cui) if cui else self.cfg.saga_dir
             folder.mkdir(parents=True, exist_ok=True)
         _reveal(folder)
+        return {"ok": True, "folder": str(folder)}
+
+    def open_folder(self, folder: str | None) -> dict:
+        """Show any folder the program knows of in the file manager (the backup folder)."""
+        if not folder or not Path(folder).is_dir():
+            raise EfacturaError(NOT_FOUND, f"The folder was not found: {folder}")
+        _reveal(Path(folder))
         return {"ok": True, "folder": str(folder)}
 
     def _folder_of_saga_file(self, message_id: str) -> Path:
@@ -649,7 +698,11 @@ class Service:
             raise EfacturaError(
                 INVALID_INPUT, f"Only these can be changed here: {', '.join(EDITABLE_SECRETS)}."
             )
-        self._save_setting(key, str(value or "").strip())
+        value = str(value or "").strip()
+        if any(ord(character) < 32 or ord(character) == 127 for character in value):
+            # A line break inside a key ends up quoted in the error of the first call that uses it.
+            raise EfacturaError(INVALID_INPUT, "A key is one line of text: no line breaks or other control characters.")
+        self._save_setting(key, value)
         return self.secrets()
 
     def _save_setting(self, key: str, value: str) -> None:
@@ -662,7 +715,11 @@ class Service:
         finally:
             store.close()
         self.cfg = _with_saved_settings(self._file_cfg)
-        log.info("Setting %s changed", key)  # never the value: it may be a key
+        # Never the value: it may be a key.
+        journal.record(
+            "settings", "settings.secret_changed" if key in EDITABLE_SECRETS else "settings.changed",
+            f"Setting {key} changed.", name=key,
+        )
 
     # --- rules and accounts ---------------------------------------------------
 
@@ -686,6 +743,7 @@ class Service:
         store = self._open_store()
         try:
             store.save_account(cont, str(description or "").strip())
+            journal.record("rules", "account.saved", f"Account {cont} saved in Jev's list.", cont=cont)
         finally:
             store.close()
         return self.rules_overview()
@@ -694,6 +752,7 @@ class Service:
         store = self._open_store()
         try:
             store.delete_account(str(cont).strip())
+            journal.record("rules", "account.removed", f"Account {cont} removed from Jev's list.", cont=str(cont).strip())
         finally:
             store.close()
         return self.rules_overview()
@@ -737,6 +796,12 @@ class Service:
                 store.add_rule(**fields)
             else:
                 store.update_rule(rule_id, **fields)
+            journal.record(
+                "rules", "rule.added" if rule_id is None else "rule.changed",
+                f"Rule {tidy.name!r} for {tidy.cont} {'added' if rule_id is None else 'changed'}.",
+                name=tidy.name, cont=tidy.cont, rule_id=rule_id, client=fields["client_cui"],
+                looks_for=", ".join((*tidy.keywords, *tidy.supplier_cuis, *tidy.item_codes, *tidy.commodity_prefixes)),
+            )
         finally:
             store.close()
         return self.rules_overview()
@@ -745,6 +810,7 @@ class Service:
         store = self._open_store()
         try:
             store.delete_rule(rule_id)
+            journal.record("rules", "rule.removed", f"Rule {rule_id} removed.", rule_id=rule_id)
         finally:
             store.close()
         return self.rules_overview()
@@ -835,6 +901,9 @@ class Service:
         store = self._open_store()
         try:
             store.dismiss_suggestions(ids)
+            journal.record(
+                "rules", "rule.proposal_turned_down", f"Proposed rule turned down for {len(ids)} invoice(s).", invoices=len(ids)
+            )
         finally:
             store.close()
         return {"ok": True, "dismissed": ids}
@@ -871,6 +940,7 @@ class Service:
         store = self._open_store()
         try:
             store.set_setting(MIN_CONFIDENCE, repr(float(value)))
+            journal.record("settings", "settings.confidence", f"Confidence level set to {float(value)}.", level_set=float(value))
         finally:
             store.close()
         log.info("Confidence level set to %s", value)
@@ -990,7 +1060,6 @@ class Service:
         }
         if counts[CLASSIFIED]:
             result["saga_folder"] = str(self.cfg.saga_dir / cui)
-        log.info("Classification for %s: %s", cui, result["classification"])
 
     def _classifiable(
         self, store: Store, message_id: str, force: bool, classified_ok: bool
@@ -1136,6 +1205,14 @@ class Service:
                 error=error,
             )
             tally["jev_calls"] += 1
+            journal.record(
+                "jev", "jev.answered" if answer is not None else "jev.failed",
+                f"Jev answered for message {row['id']}." if answer is not None
+                else f"Jev gave no usable answer for message {row['id']}: {error}",
+                level="info" if answer is not None else "warning",
+                id=row["id"], invoice_number=row.get("invoice_number"), status=call.status,
+                cost_usd=call.cost_usd, error=error, duration_ms=call.duration_ms,
+            )
             tally["jev_cost_usd"] += call.cost_usd or 0
             if answer is not None:
                 return answer
@@ -1191,7 +1268,13 @@ class Service:
             raise
         if row.get("saga_xml_path") and row["saga_xml_path"] != stored:
             self._drop_saga_file(store, row)  # it had another name before
-        log.info("Message %s classified on %s (%s)", row["id"], cont, method)
+        journal.record(
+            "accounts", {"rules": "account.by_rule", "jev": "account.by_jev"}.get(method, "account.by_person"),
+            f"Message {row['id']} booked on {cont} ({method}).",
+            id=row["id"], cui=row["cui"], invoice_number=row.get("invoice_number"),
+            supplier=row.get("supplier_name"), cont=cont, method=method, reason=reason,
+            confidence=jev_said.get("confidence"),
+        )
         return CLASSIFIED
 
     def _to_review(self, store: Store, row: dict, reason: str, **jev_said) -> str:
@@ -1208,7 +1291,12 @@ class Service:
         )
         # Only once the row no longer points at it: if the update fails, the file stays.
         self._drop_saga_file(store, row)
-        log.info("Message %s needs review: %s", row["id"], reason)
+        journal.record(
+            "accounts", "account.to_review", f"Message {row['id']} needs a person: {reason}", level="warning",
+            id=row["id"], cui=row["cui"], invoice_number=row.get("invoice_number"),
+            supplier=row.get("supplier_name"), reason=reason, suggested=jev_said.get("suggested_cont"),
+            confidence=jev_said.get("confidence"),
+        )
         return REVIEW
 
     def _drop_saga_file(self, store: Store, row: dict) -> None:
@@ -1282,6 +1370,7 @@ class Service:
                 )
             renewed = auth.refresh_tokens(self.cfg, self._http, tokens, now)
             auth.save_tokens(self.cfg.token_file, renewed)
+            journal.record("anaf", "anaf.renewed", "The ANAF login was renewed without the certificate.")
         log.info("Login renewed; access valid until %s", renewed.access_expires_at.isoformat())
         return renewed.access_token
 
@@ -1299,6 +1388,10 @@ def configure_logging(cfg: Config) -> None:
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
+    # The same lines go into the journal, where the page can show them.
+    journal.configure(cfg.db_path)
+    if not any(isinstance(existing, journal.JournalHandler) for existing in logger.handlers):
+        logger.addHandler(journal.JournalHandler())
 
 
 def _window_days(
@@ -1456,17 +1549,17 @@ from tkinter import filedialog
 window = tkinter.Tk()
 window.withdraw()
 window.attributes("-topmost", True)  # in front of the browser
-chosen = filedialog.askdirectory(initialdir=sys.argv[1], title="Folderul pentru SAGA")
+chosen = filedialog.askdirectory(initialdir=sys.argv[1], title=sys.argv[2])
 # As UTF-8 bytes: printed as text, Windows' code page cannot hold every Romanian letter.
 sys.stdout.buffer.write(chosen.encode("utf-8"))
 """
 FOLDER_DIALOG_TIMEOUT = 600  # seconds the dialog may stay open
 
 
-def _ask_for_folder(start: str) -> str | None:
+def _ask_for_folder(start: str, title: str) -> str | None:
     try:
         dialog = subprocess.run(
-            [sys.executable, "-c", _FOLDER_DIALOG, start],
+            [sys.executable, "-c", _FOLDER_DIALOG, start, title],
             capture_output=True, timeout=FOLDER_DIALOG_TIMEOUT,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -1481,6 +1574,11 @@ def _reveal(folder: Path) -> None:
         os.startfile(folder)  # noqa: S606 - a folder of ours, opened in Explorer
     else:
         subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(folder)])
+
+
+def _since(began: float) -> int:
+    """Milliseconds since `began`, a time.monotonic() reading."""
+    return round((time.monotonic() - began) * 1000)
 
 
 def _is_received(message_type: str | None) -> bool:

@@ -19,7 +19,7 @@ import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import __version__, background
+from . import __version__, backup, background, journal
 from .config import Config
 from .errors import BUSY, UPDATE_ERROR, EfacturaError
 from .service import _FileLock
@@ -87,52 +87,83 @@ def update(cfg: Config, project: Path | None = None, now: datetime | None = None
     why_not = _why_not_updatable(project)
     if why_not:
         raise EfacturaError(UPDATE_ERROR, why_not)
-    with _only_one_update(cfg):
+    with _only_one_update(cfg), backup.no_restore_running(cfg):
         installed = _installed_release(project)
-        latest = latest_release(project)
-        if not latest:
-            raise EfacturaError(UPDATE_ERROR, "The repository has no release to update to.")
-        _remember(cfg, latest, now)
-        if latest == installed:
-            return {"ok": True, "updated": False, "version": installed}
+        aimed_at = {"release": None}  # known once the remote has answered
+        try:
+            result = _move_to_latest(cfg, project, now, installed, aimed_at)
+        except Exception as exc:
+            # However early it failed, and whatever it was, the page that started it is waiting to be told.
+            failure = _said(exc)
+            _write_record(cfg, {
+                "at": now.isoformat(), "ok": False, "from": installed, "to": aimed_at["release"], "error": failure,
+            })
+            journal.record("update", "update.failed", f"The update failed: {failure}", level="error",
+                           installed=installed, release=aimed_at["release"], error=failure)
+            if isinstance(exc, EfacturaError):
+                raise
+            raise EfacturaError(UPDATE_ERROR, f"The update failed. {failure}") from None
+        _write_record(cfg, {
+            "at": now.isoformat(), "ok": True, "from": installed, "to": aimed_at["release"], "error": None,
+        })
+        if result["updated"]:
+            journal.record("update", "update.finished", f"Updated from {installed} to {aimed_at['release']}.",
+                           installed=installed, release=aimed_at["release"], restarted=result["restarted"])
+            if result["not_started"]:
+                # The update itself is done; saying it failed would be untrue and send the person to repeat it.
+                journal.record("update", "update.not_restarted",
+                               f"After the update the program did not start again: {result['not_started']}",
+                               level="warning", error=result["not_started"])
+        return result
 
-        # Everything that can fail without touching the program comes first.
-        _git(project, "fetch", "--tags", "--prune", "origin", what="Fetching the release", timeout=FETCH_TIMEOUT)
-        _refuse_a_release_that_replaces_local_files(project, latest, cfg)
-        previous = _git(project, "rev-parse", "HEAD", what="Reading the installed release")
-        was_running = background.stop(cfg)["stopped"]
-        backup = back_up_database(cfg, installed or previous[:7], now)
 
-        failure = None
+def _move_to_latest(cfg: Config, project: Path, now: datetime, installed: str | None, aimed_at: dict) -> dict:
+    latest = latest_release(project)
+    if not latest:
+        raise EfacturaError(UPDATE_ERROR, "The repository has no release to update to.")
+    aimed_at["release"] = latest
+    _remember(cfg, latest, now)
+    if latest == installed:
+        return {"ok": True, "updated": False, "version": installed}
+
+    # Everything that can fail without touching the program comes first.
+    _git(project, "fetch", "--tags", "--prune", "origin", what="Fetching the release", timeout=FETCH_TIMEOUT)
+    _refuse_a_release_that_replaces_local_files(project, latest, cfg)
+    previous = _git(project, "rev-parse", "HEAD", what="Reading the installed release")
+    was_running = background.stop(cfg)["stopped"]
+
+    failure, copy = None, None
+    try:
+        copy = back_up_database(cfg, installed or previous[:7], now)
         try:
             _switch_to(project, latest)
             sync_dependencies(project)
-        except EfacturaError as exc:
-            failure = exc.message
+        except Exception:
             _go_back(project, previous)
-        restarted = False
-        if was_running:
-            try:
-                restarted = background.start(cfg, cfg.path)["ok"]
-            except EfacturaError as exc:
-                failure = failure or f"The program did not start again: {exc.message}"
-
-        _write_record(cfg, {
-            "at": now.isoformat(), "ok": failure is None, "from": installed, "to": latest, "error": failure,
-        })
-        if failure:
-            raise EfacturaError(
-                UPDATE_ERROR,
-                f"The update to {latest} failed and the program was put back to {installed}. {failure}",
-            )
-        return {
-            "ok": True,
-            "updated": True,
-            "from": installed,
-            "to": latest,
-            "backup": str(backup) if backup else None,
-            "restarted": restarted,
-        }
+            raise
+    except Exception as exc:  # whatever it was, the program is started again below
+        failure = _said(exc)
+    restarted, not_started = False, None
+    if was_running:
+        try:
+            restarted = background.start(cfg, cfg.path)["ok"]
+        except Exception as exc:
+            not_started = _said(exc)
+    if failure:
+        raise EfacturaError(
+            UPDATE_ERROR,
+            f"The update to {latest} failed and the program was put back to {installed}. {failure}"
+            + (f" The program did not start again: {not_started}" if not_started else ""),
+        )
+    return {
+        "ok": True,
+        "updated": True,
+        "from": installed,
+        "to": latest,
+        "backup": str(copy) if copy else None,
+        "restarted": restarted,
+        "not_started": not_started,
+    }
 
 
 def start_in_background(cfg: Config) -> dict:
@@ -163,14 +194,7 @@ def back_up_database(cfg: Config, label: str, now: datetime) -> Path | None:
     folder.mkdir(parents=True, exist_ok=True)
     safe_label = "".join(ch if ch.isalnum() or ch in ".-" else "-" for ch in label)
     copy = folder / f"efactura-{safe_label}-{now:%Y%m%d-%H%M%S}.db"
-    # SQLite's own copy: complete even if part of the database is still in its journal.
-    source, target = sqlite3.connect(cfg.db_path), sqlite3.connect(copy)
-    try:
-        with target:
-            source.backup(target)
-    finally:
-        source.close()
-        target.close()
+    backup.copy_database(cfg.db_path, copy)
     copies = sorted(folder.glob("efactura-*.db"), key=lambda path: (path.stat().st_mtime_ns, path.name))
     for old in copies[:-BACKUPS_KEPT]:
         old.unlink()
@@ -235,7 +259,7 @@ def _go_back(project: Path, previous: str) -> None:
     try:
         _switch_to(project, previous)
         sync_dependencies(project)
-    except EfacturaError:
+    except Exception:
         pass  # the failure that brought us here is the one to report
 
 
@@ -313,3 +337,7 @@ def _run(command: list[str], what: str, timeout: int) -> str:
         said = (done.stderr or done.stdout).strip().splitlines()
         raise EfacturaError(UPDATE_ERROR, f"{what} failed: {' '.join(said[-3:]) or f'exit code {done.returncode}'}")
     return done.stdout.strip()
+
+
+def _said(exc: Exception) -> str:
+    return exc.message if isinstance(exc, EfacturaError) else f"{type(exc).__name__}: {exc}"

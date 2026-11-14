@@ -44,6 +44,7 @@ export function ImportClientsDialog({ open, onClose }: { open: boolean; onClose:
             type="file"
             accept=".xlsx,.csv"
             className="sr-only"
+            tabIndex={-1} // the button beside it opens it; an invisible field must not take focus
             aria-label="Fișierul cu clienți"
             onChange={(event) => {
               const file = event.target.files?.[0]

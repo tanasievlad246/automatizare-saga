@@ -62,7 +62,7 @@ export function ProposedRuleCard({ invoice, suggestion }: { invoice: Invoice; su
       </h2>
       <div className="flex flex-col gap-3.5 px-5 pt-4.5 pb-5.5">
         <p>
-          Nicio regulă nu s-a potrivit, așa că contul l-{invoice.classification_method === 'jev' ? 'a ales Jev' : 'ați ales dumneavoastră'}.
+          Nicio regulă nu s-a potrivit, de aceea contul l-{invoice.classification_method === 'jev' ? 'a ales Jev' : 'ați ales dumneavoastră'}.
           Cu o regulă, data viitoare contul <strong>{cont}</strong> se pune singur.
         </p>
 
@@ -70,7 +70,7 @@ export function ProposedRuleCard({ invoice, suggestion }: { invoice: Invoice; su
           <div className="flex flex-col gap-2">
             <div className="font-bold">Regula să se potrivească dacă:</div>
             <Choice chosen={looksFor === 'words'} onChoose={() => setLooksFor('words')}>
-              pe factură scrie anumite cuvinte
+              pe factură apar anumite cuvinte
             </Choice>
             <Choice chosen={looksFor === 'supplier'} onChoose={() => setLooksFor('supplier')}>
               factura este de la {supplier}
@@ -94,8 +94,8 @@ export function ProposedRuleCard({ invoice, suggestion }: { invoice: Invoice; su
               ))}
             </div>
             <p className="text-[0.9rem] text-muted-foreground">
-              Regula se potrivește dacă apare oricare dintre cuvintele bifate. Sunt de pe linia cea mai mare a
-              facturii: „{suggestion.line}”.
+              Regula se potrivește dacă apare oricare dintre cuvintele bifate. Sunt de pe linia cu valoarea cea
+              mai mare a facturii: „{suggestion.line}”.
             </p>
           </div>
         )}
@@ -110,7 +110,7 @@ export function ProposedRuleCard({ invoice, suggestion }: { invoice: Invoice; su
           <Button size="lg" variant="outline" disabled={busy} onClick={() => turnDown.mutate()}>Nu acum</Button>
         </div>
         <Button variant="link" className="self-start px-0" onClick={() => setChanging(true)}>
-          Vreau să schimb ceva la regulă
+          Modifică regula întâi
         </Button>
       </div>
       {changing && (
@@ -129,9 +129,12 @@ function Choice({ chosen, onChoose, children }: { chosen: boolean; onChoose: () 
       onClick={onChoose}
       className={cn(
         'min-h-12 cursor-pointer rounded-lg border-2 px-4 py-2 text-left',
+        'flex items-center gap-2.5',
         chosen ? 'border-primary bg-fresh font-bold text-fresh-foreground' : 'border-input bg-card font-semibold hover:bg-muted',
       )}
     >
+      {/* The tick says which one is chosen; the tint alone is too faint a difference. */}
+      {chosen ? <Check aria-hidden className="size-5 shrink-0" strokeWidth={2.6} /> : <span aria-hidden className="size-5 shrink-0" />}
       {children}
     </button>
   )

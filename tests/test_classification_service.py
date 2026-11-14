@@ -1215,4 +1215,4 @@ def test_a_chosen_folder_with_romanian_letters_comes_back_intact(monkeypatch):
 
     monkeypatch.setattr(service_module.subprocess, "run", fake_run)
 
-    assert service_module._ask_for_folder("C:/") == str(service_module.Path(chosen))
+    assert service_module._ask_for_folder("C:/", "Folderul pentru SAGA") == str(service_module.Path(chosen))

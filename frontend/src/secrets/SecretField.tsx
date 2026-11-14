@@ -37,11 +37,14 @@ export function SecretField({ secret, name }: { secret: Secret; name: string }) 
             className="min-w-28"
             disabled={!secret.value}
             aria-pressed={shown}
+            aria-label={`${shown ? 'Ascunde' : 'Arată'}: ${name}`}
             onClick={() => setShown(!shown)}
           >
             {shown ? 'Ascunde' : 'Arată'}
           </Button>
-          {secret.editable && <Button variant="outline" onClick={() => setTyped(secret.value)}>Modifică</Button>}
+          {secret.editable && (
+            <Button variant="outline" aria-label={`Modifică: ${name}`} onClick={() => setTyped(secret.value)}>Modifică</Button>
+          )}
         </div>
       ) : (
         <form

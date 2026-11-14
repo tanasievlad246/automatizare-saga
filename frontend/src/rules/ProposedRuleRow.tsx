@@ -44,7 +44,7 @@ export function ProposedRuleRow({
       <div className="flex flex-wrap items-center gap-2">
         <Button disabled={busy} onClick={() => create.mutate()}>Creează regula</Button>
         <Button variant="outline" disabled={busy} onClick={() => onChangeFirst(ruleFromProposal(proposal))}>
-          Schimb-o întâi
+          Modifică regula întâi
         </Button>
         <Button variant="link" disabled={busy} onClick={() => turnDown.mutate()}>Nu acum</Button>
       </div>

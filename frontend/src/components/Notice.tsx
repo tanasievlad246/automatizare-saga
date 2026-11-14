@@ -14,7 +14,8 @@ export function Notice({
 }: { tone: keyof typeof TONES; children: ReactNode; className?: string }) {
   const Icon = tone === 'attention' ? TriangleAlert : Check
   return (
-    <div className={cn('flex items-start gap-3 rounded-xl border px-4 py-3', TONES[tone], className)}>
+    // role="status": a screen reader says it when it appears, without interrupting.
+    <div role="status" className={cn('flex items-start gap-3 rounded-xl border px-4 py-3', TONES[tone], className)}>
       <Icon aria-hidden className="mt-0.5 size-5 shrink-0" />
       <div className="min-w-0 flex-1">{children}</div>
     </div>

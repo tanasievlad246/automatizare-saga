@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Installs or updates e-Factura pentru SAGA on this Windows PC.
+    Installs or updates AutoSaga (e-Factura pentru SAGA) on this Windows PC.
 
 .DESCRIPTION
     Run it as the Windows user who will work with the program, in an ordinary PowerShell
@@ -59,7 +59,9 @@ $ErrorActionPreference = 'Stop'
 
 # Where the program is published. -Repo installs from another repository instead.
 $DefaultRepo = 'tanasievlad246/automatizare-saga'
-$ShortcutName = 'e-Factura pentru SAGA.lnk'
+$ShortcutName = 'AutoSaga.lnk'
+# What the shortcuts were called before the program got its name; removed when found.
+$OldShortcutName = 'e-Factura pentru SAGA.lnk'
 
 # --- small helpers ---------------------------------------------------------------------
 
@@ -153,15 +155,17 @@ function New-ProgramShortcut([string]$Folder, [string]$Command) {
     $shortcut.TargetPath = $PythonW
     $shortcut.Arguments = "-m efactura --config `"$Config`" $Command"
     $shortcut.WorkingDirectory = $InstallDir
-    $shortcut.Description = 'e-Factura pentru SAGA'
+    $shortcut.Description = 'AutoSaga'
     $shortcut.Save()
 }
 
 function Remove-ProgramShortcut([string]$Folder) {
-    $path = Join-Path $Folder $ShortcutName
-    if (Test-Path $path) {
-        Remove-Item $path
-        Write-Host "Removed $path"
+    foreach ($name in @($ShortcutName, $OldShortcutName)) {
+        $path = Join-Path $Folder $name
+        if (Test-Path $path) {
+            Remove-Item $path
+            Write-Host "Removed $path"
+        }
     }
 }
 
@@ -298,6 +302,8 @@ $page = $settings.page
 # --- 5. Starting with Windows, and the Desktop shortcut ----------------------------------
 
 Write-Step 'Making the shortcuts'
+Remove-ProgramShortcut $Startup
+Remove-ProgramShortcut $Desktop
 New-ProgramShortcut $Startup 'start'
 New-ProgramShortcut $Desktop 'open'
 Write-Host "Starts when $($identity.Name) signs in to Windows: $(Join-Path $Startup $ShortcutName)"

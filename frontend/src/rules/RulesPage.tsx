@@ -26,7 +26,7 @@ export function RulesPage() {
   })
 
   return (
-    <div className="flex flex-col gap-9">
+    <div className="flex max-w-[66rem] flex-col gap-9">
       <PageTitle title="Reguli de clasificare">
         O regulă alege contul singură, fără Jev. Întâi se verifică regulile clientului, apoi cele pentru toți clienții, fiecare grup de sus în jos. Prima care se potrivește câștigă.
       </PageTitle>
@@ -49,6 +49,7 @@ export function RulesPage() {
             key={rule.id}
             rule={rule}
             position={index + 1}
+            isLast={index === data.rules.length - 1}
             clientName={clients.find((client) => client.cui === rule.client_cui)?.name ?? null}
             onEdit={() => setEditing({ rule })}
             onMove={(up) => move.mutate({ id: rule.id, up })}

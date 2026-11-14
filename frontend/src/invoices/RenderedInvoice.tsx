@@ -5,7 +5,7 @@ import type { InvoiceDocument, Party } from '../types'
 /** The invoice as a person reads it: who, when, what was bought, how much. */
 export function RenderedInvoice({ document }: { document: InvoiceDocument }) {
   // SAGA has no credit notes; they are booked as invoices with negative amounts, so say what this is.
-  const kind = document.is_credit_note ? 'Notă de credit (scade din ce datorați)' : null
+  const kind = document.is_credit_note ? 'Factură de stornare (scade din ce datorează clientul)' : null
   return (
     <div className="flex flex-col gap-5 px-6 pt-5.5 pb-6.5">
       {kind && <p className="font-semibold text-attention-foreground">{kind}</p>}

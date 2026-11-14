@@ -151,7 +151,7 @@ def test_activity_is_logged_to_the_data_folder_not_the_output(run, anaf, logged_
     _, out, _ = run("sync", VALID_CUI)
 
     log_text = load_config(config_path).log_path.read_text(encoding="utf-8")
-    assert "Sync for 12345674: 1 listed, 1 new, 0 failed" in log_text
+    assert "Download for 12345674 finished: 1 listed, 1 new, 0 failed" in log_text
     json.loads(out)
 
 
@@ -330,3 +330,25 @@ def test_serve_refuses_to_start_without_an_api_key(run, tmp_path, monkeypatch):
     assert code == 1
     assert json.loads(out)["error"]["code"] == "config_error"
     assert started == []
+
+
+def test_one_bad_round_of_housekeeping_does_not_end_it_for_good(monkeypatch, tmp_path):
+    import threading
+
+    from efactura import background, cli
+
+    stopped, rounds = threading.Event(), []
+
+    def a_round(cfg):
+        rounds.append(len(rounds))
+        if len(rounds) == 1:
+            raise RuntimeError("something nobody expected")
+        stopped.set()
+
+    monkeypatch.setattr(background, "keep_house", a_round)
+    monkeypatch.setattr(cli, "FIRST_HOUSEKEEPING", 0)
+    monkeypatch.setattr(cli, "HOUSEKEEPING_EVERY", 0)
+
+    cli._keep_house_until(None, stopped)  # returns only because the second round was reached
+
+    assert rounds == [0, 1]

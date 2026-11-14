@@ -250,7 +250,7 @@ def test_a_failure_without_a_window_is_shown_in_a_box_and_logged(settings, compu
     code = cli.main(["--config", str(settings), "open"])
 
     assert code == 1
-    assert len(shown) == 1 and "9001" in shown[0] and shown[0].startswith("e-Factura pentru SAGA nu a putut porni.")
+    assert len(shown) == 1 and "9001" in shown[0] and shown[0].startswith("AutoSaga nu a putut porni.")
     assert "Port 9001" in (settings.parent / "data" / "efactura.log").read_text(encoding="utf-8")
     assert computer.opened == []
 
