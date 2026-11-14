@@ -10,8 +10,15 @@ import { ErrorNotice } from '@/components/ErrorNotice'
 import { Notice } from '@/components/Notice'
 import { ApiError, api } from '../api'
 import { errorDetail, showError } from '../errorMessages'
-import { isWaitingFor, nextView, openingView } from './certificateLogin'
+import { nextView, openingView } from './certificateLogin'
 import type { LoginEvent, LoginView } from './certificateLogin'
+
+// ANAF answered that the Client ID or the Callback URL is not the registered one: here the
+// person can correct it, which the general sentence for this code does not say.
+const SETTINGS_WRONG = {
+  config_error:
+    'ANAF nu recunoaște Client ID-ul sau Callback URL-ul. Verificați Client ID-ul la „Chei și parole”. Pentru Callback URL, urmați pașii de la „Cum obțin Client ID și Client Secret de la ANAF?”.',
+}
 
 /**
  * The yearly ANAF login. Where the program can ask Windows for the certificate, that is the
@@ -49,8 +56,7 @@ export function AnafLoginDialog({ open, onClose }: { open: boolean; onClose: () 
     onClose()
   }
   const close = () => {
-    show(null)
-    setAddress('')
+    show(null) // a pasted address stays: only a finished login clears it
     onClose()
   }
 
@@ -71,9 +77,11 @@ export function AnafLoginDialog({ open, onClose }: { open: boolean; onClose: () 
   // saved login: the top bar's chip follows it, and nothing else on screen changes.
   const askWindows = useMutation({
     mutationFn: (attempt: number) => api.loginWithCertificate().then((login) => ({ login, attempt })),
-    onSuccess: ({ attempt }) => {
+    // Whichever try it was, the person did connect: the chip refreshes, the message says so
+    // and the window, if it is open, closes. Only a failure of a try nobody waits for is silent.
+    onSuccess: () => {
       refreshLogin()
-      if (shown.current && isWaitingFor(shown.current, attempt)) finish()
+      finish()
     },
     onError: (error, attempt) => {
       if (shown.current) go({ type: 'failed', attempt, error })
@@ -102,7 +110,7 @@ export function AnafLoginDialog({ open, onClose }: { open: boolean; onClose: () 
               <li>Apăsați butonul de mai jos. Windows vă arată certificatele: alegeți-l pe al dumneavoastră.</li>
               <li>Scrieți PIN-ul în fereastra tokenului.</li>
             </ol>
-            <Button size="lg" className="self-start" onClick={ask}>
+            <Button size="lg" className="w-fit justify-self-start" onClick={ask}>
               Conectează-mă cu certificatul
             </Button>
             <BrowserLink onClick={() => go({ type: 'browser' })}>Nu merge așa? Conectare prin browser</BrowserLink>
@@ -123,7 +131,7 @@ export function AnafLoginDialog({ open, onClose }: { open: boolean; onClose: () 
             <div aria-hidden className="h-2.5 overflow-hidden rounded-full bg-muted">
               <div className="h-full w-2/5 animate-pulse rounded-full bg-primary" />
             </div>
-            <Button size="lg" variant="outline" className="self-start" onClick={() => go({ type: 'giveUp' })}>
+            <Button size="lg" variant="outline" className="w-fit justify-self-start" onClick={() => go({ type: 'giveUp' })}>
               Renunță
             </Button>
           </>
@@ -144,7 +152,7 @@ export function AnafLoginDialog({ open, onClose }: { open: boolean; onClose: () 
                 </p>
               </>
             ) : (
-              <ErrorNotice error={view.error} />
+              <ErrorNotice error={view.error} here={SETTINGS_WRONG} />
             )}
             <div className="flex flex-wrap gap-2.5">
               <Button size="lg" onClick={ask}>Încearcă din nou</Button>
@@ -210,7 +218,7 @@ function BrowserLink({ onClick, children }: { onClick: () => void; children: Rea
   return (
     <button
       type="button"
-      className="min-h-11 self-start font-semibold text-primary underline underline-offset-2"
+      className="min-h-11 w-fit justify-self-start font-semibold text-primary underline underline-offset-2"
       onClick={onClick}
     >
       {children}

@@ -19,17 +19,17 @@ There are three ways to use it, all on the same data:
 
 ## How the login works
 
-The key on the USB signature token cannot be read or copied, so this tool never touches it. The token is used once, in the browser, exactly like logging in to SPV. ANAF then issues a login that this tool saves and renews by itself:
+The key on the USB signature token cannot be read or copied, so this tool never touches it. The token is used once, by Windows or in the browser (two ways, below), exactly like logging in to SPV. ANAF then issues a login that this tool saves and renews by itself:
 
 | | Lasts | Needs the USB token |
 |---|---|---|
 | Access token | 90 days | no |
 | Refresh token (renews the access token) | 365 days | no |
-| A new login | — | yes: certificate + PIN in the browser |
+| A new login | — | yes: certificate + PIN, in Windows' own windows or in the browser |
 
 So the token and PIN are needed about once a year. The PIN is typed into Windows' own prompt; this tool never sees it.
 
-There are two ways to log in. On Windows the page offers **Conectează-mă cu certificatul** first: the program starts a PowerShell helper (`src/efactura/certificate_login.ps1`, no browser) that shows Windows' own certificate window, makes the token ask for its PIN in the token's own prompt, and then follows ANAF's login to the address it ends on. The key never leaves the token and the program never sees the PIN. The address holds a one-time code; the program exchanges it at once and neither the address nor the code is shown, logged or written to the journal (the journal keeps only that Windows was asked, how long it took, how many tries ANAF needed and whether the token was opened first). The other way, on any system, is the browser: ANAF's own page, then the address copied back (see below). `POST /auth/login/certificate` and the page's button are offered only where `certificate_login` in the login status is true: on Windows, with Windows PowerShell found, and not in the demo.
+There are two ways to log in. On Windows the page offers **Conectează-mă cu certificatul** first: the program starts a PowerShell helper (`src/efactura/certificate_login.ps1`, no browser) that shows Windows' own certificate window, makes the token ask for its PIN in the token's own prompt, and then follows ANAF's login to the address it ends on. The key never leaves the token and the program never sees the PIN. The address holds a one-time code; the program exchanges it at once and neither the address nor the code is shown, logged or written to the journal (the journal keeps only that Windows was asked, how long it took, how many tries ANAF needed and whether the token was opened first). The other way, on any system, is the browser: ANAF's own page, then the address copied back (see below). Only one helper runs at a time: a second request that arrives while Windows is being asked (the person pressed the button again, perhaps with the window hidden behind the browser) waits for the first and gets the same answer or the same error. A download in progress refuses the try at the start with `busy`, before Windows is asked, and not after the PIN. ANAF's answers `invalid_client` and `invalid_request` ("Redirect-URI ... does not match") come out as `config_error`, with ANAF's own words. A helper that prints nothing readable is reported with its exit code and the first line it wrote on standard error. `POST /auth/login/certificate` and the page's button are offered only where `certificate_login` in the login status is true: on Windows, with Windows PowerShell found, and not in the demo.
 
 ## Installing on the accountant's PC
 
@@ -335,7 +335,7 @@ Failure (from any command):
 | `network_error` | ANAF could not be reached. |
 | `not_found` | No saved message with that id. |
 | `busy` | Another sync or login renewal is running. |
-| `config_error` | `config.toml` is missing or incomplete, or ANAF rejected the client ID/secret. |
+| `config_error` | `config.toml` is missing or incomplete, or ANAF rejected the client ID/secret. In the certificate login: ANAF answered `invalid_client` (wrong Client ID) or `invalid_request` with "Redirect-URI ... does not match" (wrong Callback URL); the message keeps ANAF's words. |
 | `not_classifiable` | The message is not a received invoice, is marked as uploaded, was saved outside classification, or is already classified. `force` lifts the last two. |
 | `jev_error` | OpenRouter refused or could not be reached; the message says why (key, credit, rate limit). |
 | `internal_error` | A bug. The details are in `data/efactura.log`. |

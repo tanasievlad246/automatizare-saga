@@ -3,7 +3,8 @@ import { errorMessage } from '../errorMessages'
 
 /**
  * What the ANAF login window shows. `waiting` carries the number of the try it waits for:
- * the answer of an earlier try, one the person gave up on, changes nothing on screen.
+ * the failure of an earlier try, or of one the person gave up on, changes nothing on screen.
+ * A try that ends in a saved login is announced whatever the window shows; that is not here.
  */
 export type LoginView =
   | { kind: 'certificate'; note?: string }

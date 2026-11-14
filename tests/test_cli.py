@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from efactura import auth, cli
+from efactura import auth, certificate_login, cli
 from efactura.auth import Tokens
 from efactura.config import load_config
 from efactura.service import Service
@@ -67,7 +67,8 @@ def logged_in(config_path):
 # --- the output contract -----------------------------------------------------
 
 
-def test_command_prints_exactly_one_json_document(run):
+def test_command_prints_exactly_one_json_document(run, monkeypatch):
+    monkeypatch.setattr(certificate_login, "available", lambda cfg, system=None: False)  # any machine
     code, out, _ = run("auth-status")
 
     assert code == 0
@@ -78,7 +79,7 @@ def test_command_prints_exactly_one_json_document(run):
         "refresh_expires_at": None,
         "access_days_left": None,
         "refresh_days_left": None,
-        "certificate_login": False,  # not Windows, or no PowerShell: the test machine
+        "certificate_login": False,
     }
 
 

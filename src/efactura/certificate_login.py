@@ -12,15 +12,48 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 import time
+from collections.abc import Callable
+from concurrent.futures import Future
 from pathlib import Path
 
 from . import journal
 from .config import Config
-from .errors import ANAF_ERROR, LOGIN_CANCELLED, EfacturaError, said_by
+from .errors import ANAF_ERROR, CONFIG_ERROR, LOGIN_CANCELLED, EfacturaError, said_by
 
 HELPER = Path(__file__).with_name("certificate_login.ps1")
 TIMEOUT = 300  # seconds allowed for choosing the certificate and typing the PIN
+STDERR_SHOWN = 300  # characters of the helper's own complaint that are kept
+
+_guard = threading.Lock()
+_running: Future | None = None  # the try Windows is being asked for now, shared by late-comers
+
+
+def one_at_a_time(work: Callable[[], dict]) -> dict:
+    """Runs `work`, or, when it is already running for another request, waits for that run
+    and hands back its answer (or raises its error). Pressing the button again while
+    Windows' window is still open, perhaps hidden behind the browser, must not open a
+    second one."""
+    global _running
+    with _guard:
+        mine = _running is None
+        if mine:
+            _running = Future()
+        shared = _running
+    if not mine:
+        return shared.result()
+    try:
+        answer = work()
+    except BaseException as exc:
+        shared.set_exception(exc)
+        raise
+    else:
+        shared.set_result(answer)
+        return answer
+    finally:
+        with _guard:
+            _running = None
 
 
 def _powershell() -> str | None:
@@ -57,6 +90,12 @@ def ask_windows(authorize_url: str) -> str:
         raise EfacturaError(LOGIN_CANCELLED, "No certificate was chosen.")
     if outcome == "failed":
         said = printed.get("error")
+        # ANAF's two answers to settings that are wrong: waiting does not help, the person
+        # has to correct a setting, and the window says so.
+        if isinstance(said, str) and "invalid_client" in said:
+            raise EfacturaError(CONFIG_ERROR, f"ANAF does not know the Client ID: {said}")
+        if isinstance(said, str) and "invalid_request" in said and "Redirect-URI" in said:
+            raise EfacturaError(CONFIG_ERROR, f"ANAF does not accept the callback address: {said}")
         raise EfacturaError(
             ANAF_ERROR,
             f"Windows could not log in to ANAF with the certificate: {said}"
@@ -84,11 +123,18 @@ def _run_helper(authorize_url: str) -> dict:
         return {"cancelled": True}  # subprocess.run has ended the helper itself
     except OSError as exc:
         return {"error": said_by(exc)}
-    lines = [line.strip() for line in done.stdout.decode("utf-8", errors="replace").splitlines() if line.strip()]
-    if not lines:
-        return {}
+    lines = _lines(done.stdout)
     try:
-        answer = json.loads(lines[-1])
+        answer = json.loads(lines[-1]) if lines else None
     except ValueError:
-        return {}
-    return answer if isinstance(answer, dict) else {}
+        answer = None
+    if isinstance(answer, dict):
+        return answer
+    # Nothing readable: a script Windows refuses to run says why only here, on standard error.
+    said = f"The helper ended with code {done.returncode}"
+    complaint = _lines(done.stderr)
+    return {"error": f"{said}: {complaint[0][:STDERR_SHOWN]}" if complaint else said}
+
+
+def _lines(output: bytes) -> list[str]:
+    return [line.strip() for line in output.decode("utf-8", errors="replace").splitlines() if line.strip()]

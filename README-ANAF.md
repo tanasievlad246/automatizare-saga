@@ -61,7 +61,7 @@ Aplicația apare în listă. **Dați clic pe rândul ei**: se afișează Grant T
 
 Atât: programul primește singur răspunsul de la ANAF.
 
-**Dacă butonul „Conectează-mă cu certificatul” lipsește sau nu merge**, alegeți **Conectare prin browser** și urmați cei trei pași din fereastră: se deschide pagina ANAF, alegeți certificatul și scrieți PIN-ul. Browserul arată apoi o pagină de eroare („nu se poate accesa pagina”). **Este normal.** Copiați toată adresa din bara de adrese și lipiți-o în program, **în cel mult un minut**. Butonul cu certificatul există doar pe Windows.
+**Dacă butonul „Conectează-mă cu certificatul” nu merge**, alegeți **Conectare prin browser**. Dacă butonul lipsește (el există doar pe Windows), fereastra arată direct pașii prin browser. Urmați cei trei pași: se deschide pagina ANAF, alegeți certificatul și scrieți PIN-ul. Browserul arată apoi o pagină de eroare („nu se poate accesa pagina”). **Este normal.** Copiați toată adresa din bara de adrese și lipiți-o în program, **în cel mult un minut**.
 
 După aceasta programul rămâne conectat și își reînnoiește singur accesul. Tokenul USB și PIN-ul sunt necesare din nou cam o dată pe an: cheia de acces ține 90 de zile, iar cea de reînnoire 365 de zile.
 
@@ -74,8 +74,8 @@ După aceasta programul rămâne conectat și își reînnoiește singur accesul
   2. Pe Windows, folosiți **Conectează-mă cu certificatul** din fereastra „Conectare la ANAF”. Programul cere certificatul direct de la Windows, fără browser.
   3. Dacă ANAF refuză și așa, apăsați **Încearcă din nou**. La o probă, a doua încercare a mers fără nicio altă schimbare.
   4. Dacă tot nu merge, intrați în SPV cu același certificat. Dacă nici acolo nu merge, problema este la certificat sau la token, nu la program.
-- **ANAF răspunde cu `invalid_client`.** Client ID-ul scris în program nu este cel dat de ANAF. Copiați-l din nou de la ANAF (Pasul 3) și scrieți-l în program (Pasul 4).
-- **ANAF răspunde cu `invalid_request` și cu textul „Redirect-URI … does not match”.** Callback URL de la ANAF diferă de adresa pe care o trimite programul, `https://localhost/callback`. Vedeți mai sus „Ați greșit Callback URL sau serviciul”.
+- **ANAF răspunde cu `invalid_client`.** Textul apare la „Detalii tehnice” în fereastra programului sau, la conectarea prin browser, pe pagina ANAF. Client ID-ul scris în program nu este cel dat de ANAF. Copiați-l din nou de la ANAF (Pasul 3) și scrieți-l în program (Pasul 4).
+- **ANAF răspunde cu `invalid_request` și cu textul „Redirect-URI … does not match”.** Apare în aceleași locuri. Callback URL de la ANAF diferă de adresa pe care o trimite programul, `https://localhost/callback`. Vedeți mai sus „Ați greșit Callback URL sau serviciul”.
 - **Ați lipit adresa prea târziu.** Codul din adresă ține cam un minut și merge o singură dată. Apăsați din nou **Conectați-vă la ANAF** și repetați Pasul 5.
 - **Aveți nevoie de ajutor de la ANAF.** Folosiți Formularul de contact de pe anaf.ro, categoria „Asistență tehnică servicii informatice”, subcategoria „OAUTH”.
 

@@ -20,7 +20,7 @@ try {
     $mine = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2Collection
     Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.HasPrivateKey -and $_.NotAfter -gt $now } | ForEach-Object { [void]$mine.Add($_) }
     $picked = [System.Security.Cryptography.X509Certificates.X509Certificate2UI]::SelectFromCollection(
-        $mine, 'AutoSaga', 'Alegeti certificatul cu care intrati in SPV.',
+        $mine, 'AutoSaga', ('Alege' + [char]0x021B + 'i certificatul cu care intra' + [char]0x021B + 'i ' + [char]0x00EE + 'n SPV.'),
         [System.Security.Cryptography.X509Certificates.X509SelectionFlag]::SingleSelection)
     if ($picked.Count -eq 0) { '{"cancelled": true}'; exit 0 }
     $certificate = $picked[0]

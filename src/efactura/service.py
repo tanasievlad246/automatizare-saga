@@ -29,6 +29,7 @@ from .classify import decide_by_rules, deciding_line, jev_request, read_jev_answ
 from .clients_file import read_client_rows
 from .config import MAX_DAYS, Config
 from .errors import (
+    ANAF_ERROR,
     BUSY,
     INTERNAL_ERROR,
     INVALID_CUI,
@@ -165,10 +166,24 @@ class Service:
         """Log in with the certificate Windows holds, with no browser and no pasted address.
 
         The program's lock is not held while Windows asks, which can take minutes;
-        login_finish takes it for the exchange."""
+        login_finish takes it for the exchange. A second request that comes while Windows is
+        being asked waits for that one and gets its answer."""
         if not certificate_login.available(self.cfg):
             raise EfacturaError(INVALID_INPUT, "Logging in with the Windows certificate is not available here.")
+        return certificate_login.one_at_a_time(self._certificate_login)
+
+    def _certificate_login(self) -> dict:
+        # A download in progress refuses the try now, not after the PIN has been typed.
+        with self._lock():
+            pass
         address = certificate_login.ask_windows(auth.authorize_url(self.cfg))
+        try:
+            auth.code_from_redirect(address)
+        except EfacturaError as exc:
+            if exc.code != INVALID_INPUT:
+                raise
+            # Nothing the person typed: ANAF ended the login on an address with no code.
+            raise EfacturaError(ANAF_ERROR, "ANAF ended the login on an address that holds no code.") from None
         return self.login_finish(address)
 
     # --- ANAF ---------------------------------------------------------------

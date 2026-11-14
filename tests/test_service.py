@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from efactura import auth
+from efactura import auth, certificate_login
 from efactura.auth import Tokens
 from efactura.config import load_config
 from efactura.errors import EfacturaError
@@ -80,7 +80,8 @@ def error_code(call):
 # --- login state -------------------------------------------------------------
 
 
-def test_status_without_a_saved_login(service):
+def test_status_without_a_saved_login(service, monkeypatch):
+    monkeypatch.setattr(certificate_login, "available", lambda cfg, system=None: False)  # any machine
     assert service.auth_status() == {
         "ok": True,
         "state": "needs_login",
@@ -88,7 +89,7 @@ def test_status_without_a_saved_login(service):
         "refresh_expires_at": None,
         "access_days_left": None,
         "refresh_days_left": None,
-        "certificate_login": False,  # not Windows, or no PowerShell: the test machine
+        "certificate_login": False,
     }
 
 

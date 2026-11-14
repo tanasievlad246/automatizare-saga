@@ -39,7 +39,7 @@ describe('what the ANAF login window shows', () => {
     expect(nextView(waiting(1), { type: 'giveUp' })).toEqual({ kind: 'certificate' })
   })
 
-  it('does not change for an answer that comes after the person gave up', () => {
+  it('does not change for a failure that comes after the person gave up', () => {
     const gaveUp = nextView(waiting(1), { type: 'giveUp' })
 
     expect(isWaitingFor(gaveUp, 1)).toBe(false)

@@ -1,6 +1,7 @@
 """Connecting to ANAF with the certificate Windows holds, without the browser."""
 
 import subprocess
+import threading
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -52,6 +53,34 @@ def test_what_the_helper_can_come_back_with(monkeypatch, printed, code):
         certificate_login.ask_windows(LOGIN)
 
     assert failed.value.code == code
+
+
+@pytest.mark.parametrize("said, mentions", [
+    ('(400) Bad Request. | {"error":"invalid_client","error_description":"Invalid client_id abc"}', "Client ID"),
+    ('(400) Bad Request. | {"error":"invalid_request","error_description":"Redirect-URI (https://x) does not match with client app configuration."}', "callback"),
+])
+def test_a_wrong_client_id_or_callback_is_a_settings_problem(journaled, monkeypatch, said, mentions):
+    monkeypatch.setattr(certificate_login, "_run_helper", lambda url: {"error": said})
+
+    with pytest.raises(EfacturaError) as failed:
+        certificate_login.ask_windows(LOGIN)
+
+    assert failed.value.code == "config_error"
+    assert mentions.lower() in failed.value.message.lower()
+    assert said in failed.value.message
+    assert _asked(journaled)[0]["data"]["outcome"] == "failed"
+
+
+@pytest.mark.parametrize("said", [
+    "invalid_request without the other part", "Redirect-URI alone", "(500) Server Error.",
+])
+def test_any_other_helper_error_stays_an_anaf_error(monkeypatch, said):
+    monkeypatch.setattr(certificate_login, "_run_helper", lambda url: {"error": said})
+
+    with pytest.raises(EfacturaError) as failed:
+        certificate_login.ask_windows(LOGIN)
+
+    assert failed.value.code == "anaf_error"
 
 
 def test_anafs_own_words_reach_whoever_helps(monkeypatch):
@@ -113,12 +142,39 @@ def test_an_ampersand_printed_as_a_json_escape_comes_back_as_an_ampersand(monkey
 
 
 @pytest.mark.parametrize("printed", [b"", b"\r\n\r\n", b"not json at all", b"[]", b'"x"', b"12"])
-def test_nothing_usable_printed_gives_an_empty_answer(monkeypatch, printed):
-    assert _helper_printing(monkeypatch, printed) == {}
+def test_nothing_usable_printed_says_how_the_helper_ended(monkeypatch, printed):
+    assert _helper_printing(monkeypatch, printed) == {"error": "The helper ended with code 0"}
+
+
+def test_what_the_helper_said_on_standard_error_is_kept(monkeypatch):
+    refused = b"\r\n  File C:\\x\\certificate_login.ps1 cannot be loaded because running scripts is disabled.\r\nmore\r\n"
+
+    def run(command, **how):
+        return subprocess.CompletedProcess(command, 1, stdout=b"", stderr=refused)
+
+    monkeypatch.setattr(certificate_login.subprocess, "run", run)
+    monkeypatch.setattr(certificate_login, "_powershell", lambda: "powershell.exe")
+
+    said = certificate_login._run_helper(LOGIN)["error"]
+
+    assert said.startswith("The helper ended with code 1: File C:")
+    assert "running scripts is disabled." in said and "more" not in said
+
+
+def test_a_long_line_on_standard_error_is_cut(monkeypatch):
+    def run(command, **how):
+        return subprocess.CompletedProcess(command, 1, stdout=b"", stderr=b"x" * 1000)
+
+    monkeypatch.setattr(certificate_login.subprocess, "run", run)
+    monkeypatch.setattr(certificate_login, "_powershell", lambda: "powershell.exe")
+
+    said = certificate_login._run_helper(LOGIN)["error"]
+
+    assert said == "The helper ended with code 1: " + "x" * 300
 
 
 def test_output_that_is_not_utf8_raises_nothing(monkeypatch):
-    assert _helper_printing(monkeypatch, b'\xff\xfe junk\r\n{"cancelled": true}\xff\r\n') == {}
+    assert "error" in _helper_printing(monkeypatch, b'\xff\xfe junk\r\n{"cancelled": true}\xff\r\n')
     assert _helper_printing(monkeypatch, b'\xff\r\n{"cancelled": true}\r\n') == {"cancelled": True}
 
 
@@ -254,6 +310,14 @@ def test_the_helper_file_is_beside_the_module_and_plain():
         assert word not in text
 
 
+def test_the_sentence_in_windows_window_is_written_with_its_diacritics():
+    # The file stays ASCII, so the letters are built from their code points.
+    text = certificate_login.HELPER.read_text(encoding="ascii")
+
+    assert "[char]0x021B" in text and "[char]0x00EE" in text
+    assert "Alegeti" not in text
+
+
 # --- the service and the route -------------------------------------------------------------------
 
 
@@ -372,3 +436,127 @@ def test_neither_the_address_nor_the_code_is_kept_anywhere(service, cfg, monkeyp
     written += cfg.log_path.read_text(encoding="utf-8")
     assert "good-code" not in written
     assert "localhost/callback" not in written
+
+
+def test_a_try_that_ends_on_an_address_with_no_code_is_anafs_fault(service, cfg, monkeypatch):
+    _windows_answers(monkeypatch, "https://localhost/callback")
+
+    with pytest.raises(EfacturaError) as failed:
+        service.login_with_certificate()
+
+    assert failed.value.code == "anaf_error"
+    assert "no code" in failed.value.message
+    assert auth.load_tokens(cfg.token_file) is None
+
+
+def test_a_download_in_progress_refuses_the_try_before_windows_is_asked(service, monkeypatch):
+    asked = _windows_answers(monkeypatch, ENDED_ON)
+
+    with service._lock():
+        with pytest.raises(EfacturaError) as failed:
+            service.login_with_certificate()
+
+    assert failed.value.code == "busy"
+    assert asked == []
+
+
+def test_the_programs_lock_is_free_while_windows_is_asked(service, monkeypatch):
+    held = []
+
+    def ask(url):
+        with service._lock():  # raises busy if the wait held it
+            held.append(True)
+        return ENDED_ON
+
+    monkeypatch.setattr(certificate_login, "ask_windows", ask)
+
+    service.login_with_certificate()
+
+    assert held == [True]
+
+
+def test_a_failed_try_leaves_the_address_in_neither_the_journal_nor_the_log(api, cfg, monkeypatch):
+    import sqlite3
+
+    said = 'Cannot convert value "' + LOGIN + '" to type System.Uri.'
+    monkeypatch.setattr(certificate_login, "_run_helper", lambda url: {"error": said})
+
+    reply = api.post("/auth/login/certificate", headers=KEY)
+
+    assert reply.status_code == 502
+    with sqlite3.connect(cfg.db_path) as database:
+        written = " ".join(" ".join(str(value) for value in row) for row in database.execute("SELECT * FROM events"))
+    written += cfg.log_path.read_text(encoding="utf-8")
+    assert LOGIN not in written and "logincert.anaf.ro/anaf-oauth2" not in written
+
+
+# --- one helper at a time ------------------------------------------------------------------------
+
+
+def _two_calls(service, monkeypatch, outcome):
+    """Starts a first call that stops inside Windows' question, then a second one, and
+    hands back what each came back with once the question is answered."""
+    inside, answer, entered, results = threading.Event(), threading.Event(), [], {}
+
+    def ask(url):
+        entered.append(url)
+        inside.set()
+        assert answer.wait(5)
+        return outcome()
+
+    monkeypatch.setattr(certificate_login, "ask_windows", ask)
+
+    def call(name):
+        try:
+            results[name] = service.login_with_certificate()
+        except EfacturaError as error:
+            results[name] = error
+
+    first = threading.Thread(target=call, args=("first",))
+    first.start()
+    assert inside.wait(5)
+    second = threading.Thread(target=call, args=("second",))
+    second.start()
+    # The second call is waiting on the first when it holds _running's future and no other
+    # helper has been entered.
+    return first, second, answer, entered, results
+
+
+def _finish(first, second, answer):
+    answer.set()
+    first.join(5)
+    second.join(5)
+    assert not first.is_alive() and not second.is_alive()
+
+
+def test_a_second_request_waits_for_the_first_and_gets_its_answer(service, monkeypatch):
+    first, second, answer, entered, results = _two_calls(service, monkeypatch, lambda: ENDED_ON)
+    try:
+        assert len(entered) == 1
+    finally:
+        _finish(first, second, answer)
+
+    assert len(entered) == 1
+    assert results["first"]["state"] == "valid" and results["second"] == results["first"]
+    assert certificate_login._running is None
+
+
+def test_a_second_request_gets_the_same_error(service, monkeypatch):
+    def refuse():
+        raise EfacturaError("login_cancelled", "No certificate was chosen.")
+
+    first, second, answer, entered, results = _two_calls(service, monkeypatch, refuse)
+    _finish(first, second, answer)
+
+    assert len(entered) == 1
+    assert [results[name].code for name in ("first", "second")] == ["login_cancelled", "login_cancelled"]
+    assert certificate_login._running is None
+
+
+def test_after_a_run_has_ended_a_new_call_starts_a_new_one(service, monkeypatch):
+    asked = _windows_answers(monkeypatch, ENDED_ON)
+
+    service.login_with_certificate()
+    service.login_with_certificate()
+
+    assert len(asked) == 2 and certificate_login._running is None
