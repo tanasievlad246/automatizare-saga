@@ -11,18 +11,14 @@ so the screens show what the real program would produce.
 from __future__ import annotations
 
 import shutil
-import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT / "tests"))  # the stand-ins and invoice builders live with the tests
-
-from helpers import FakeAnaf, FakeOpenRouter, line, rich_invoice_xml  # noqa: E402
-
-from efactura import auth  # noqa: E402
-from efactura.config import load_config  # noqa: E402
-from efactura.service import Service  # noqa: E402
+from efactura import auth
+from efactura.config import load_config
+from efactura.service import Service
+from efactura.standins import FakeAnaf, FakeOpenRouter, line, rich_invoice_xml
 
 DEMO = PROJECT / "demo"
 CONFIG = """\
