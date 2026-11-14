@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { ErrorNotice } from '@/components/ErrorNotice'
 import { PageTitle } from '@/components/PageTitle'
@@ -17,14 +17,15 @@ export function RuleTestPage() {
   const clients = useQuery({ queryKey: ['clients'], queryFn: api.clients }).data?.clients ?? []
   const [trial, setTrial] = useState<TrialInvoice>(EXAMPLES.materiale)
   const [choosing, setChoosing] = useState(false)
-  const [answer, setAnswer] = useState<{ result: RuleTestResult; ask: TrialAsk } | null>(null)
+  const [answer, setAnswer] = useState<{ result: RuleTestResult; ask: TrialAsk; number: number } | null>(null)
+  const answers = useRef(0)
   // The proposed rule of one answer is hidden by "Nu acum" or once its rule exists; the next answer brings its own.
   const [proposalHidden, setProposalHidden] = useState(false)
 
   const ask = useMutation({
     mutationFn: (how: TrialAsk) => api.testRules(toRequest(trial, how)),
     onSuccess: (result, how) => {
-      setAnswer({ result, ask: how })
+      setAnswer({ result, ask: how, number: ++answers.current })
       setProposalHidden(false)
     },
   })
@@ -63,7 +64,11 @@ export function RuleTestPage() {
             onChange={setTrial}
             clients={clients}
             asking={ask.isPending ? ask.variables : null}
-            onAsk={(how) => ask.mutate(how)}
+            onAsk={(how) => {
+              // Nothing of an earlier trial stays on screen while this one is awaited or after it fails.
+              setAnswer(null)
+              ask.mutate(how)
+            }}
             onStartFrom={startFrom}
           />
           {ask.error && <ErrorNotice error={ask.error} />}
@@ -73,6 +78,9 @@ export function RuleTestPage() {
             <TrialAnswer result={answer.result} ask={answer.ask} />
             {suggestion && !proposalHidden && (
               <ProposedRuleCardBody
+                // The card keeps what the person chose (words ticked, what it looks for) in its own
+                // state, started from the suggestion. A new answer must start it afresh, not inherit those.
+                key={answer.number}
                 suggestion={suggestion}
                 chosenBy={answer.result.decided_by === 'jev' ? 'jev' : undefined}
                 onNotNow={() => setProposalHidden(true)}
