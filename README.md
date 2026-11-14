@@ -317,6 +317,7 @@ Failure (from any command):
 |---|---|
 | `login_needed` | No saved login, or ANAF no longer accepts it. |
 | `login_code_expired` | The pasted address was too old or already used. Repeat the login. |
+| `login_refused` | ANAF did not accept the certificate (`error=access_denied`). Waiting does not help: check the certificate and the token, then log in again. |
 | `invalid_cui` | Not a CUI, or the check digit does not match. |
 | `invalid_input` | A wrong or missing argument. |
 | `no_spv_rights` | The certificate holder has no SPV rights for that company. |
