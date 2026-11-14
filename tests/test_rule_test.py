@@ -149,6 +149,9 @@ def test_nothing_is_saved_but_the_cost(desk, cfg):
         assert (costs["calls"], costs["invoices"]) == (1, 0) and costs["cost_usd"] == pytest.approx(0.00002)
     (call,) = desk.jev_calls()["calls"]
     assert (call["message_id"], call["cui"], call["choice"]) == (RULE_TEST, VALID_CUI, "302")
+    # The list for that client has it too, as "Costuri Jev" shows it under a client filter.
+    (for_client,) = desk.jev_calls(cui=VALID_CUI)["calls"]
+    assert (for_client["message_id"], for_client["cost_usd"]) == (RULE_TEST, pytest.approx(0.00002))
 
 
 def test_a_trial_is_in_the_total_but_not_in_the_average_per_invoice(desk, cfg):
