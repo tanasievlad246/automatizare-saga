@@ -264,7 +264,7 @@ A window lists the certificates; pick the one used for SPV. The script prints on
 - `{"cancelled": true}`: the window was closed without a choice.
 - `{"error": "..."}`: the script could not finish; the text says why.
 
-Windows PowerShell 5.1 writes each `&` inside the address as `&`. Replace every `&` with `&` before pasting the address into the program.
+Windows PowerShell 5.1 writes each `&` inside the address as `\u0026`. Replace every `\u0026` with `&` before pasting the address into the program.
 
 The script is run from the program's own folder, so no installation step is needed. It was written without being run on a Windows PC.
 
