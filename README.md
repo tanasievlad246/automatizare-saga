@@ -79,7 +79,7 @@ What an update does: it stops the program, copies the database, moves the folder
 - A copy of the database is written to `data\backups\` before each update, named after the release being left and the time. The last three are kept. These are apart from the [backups](#backups) in the folder chosen on screen.
 - A newer release may add columns to the database when it first opens it; nothing is removed.
 
-Only a copy made by `install.ps1` can be updated this way: a folder standing on a release tag. A development checkout on a branch is refused, and the page shows no update button there. Every tag counts as a release, and the highest version is the newest.
+Only a copy made by `install.ps1` can be updated this way: a folder standing on a release tag. A development checkout on a branch is refused, and the page shows no update button there; it looks for the newest release only when "Caută o versiune nouă" is pressed, never by itself, so opening its page (or the demo's) does not wait on the remote. Every tag counts as a release, and the highest version is the newest.
 
 How the last update ended is kept in `data\last-update.json`, and what it printed in `data\update.log`.
 
@@ -196,11 +196,11 @@ pnpm --dir frontend build
 uv run efactura demo
 ```
 
-Then open the address it prints. A top-bar label, "Date de probă", says the data is made up. Add `--fresh` to throw away what was done in it and build it again, or `--port N` to use another port.
+Then open the address it prints. A top-bar label, "Date de probă", says the data is made up. Add `--fresh` to throw away what was done in it and build it again (stop a demo that is running first: on Windows its folder cannot be deleted while it is in use, and `--fresh` then says so), or `--port N` to use another port.
 
 What works: each download brings one or two made-up invoices; the ANAF login is finished by pasting the address the browser ends on; Jev answers from a table of words, and a line with "nimic" or "eroare" in it makes him decline or fail, so both can be seen. What is not covered: program updates and the Windows certificate login.
 
-It cannot touch real data: it uses only its own `demo/` folder, which the program starts on only because of a marker file made in it, its settings say it is a demo, and it listens on port 8770, not the usual one. It needs `uv`; `pnpm` is needed only to change the page (without it, the built page is served).
+It cannot touch real data: it uses only its own `demo/` folder, which the program starts on only because of a marker file made in it, its settings say it is a demo, and it listens on port 8770, not the usual one. On settings that say demo, every part of the program talks to the stand-ins for ANAF and Jev, never to the real ones. It needs `uv`; `pnpm` is needed only to change the page (without it, the built page is served).
 
 ## Commands
 
@@ -376,7 +376,7 @@ Routes that exist for the screen and have no command:
 | `GET /rules`, `POST /rules`, `PUT /rules/{id}`, `DELETE /rules/{id}`, `POST /rules/{id}/move` | The classification rules |
 | `GET /rules/suggestions` | Rules proposed from the decisions of the last 90 days that no rule made: for each, the account, the `keywords` or `supplier_cuis` to look for, the invoices behind it, and how it would have done (`matches`, `by_cont`) |
 | `POST /rules/preview` with `{"keywords": [...], "supplier_cuis": [...], "client_cui": ...}` (all optional, as are `item_codes` and `commodity_prefixes`) | How a rule with these conditions would have done on the invoices given an account in the last 90 days. Saves nothing |
-| `POST /rules/test` with `{"lines": [{"description", "quantity", "unit_price", ...}], "supplier_name", "supplier_cui", "client_cui", "currency", "credit_note", "ask": "rules_then_jev" or "jev_only"}` (only `lines` is required) | Put a made-up invoice through the same path as a received one: the rules, then Jev. Answers who decided (`rule`, `jev` or `nobody`), the account, why nobody did, and the rule worth creating. Saves nothing but the cost of asking Jev, which counts in the costs but not as an invoice |
+| `POST /rules/test` with `{"lines": [{"description", "quantity", "unit_price", ...}], "supplier_name", "supplier_cui", "client_cui", "currency", "credit_note", "ask": "rules_then_jev" or "jev_only"}` (only `lines` is required, and in a line only `description`; a line may also carry `seller_code`, `barcode`, `commodity_codes`, `unit`, `vat_percent` and `value`, its value without VAT, which is quantity × price when missing) | Put a made-up invoice through the same path as a received one: the rules, then Jev. Answers who decided (`rule`, `jev` or `nobody`), the account, why nobody did, what Jev said (`jev`: its choice, confidence, the level, the other accounts it weighed, cost, duration, error, and `http_status`, OpenRouter's answer, `null` when it was not reached), and the rule worth creating. Saves nothing but the cost of asking Jev, which counts in the costs but not as an invoice |
 | `POST /rules/suggestions/dismiss` with `{"invoice_ids": [...]}` | "Nu acum": stop proposing a rule for these invoices |
 | `PUT /accounts/{cont}` with `{"description"}`, `DELETE /accounts/{cont}` | The accounts Jev chooses from |
 | `PUT /classification/settings` with `{"min_confidence", "jev_instructions"}` | The confidence level and the question for Jev |
@@ -399,18 +399,22 @@ The body is the same JSON the command prints. Every answer carries an `X-Trace-I
 
 ## Testing the rules
 
-The button "Testează regulile" on "Reguli de clasificare" opens a screen of its own (`#/reguli/test`), with a link back to the rules. On it a person writes a trial invoice (an optional client, the supplier's name and CUI, and lines with description, quantity and price without VAT; each line can also carry codes) or starts from an empty one, a saved invoice of the chosen client, or one of two examples. A trial started from a saved invoice keeps that invoice's units, VAT rates and currency, without showing them, so that an unchanged trial puts the same question to Jev as the real invoice did.
+The button "Testează regulile" on "Reguli de clasificare" opens a screen of its own (`#/reguli/test`), with a link back to the rules. On it a person writes a trial invoice (an optional client, the supplier's name and CUI, and lines with description, quantity and price without VAT; each line can also carry codes) or starts from an empty one, a saved invoice of the chosen client, or one of two examples.
+
+A blank quantity counts as 1 and a blank price as 0, so a line with a description alone is enough to try a rule on a word. Numbers are read as they are written in Romanian: spaces between the digits are dropped ("12 000"), and when there is a comma it is the decimal point and the dots group thousands ("1.234,50" is 1234.50); without a comma a dot is the decimal point ("28.50"). The program reads them the same way when another program calls the route. A number that still cannot be read is refused, and the screen says how numbers are written.
+
+A trial started from a saved invoice is that invoice: each line's codes (supplier's code, barcode, CPV or NC codes) are filled in and shown, and the codes open by themselves; each line's unit code, VAT rate and value, and the invoice's currency and kind (invoice or credit note), are kept without being shown. The value is kept because it is not always quantity × price (a line discount, a price per several units), and the line with the largest value is the one the rules read. Changing a line's quantity or price drops its kept value. So an unchanged trial puts the same question to the rules and to Jev as the real invoice did.
 
 Two buttons answer:
 
 - **"Vezi ce cont primește"** does what the program does with a real invoice: the rules first, and Jev is asked only if no rule fits.
 - **"Întreabă-l direct pe Jev"** skips the rules and asks Jev.
 
-The answer says who decided (a rule, Jev, or nobody could be asked), the account, how sure Jev is against the confidence level, and the rule worth creating, shown as the card an invoice's screen shows. With the second button on an invoice that a rule already fits, no rule is proposed.
+The answer says who decided (a rule, Jev, or nobody could be asked), the account, how sure Jev is against the confidence level, and the rule worth creating, shown as the card an invoice's screen shows; the card goes once its rule is made, by either of its buttons. With the second button on an invoice that a rule already fits, no rule is proposed. When OpenRouter refuses the question (HTTP 401, 402 or 403), the screen says to check the OpenRouter key and the credit, not to try again later.
 
 **What is saved.** No invoice, no SAGA file, no proposed rule. Only each call to Jev is written, in the table of Jev calls, with the marker `rule-test` in place of an invoice id (and the client's CUI if one was chosen). So its cost is in the total of "Costuri Jev", where the list shows it as "Probă de reguli"; it is not counted as an invoice and is left out of the average cost per invoice. One line, `rule.tested`, goes to the journal. Jev is asked once, with no second attempt, so a failure is seen at once.
 
-**Limits.** At most 50 lines, and 500 characters in a description; more is refused as bad input.
+**Limits.** At most 50 lines, 500 characters in a description, and numbers of at most 15 digits before the decimal point and 20 after it; more is refused as bad input.
 
 **Route.** `POST /rules/test`, see [Local API](#local-api).
 
