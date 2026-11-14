@@ -449,3 +449,55 @@ def test_a_folder_that_is_not_a_clone_says_so(tmp_path):
 
 def test_an_installed_copy_has_no_reason_not_to_update(installed):
     assert update.status(installed.cfg, project=installed.project, now=NOW)["why_not_kind"] is None
+
+
+# --- started through efactura.exe on Windows ---------------------------------------------------
+
+
+@pytest.mark.parametrize("system, started_as, through_it", [
+    # `uv run efactura …` and efactura.exe: Python is handed the .exe itself as the script.
+    ("nt", r"C:\Users\Maria\AppData\Local\AutoSaga\.venv\Scripts\efactura.exe", True),
+    ("nt", r"C:\Users\Maria\AppData\Local\AutoSaga\.venv\Scripts\efactura", True),
+    # `python -m efactura …`: what update.bat, the shortcuts and the page's button use.
+    ("nt", r"C:\Users\Maria\AppData\Local\AutoSaga\src\efactura\__main__.py", False),
+    # Elsewhere a program that is running can be replaced.
+    ("posix", "/home/maria/AutoSaga/.venv/bin/efactura", False),
+])
+def test_whether_the_program_was_started_through_its_launcher(system, started_as, through_it):
+    assert cli.started_through_the_launcher(system, started_as) is through_it
+
+
+def test_on_windows_an_update_started_through_efactura_exe_is_refused_before_anything_is_touched(
+    installed, computer, monkeypatch, capsys,
+):
+    # The update has to replace efactura.exe, and Windows does not replace a program that runs.
+    monkeypatch.setattr(update, "PROJECT", installed.project)
+    monkeypatch.setattr(cli, "started_through_the_launcher", lambda: True)
+    installed.release("0.2.0")
+    computer.answer = HEALTHY
+    config = str(installed.project / "config.toml")
+
+    ended = cli.main(["--config", config, "update"])
+    said = json.loads(capsys.readouterr().out)
+
+    assert (ended, said["ok"], said["error"]["code"]) == (1, False, "update_error")
+    assert "update.bat" in said["error"]["message"] and "python.exe -m efactura update" in said["error"]["message"]
+    assert held(installed) == "v0.1.0" and computer.asked_to_stop == []  # nothing stopped, nothing switched
+    assert update.status(installed.cfg, project=installed.project, now=NOW)["last_update"] is None
+
+
+def test_looking_for_a_release_is_fine_through_efactura_exe(installed, monkeypatch, capsys):
+    monkeypatch.setattr(update, "PROJECT", installed.project)
+    monkeypatch.setattr(cli, "started_through_the_launcher", lambda: True)
+    installed.release("0.2.0")
+
+    ended = cli.main(["--config", str(installed.project / "config.toml"), "update", "--check"])
+
+    assert (ended, json.loads(capsys.readouterr().out)["update_available"]) == (0, True)
+
+
+def test_update_bat_starts_the_update_through_python_not_through_efactura_exe():
+    script = (update.PROJECT / "update.bat").read_text(encoding="ascii")
+
+    assert r'"%~dp0.venv\Scripts\python.exe" -m efactura' in script and " update" in script
+    assert "uv run" not in script and "efactura.exe" not in [line for line in script.splitlines() if not line.startswith("rem")]

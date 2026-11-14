@@ -12,7 +12,7 @@ import subprocess
 import sys
 import threading
 import webbrowser
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from . import __version__, backup, background, demo, journal, update
 from .anaf import TYPE_PREFIXES
@@ -23,6 +23,7 @@ from .errors import (
     INVALID_INPUT,
     LOGIN_CODE_EXPIRED,
     LOGIN_NEEDED,
+    UPDATE_ERROR,
     EfacturaError,
 )
 from .service import COST_GROUPS, STATUSES, Service, configure_logging
@@ -49,6 +50,17 @@ PAGE_PATH = "/ui/"
 DEV_PAGE_PORT = 5173  # Vite's dev server, see frontend/vite.config.ts
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 OPEN_DELAY = 1.5  # seconds: the server has to be listening before the browser asks
+
+
+def started_through_the_launcher(system: str | None = None, started_as: str | None = None) -> bool:
+    """On Windows, was this started through efactura.exe (which `uv run efactura` does too)
+    and not as `python -m efactura`?
+
+    The launcher hands Python the .exe itself as the script to run, so the file is in use for
+    as long as the command lasts. Started as a module, the script is `__main__.py`."""
+    system = os.name if system is None else system
+    started_as = sys.argv[0] if started_as is None else started_as
+    return system == "nt" and PureWindowsPath(started_as).name.lower() != "__main__.py"
 
 
 # The functions below are replaced in tests.
@@ -317,7 +329,20 @@ def _dispatch(args: argparse.Namespace, cfg: Config, config_path: Path) -> dict 
         case "restore":
             return backup.restore(cfg, args.name)
         case "update":
-            return update.status(cfg, check=True) if args.check else update.update(cfg)
+            if args.check:
+                return update.status(cfg, check=True)
+            if started_through_the_launcher():
+                # Said here, before the program is stopped or a file is switched: left to run,
+                # the update fails halfway, on "Access is denied" removing efactura.exe.
+                raise EfacturaError(
+                    UPDATE_ERROR,
+                    "On Windows the update cannot be started through efactura.exe (or `uv run efactura`): "
+                    "it has to replace that file, and Windows does not replace a program that is running. "
+                    "Nothing was changed. Run update.bat in the program's folder, or: "
+                    ".venv\\Scripts\\python.exe -m efactura update. "
+                    'On the page, "Actualizează programul" does the same.',
+                )
+            return update.update(cfg)
 
     if args.command in ("serve", "dev"):
         cfg.require_api_key()

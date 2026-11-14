@@ -68,7 +68,9 @@ Then, on the page: fill in the ANAF client ID and secret and the OpenRouter key 
 An installed copy updates itself to the newest release, from the page or from the terminal:
 
 - **On the page:** when a newer release exists, a notice appears on top of every screen with the button "Actualizează programul". The foot of the menu shows the installed version and "Caută o versiune nouă", which looks at once. Otherwise the program looks at most every twelve hours.
-- **In the terminal:** `efactura update` updates, `efactura update --check` only says whether a newer release exists.
+- **In the terminal, on Windows:** `update.bat` in the program's folder (a double click works too), or `.venv\Scripts\python.exe -m efactura update`. Not `uv run efactura update`: that starts the program through `efactura.exe`, the update has to replace that very file, and Windows does not replace a program that is running. Started that way the update is refused at once, before anything is stopped, and says which command to use.
+- **In the terminal, on macOS and Linux:** `uv run efactura update`.
+- `efactura update --check` only says whether a newer release exists, however it is started.
 
 What an update does: it stops the program, copies the database, moves the folder to the newest release tag, installs that release's dependencies and starts the program again. If any step fails, the folder goes back to the release it had and the program is started again on that one.
 
@@ -230,7 +232,7 @@ Run them from this folder. Use `--config PATH` before the command if `config.tom
 | `uv run efactura start` | Runs the program in the background, without a window, unless it already runs. What it prints goes to `data/server.log`. |
 | `uv run efactura open` | `start`, then opens the page in the browser. This is what the Desktop shortcut runs. |
 | `uv run efactura stop` | Stops the program running in the background. |
-| `uv run efactura update [--check]` | Moves an installed copy to the newest release, keeping `config.toml` and the data; `--check` only reports. See [Updating](#updating). |
+| `uv run efactura update [--check]` | Moves an installed copy to the newest release, keeping `config.toml` and the data; `--check` only reports. On Windows, update with `update.bat` instead. See [Updating](#updating). |
 | `uv run efactura backup` | Makes a copy of the database now, in the folder chosen on screen. See [Backups](#backups). |
 | `uv run efactura restore <file name or whole path>` | Replaces the database with that copy: stops the program, keeps the database as it is, puts the chosen one in place, starts the program again. A file name is looked for in the backup folder; a whole path works even when the database cannot be read. |
 
@@ -606,7 +608,7 @@ For the installer:
 - **Starting without a window** (`start`, `open`, the two shortcuts) uses Windows-only process flags that could not be tried on a Mac. The same commands start and stop the program correctly on macOS. If the background start fails on Windows, `start.bat` still works.
 - **The port** is chosen at install time: 8765, or the next free one. If another program takes it later, the program will not start; change `[api] port` in `config.toml`. A double click on the Desktop shortcut then shows the reason in a message box.
 - **First run on Windows, 2026-11-14:** `install.ps1` ran as far as starting the program, which then reported the port as taken, for port 80 and for a free port alike. The cause was this program's own check: Windows takes about two seconds to refuse a connection to a port nobody listens on, and that wait was read as another program holding the port. Fixed in 0.1.1; the start itself is still to be confirmed.
-- **Updating from the page or with `efactura update`** was run for real on macOS (page button and terminal, with a running program, the database kept and copied). On Windows it has not been run: files in use there cannot be replaced, so if installing the new release's dependencies fails, the update goes back to the old release and says so; running `install.ps1` again remains the fallback.
+- **Updating from the page or with `efactura update`** was run for real on macOS (page button and terminal, with a running program, the database kept and copied). On Windows, `uv run efactura update` was tried on 2026-11-14, from 0.2.0 to 0.4.0, and failed on "Access is denied" removing `efactura.exe`: the command ran through the file it had to replace. From 0.4.1 that way of starting it is refused at once, and `update.bat` and the page's button start the update through Python. Neither of those two has been confirmed on Windows yet; running `install.ps1` again remains the fallback, and that one has updated a copy there.
 - **`winget`** is needed only when Git is missing; on a Windows without it the script stops and names the Git download page.
 
 For backups and the journal:
