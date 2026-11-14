@@ -18,6 +18,9 @@ DEFAULT_PORT = 8765
 # model's probabilities and would lose its meaning if the model changed underneath it.
 DEFAULT_JEV_MODEL = "typesafe/jev-1.14"
 SAGA_IMPORT_FOLDER = "SAGA Import"
+# Put in the data folder by `efactura demo`. Settings asking for the demo are accepted only
+# over a folder that holds it, so made-up invoices never land among real ones.
+DEMO_MARKER = "demo-data"
 # The name the page is opened under. Browsers open any name ending in .localhost on this
 # computer by themselves, and treat it as they treat localhost; nothing has to be set up.
 PAGE_HOSTNAME = "autosaga.localhost"
@@ -43,6 +46,7 @@ class Config:
     jev_model: str = DEFAULT_JEV_MODEL
     saga_import_dir: Path | None = None  # None: "SAGA Import" inside the data folder
     path: Path | None = None  # the settings file these were read from
+    demo: bool = False  # made-up data and stand-ins for ANAF and Jev; see demo.py
 
     @property
     def saga_dir(self) -> Path:
@@ -162,6 +166,13 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
     openrouter = raw.get("openrouter", {})
     data_dir = _beside(config_path, str(storage.get("data_dir", "data")))
     saga_dir = raw.get("saga", {}).get("import_dir")
+    demo = raw.get("demo", {}).get("enabled", False) is True
+    if demo and not (data_dir / DEMO_MARKER).is_file():
+        raise EfacturaError(
+            CONFIG_ERROR,
+            f"{config_path} asks for the demo, but the data folder {data_dir} was not made by "
+            "`efactura demo`. Remove the [demo] section, or run `efactura demo` to make a demo.",
+        )
 
     return Config(
         client_id=str(anaf.get("client_id", "")).strip(),
@@ -182,4 +193,5 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
             _beside(config_path, str(saga_dir)) if saga_dir else data_dir / SAGA_IMPORT_FOLDER
         ),
         path=config_path,
+        demo=demo,
     )
