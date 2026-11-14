@@ -161,13 +161,13 @@ The page opens at `http://autosaga.localhost:8765/ui/`. `http://127.0.0.1:8765/u
 | **Clienți** | Import clients from Excel or CSV, add one by hand, download invoices for one client or all (the last 1 to 30 days, or two dates). Shows how many invoices are new and how many wait for an account |
 | **A client's invoices** | New, to check, not yet in SAGA, all. One button marks the ready ones as imported in SAGA |
 | **One invoice** | The invoice as a person reads it, ANAF's XML, the SAGA XML; its account and who chose it; accept Jev's proposal or pick another; a rule proposed from it when no rule decided it; the path of the SAGA file |
-| **Reguli de clasificare** | Rules proposed from recent decisions, the rules, the accounts Jev chooses from, how sure Jev must be, the question Jev is asked |
+| **Reguli de clasificare** | Rules proposed from recent decisions, the rules, the accounts Jev chooses from, how sure Jev must be, the question Jev is asked. The button "Testează regulile" opens the rule test, see [Testing the rules](#testing-the-rules) |
 | **Costuri Jev** | Cost between two dates, by day, week, month or year, and every invoice Jev classified |
 | **Copii de siguranță** | The folder for the copies of the database, when the last one was made and when the next is due, "Fă o copie acum", and the copies kept, each with "Restaurează". See [Backups](#backups) |
 | **Jurnal** | What the program did, line by line: everything or only the problems, by area, period or a word; one line opens to its technical details and to the whole operation it belongs to. See [The journal](#the-journal) |
 | **Chei și parole** | The OpenRouter key and ANAF client details (hidden until asked for, changeable), and when the ANAF login expires |
 
-On every screen, a notice appears on top when a newer release of the program exists, and the foot of the menu shows the installed version; see [Updating](#updating).
+On every screen, a notice appears on top when a newer release of the program exists; see [Updating](#updating). The foot of the menu, under the last entry, holds three things: the installed version ("AutoSaga 0.4.0"), the button "Caută o versiune nouă" (always there, also on a development copy; it says what it found, and when a newer release exists it offers "Actualizează programul"), and the author line, "© 2026 Tanasie Vlad-Cristian" with a `mailto:` link to the address. The author line is written in the page's code, not read from the settings.
 
 On every screen, the top bar holds the name, the **folder for SAGA** and the **ANAF connection**:
 
@@ -394,6 +394,23 @@ Routes that exist for the screen and have no command:
 
 The body is the same JSON the command prints. Every answer carries an `X-Trace-Id` header: the number under which the journal holds what that request did. HTTP status: 200 success; 400 bad input; 401 missing or wrong key; 404 unknown id or route; 409 `login_needed`, `login_code_expired`, `login_refused`, `busy`, `not_classifiable`, `update_error` or `backup_error`; 502 ANAF or OpenRouter refused or was unreachable; 500 a bug or a settings problem.
 
+## Testing the rules
+
+The button "Testează regulile" on "Reguli de clasificare" opens a screen of its own (`#/reguli/test`), with a link back to the rules. On it a person writes a trial invoice (an optional client, the supplier's name and CUI, and lines with description, quantity and price without VAT; each line can also carry codes) or starts from an empty one, a saved invoice of the chosen client, or one of two examples. A trial started from a saved invoice keeps that invoice's units, VAT rates and currency, without showing them, so that an unchanged trial puts the same question to Jev as the real invoice did.
+
+Two buttons answer:
+
+- **"Vezi ce cont primește"** does what the program does with a real invoice: the rules first, and Jev is asked only if no rule fits.
+- **"Întreabă-l direct pe Jev"** skips the rules and asks Jev.
+
+The answer says who decided (a rule, Jev, or nobody could be asked), the account, how sure Jev is against the confidence level, and the rule worth creating, shown as the card an invoice's screen shows. With the second button on an invoice that a rule already fits, no rule is proposed.
+
+**What is saved.** No invoice, no SAGA file, no proposed rule. Only each call to Jev is written, in the table of Jev calls, with the marker `rule-test` in place of an invoice id (and the client's CUI if one was chosen). So its cost is in the total of "Costuri Jev", where the list shows it as "Probă de reguli"; it is not counted as an invoice and is left out of the average cost per invoice. One line, `rule.tested`, goes to the journal. Jev is asked once, with no second attempt, so a failure is seen at once.
+
+**Limits.** At most 50 lines, and 500 characters in a description; more is refused as bad input.
+
+**Route.** `POST /rules/test`, see [Local API](#local-api).
+
 ## Classification and SAGA
 
 SAGA C does not read ANAF's XML. Its import ("Import date din fișiere XML") reads SAGA's own layout, which has an account (`<Cont>`) on every line. So each received invoice is given an account and rewritten in that layout.
@@ -562,6 +579,11 @@ The first real run on the Windows PC should confirm:
 - the file names inside ANAF's ZIP, and what a buyer-message ZIP contains (it is saved as-is either way)
 - the one-sync-at-a-time lock on Windows (tested on macOS only)
 - the Power Automate steps above
+
+For the demo and the certificate login:
+
+- **`efactura demo`** was run on macOS only.
+- **The certificate helper script `src/efactura/certificate_login.ps1`** has never been run: it needs Windows and the token.
 
 For classification, nothing has yet run against the real OpenRouter or the real SAGA:
 
