@@ -789,3 +789,23 @@ Expected: tests pass, no type error, 3 known lint warnings, the build writes `sr
 ```bash
 git add -A && git commit -m "The page: Descărcare automată, with its state, its form and the notice on the client list"
 ```
+
+---
+
+## After the reviews (2026-11-15)
+
+Built as planned, in the order 1, 2, 3, 5, 4, 6, each task reviewed on its own, then the whole branch. What ended differently from the text above:
+
+- **A run in which no client succeeded is `failed`**, with the first client's error, and is not retried before the next moment (Task 3 said `partial`). ANAF answering 5xx to every client was otherwise shown as "not complete" and nobody was told.
+- **`retry_at` has the same bound on `saved_at` as `due`**: saving the schedule again drops the attempts still owed to a moment before the save.
+- **The page shows when a run was made** (`started_at`), not the moment it was scheduled for; titles use `formatFromWhen` ("de azi, 08:40", "din 13.11.2026, 08:00").
+- **The schedule form is never remounted.** It keeps a draft and the saved schedule it follows; three plain functions decide what it does when the saved schedule changes (`sameSchedule`, `onSavedChange`, `ownSaveArrival`). With unsaved edits it keeps them and says "Descărcarea automată a fost schimbată din altă parte cât timp lucrați aici." with "Arată ce este salvat".
+- **`formProblem` checks the times whatever the switch says** (only "Alegeți cel puțin o zi." depends on it), since the program refuses an empty or repeated time for a schedule that is off too.
+- **The lists refresh after any run that ended**, not only one the page watched (`runEnded`).
+- **With one client** the running card and the notice drop the count (`runningLine`): no "0 din un client".
+- **A client's own invoices page** disables "Descarcă facturile" for a client that is off and during an automatic download, each with its sentence.
+- **The switch** is not disabled while its request is on the way (it kept losing keyboard focus); a second flip is ignored meanwhile.
+- **Hardening of the runner**: a final record that cannot be saved is journalled as `sync.record_unsaved` and the run's real outcome is still journalled; `status` reads the record a second time before calling a run interrupted; a stored record or `saved_at` that carries a time zone counts as unreadable.
+- **Two more journal sentences**: a run stopped by ANAF's daily limit, and one refused by ANAF for every client.
+
+Tests at the end: `uv run pytest -q` 1016 passed; `pnpm --dir frontend test` 133 passed. Checked in a browser against made-up data: the switch (mouse and keyboard), a schedule saved from the page running by itself at its minute, the running state on the client list and in the menu, a run failing for lack of a login and one refused by ANAF, the form's notice, the invoices page of a client that is off. Not checked: anything on Windows.
