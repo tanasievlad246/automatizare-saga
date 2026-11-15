@@ -129,7 +129,8 @@ CREATE INDEX IF NOT EXISTS idx_events_trace ON events (trace);
 CREATE TABLE IF NOT EXISTS clients (
     cui      TEXT PRIMARY KEY,
     name     TEXT NOT NULL,
-    added_at TEXT NOT NULL
+    added_at TEXT NOT NULL,
+    enabled  INTEGER NOT NULL DEFAULT 1
 );
 """
 
@@ -249,6 +250,9 @@ class Store:
             for name, kind in {**CLASSIFICATION_COLUMNS, **SUGGESTION_COLUMNS}.items():
                 if name not in present:
                     self._conn.execute(f"ALTER TABLE messages ADD COLUMN {name} {kind}")
+            # A client switched off is left out of every download; all start switched on.
+            if "enabled" not in {row["name"] for row in self._conn.execute("PRAGMA table_info(clients)")}:
+                self._conn.execute("ALTER TABLE clients ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1")
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_messages_classification "
                 "ON messages (cui, classification_status)"
@@ -494,7 +498,7 @@ class Store:
             return f"m.uploaded_to_accounting = 0 AND m.classification_status = '{status}'"
 
         rows = self._conn.execute(
-            "SELECT c.cui, c.name, c.added_at, "
+            "SELECT c.cui, c.name, c.added_at, c.enabled, "
             f"{count('m.' + RECEIVED_SQL)} AS invoices, "
             f"{count(IS_NEW_SQL)} AS new_count, "
             f"{count(waiting('review'))} AS review_count, "
@@ -504,11 +508,38 @@ class Store:
             f"FROM clients c LEFT JOIN messages m ON m.cui = c.cui {LATEST_RUN_JOIN}c.cui "
             "GROUP BY c.cui ORDER BY c.name COLLATE NOCASE, c.cui"
         )
-        return [dict(row) for row in rows]
+        return [{**row, "enabled": bool(row["enabled"])} for row in map(dict, rows)]
 
     def client_name(self, cui: str) -> str | None:
         row = self._conn.execute("SELECT name FROM clients WHERE cui = ?", (cui,)).fetchone()
         return row["name"] if row else None
+
+    def client_enabled(self, cui: str) -> bool | None:
+        """Is this client switched on? None when it is not in the list."""
+        row = self._conn.execute("SELECT enabled FROM clients WHERE cui = ?", (cui,)).fetchone()
+        return None if row is None else bool(row["enabled"])
+
+    def set_client_enabled(self, cui: str, enabled: bool) -> None:
+        with self._conn:
+            cursor = self._conn.execute(
+                "UPDATE clients SET enabled = ? WHERE cui = ?", (1 if enabled else 0, cui)
+            )
+        if cursor.rowcount == 0:
+            raise EfacturaError(NOT_FOUND, f"No client with CUI {cui}.")
+
+    def clients_switched_on(self) -> list[dict]:
+        """The clients a download goes through, in the order of the list."""
+        rows = self._conn.execute(
+            "SELECT cui, name FROM clients WHERE enabled = 1 ORDER BY name COLLATE NOCASE, cui"
+        )
+        return [dict(row) for row in rows]
+
+    def client_switch_counts(self) -> tuple[int, int]:
+        """How many clients are switched on, and how many off."""
+        row = self._conn.execute(
+            "SELECT COALESCE(SUM(enabled = 1), 0) AS on_, COALESCE(SUM(enabled = 0), 0) AS off FROM clients"
+        ).fetchone()
+        return row["on_"], row["off"]
 
     def save_client(self, cui: str, name: str, when: str) -> None:
         with self._conn:

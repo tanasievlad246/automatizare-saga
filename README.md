@@ -180,6 +180,8 @@ On every screen, the top bar holds the name, the **folder for SAGA** and the **A
 
 The menu on the left has a fixed width and the screen's content takes the rest. In a window narrower than about 1020 px the menu moves above the content.
 
+A client can be switched off. A client that is off keeps its invoices and is left out of every download until it is switched on again; asking to download it answers `client_off`. A CUI that is not in the client list is not affected and is downloaded as before.
+
 **"New"** means: a received invoice brought in by that client's latest download that brought anything, and not yet marked as imported in SAGA.
 
 **Downloading from the screen never leaves a gap.** "Ultimele 5 zile" means at least five days: if the last complete download for that client was longer ago, the program reaches back to it (up to ANAF's 60 days) and says so. Two dates are taken exactly as chosen. If some invoices could not be downloaded, the window says how many.
@@ -333,7 +335,8 @@ Failure (from any command):
 | `anaf_limit_reached` | ANAF's daily call limit (e.g. 10 downloads a day per message). |
 | `anaf_error` | ANAF refused or answered something unexpected; the message carries ANAF's text. |
 | `network_error` | ANAF could not be reached. |
-| `not_found` | No saved message with that id. |
+| `not_found` | No saved message with that id, or no client with that CUI in the list. |
+| `client_off` | The client is switched off in the client list. Switch it on to download its invoices. |
 | `busy` | Another sync or login renewal is running. |
 | `config_error` | `config.toml` is missing or incomplete, or ANAF rejected the client ID/secret. In the certificate login: ANAF answered `invalid_client` (wrong Client ID) or `invalid_request` with "Redirect-URI ... does not match" (wrong Callback URL); the message keeps ANAF's words. |
 | `not_classifiable` | The message is not a received invoice, is marked as uploaded, was saved outside classification, or is already classified. `force` lifts the last two. |
@@ -377,6 +380,7 @@ Routes that exist for the screen and have no command:
 | Route | What it does |
 |---|---|
 | `GET /clients`, `POST /clients` with `{"cui", "name"}`, `DELETE /clients/{cui}` | The client list |
+| `PUT /clients/{cui}/enabled` with `{"enabled": true}` or `false` | Switch a client on or off |
 | `POST /clients/import?filename=clienti.xlsx` (the file as the body) | Add clients from Excel or CSV |
 | `POST /invoices/uploaded` with `{"ids": [...], "uploaded": true}` | Mark several invoices as uploaded, or not |
 | `GET /invoices/{id}/view` | One invoice: the row, the parsed invoice, both XML texts, Jev's answer, and `rule_suggestion` (the rule proposed from it, or `null`) |

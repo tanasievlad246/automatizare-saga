@@ -35,6 +35,7 @@ from .errors import (
     ANAF_ERROR,
     ANAF_LIMIT_REACHED,
     BUSY,
+    CLIENT_OFF,
     CONFIG_ERROR,
     INTERNAL_ERROR,
     INVALID_CUI,
@@ -71,6 +72,7 @@ HTTP_STATUS = {
     NOT_CLASSIFIABLE: 409,
     UPDATE_ERROR: 409,
     BACKUP_ERROR: 409,
+    CLIENT_OFF: 409,
     JEV_ERROR: 502,
     NO_SPV_RIGHTS: 502,
     ANAF_LIMIT_REACHED: 502,
@@ -190,6 +192,10 @@ class MoveRequest(BaseModel):
 class ClientRequest(BaseModel):
     cui: Union[str, int]
     name: str
+
+
+class ClientSwitchRequest(BaseModel):
+    enabled: bool
 
 
 class SagaFolderRequest(BaseModel):
@@ -560,6 +566,13 @@ def create_app(
     @router.delete("/clients/{cui}", dependencies=documented_key, summary="Take a client off the list")
     def remove_client(cui: str):
         return call(lambda s: s.remove_client(cui))
+
+    @router.put(
+        "/clients/{cui}/enabled", dependencies=documented_key,
+        summary="Switch a client on or off for downloading",
+    )
+    def switch_client(cui: str, body: ClientSwitchRequest):
+        return call(lambda s: s.set_client_enabled(cui, body.enabled))
 
     @router.post(
         "/clients/import", dependencies=documented_key,

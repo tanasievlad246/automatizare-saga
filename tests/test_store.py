@@ -639,3 +639,17 @@ def test_many_programs_opening_a_new_database_at_once_do_not_trip_over_each_othe
         final = Store(path)
         assert (len(final.rules()), len(final.accounts())) == (2, 3)  # the examples once, not twice
         final.close()
+
+
+def test_a_database_from_before_the_switch_gets_every_client_switched_on(tmp_path):
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.execute("CREATE TABLE clients (cui TEXT PRIMARY KEY, name TEXT NOT NULL, added_at TEXT NOT NULL)")
+    old.execute("INSERT INTO clients VALUES ('12345674', 'Alfa', '2026-11-01T09:00:00')")
+    old.commit()
+    old.close()
+
+    store = Store(path)
+
+    assert [c["enabled"] for c in store.clients()] == [True]
+    assert store.client_switch_counts() == (1, 0)

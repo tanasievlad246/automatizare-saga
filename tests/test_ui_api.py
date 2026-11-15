@@ -342,6 +342,30 @@ def test_clients_can_be_added_listed_and_removed_over_the_api(api):
     assert api.delete(f"/clients/{VALID_CUI}").status_code == 404
 
 
+def test_a_client_is_switched_off_through_the_api(api):
+    api.post("/clients", json={"cui": VALID_CUI, "name": "Alfa Construct SRL"})
+
+    reply = api.put(f"/clients/RO{VALID_CUI}/enabled", json={"enabled": False})
+
+    assert reply.status_code == 200
+    assert [(c["cui"], c["enabled"]) for c in reply.json()["clients"]] == [(VALID_CUI, False)]
+
+
+def test_downloading_a_client_that_is_off_answers_409(api):
+    api.post("/clients", json={"cui": VALID_CUI, "name": "Alfa Construct SRL"})
+    api.put(f"/clients/{VALID_CUI}/enabled", json={"enabled": False})
+
+    reply = api.post("/sync", json={"cui": VALID_CUI})
+
+    assert (reply.status_code, reply.json()["error"]["code"]) == (409, "client_off")
+
+
+def test_switching_an_unknown_client_answers_404(api):
+    reply = api.put(f"/clients/{VALID_CUI}/enabled", json={"enabled": False})
+
+    assert (reply.status_code, reply.json()["error"]["code"]) == (404, "not_found")
+
+
 def test_a_client_file_is_imported_from_the_request_body(api):
     content = f"Nume;CUI\nAlfa Construct SRL;{VALID_CUI}\nDelta Service SRL;12345678\n".encode()
 

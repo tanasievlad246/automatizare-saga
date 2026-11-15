@@ -22,6 +22,7 @@ JEV_ERROR = "jev_error"
 NOT_CLASSIFIABLE = "not_classifiable"
 UPDATE_ERROR = "update_error"
 BACKUP_ERROR = "backup_error"
+CLIENT_OFF = "client_off"
 
 
 class EfacturaError(Exception):

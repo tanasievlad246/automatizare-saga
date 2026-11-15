@@ -31,6 +31,7 @@ from .config import MAX_DAYS, Config
 from .errors import (
     ANAF_ERROR,
     BUSY,
+    CLIENT_OFF,
     INTERNAL_ERROR,
     INVALID_CUI,
     INVALID_INPUT,
@@ -243,6 +244,16 @@ class Service:
         for good (for a first run that brings in invoices already booked by hand).
         """
         cui = normalize_cui(cui)
+        store = self._open_store()
+        try:
+            switched_off = store.client_enabled(cui) is False
+        finally:
+            store.close()
+        if switched_off:
+            raise EfacturaError(
+                CLIENT_OFF,
+                "This client is switched off. Switch it on in the client list to download its invoices.",
+            )
         with self._lock():
             store = self._open_store()
             try:
@@ -595,6 +606,21 @@ class Service:
         try:
             store.save_client(cui, name, self._now().isoformat())
             journal.record("clients", "client.saved", f"Client {cui} saved.", cui=cui, client=name)
+        finally:
+            store.close()
+        return self.clients()
+
+    def set_client_enabled(self, cui: str, enabled: bool) -> dict:
+        """Switch a client on or off. A client that is off keeps its invoices and is left
+        out of every download."""
+        cui = normalize_cui(cui)
+        store = self._open_store()
+        try:
+            store.set_client_enabled(cui, enabled)
+            journal.record(
+                "clients", "client.switched", f"Client {cui} switched {'on' if enabled else 'off'}.",
+                cui=cui, client=store.client_name(cui), enabled=enabled,
+            )
         finally:
             store.close()
         return self.clients()

@@ -6,12 +6,13 @@ from datetime import datetime, timedelta, timezone
 import openpyxl
 import pytest
 
-from efactura import auth
+from efactura import auth, journal
 from efactura.auth import Tokens
 from efactura.clients_file import read_client_rows
 from efactura.config import load_config
 from efactura.errors import EfacturaError
 from efactura.service import Service
+from efactura.store import Store
 
 from helpers import OTHER_VALID_CUI, VALID_CUI, FakeAnaf, line, rich_invoice_xml
 
@@ -247,3 +248,78 @@ def test_without_a_header_a_row_number_does_not_displace_the_real_cui():
     assert read_client_rows("clienti.csv", content) == [
         (1, "Brutaria Soarelui SRL", OTHER_VALID_CUI), (2, "Alfa Construct SRL", f"RO{VALID_CUI}"),
     ]
+
+
+# --- switching a client off ---------------------------------------------------------------
+
+
+def test_a_new_client_is_switched_on(service):
+    service.save_client(VALID_CUI, "Alfa")
+
+    assert service.clients()["clients"][0]["enabled"] is True
+
+
+def test_a_client_can_be_switched_off_and_on_again(service):
+    service.save_client(VALID_CUI, "Alfa")
+
+    off = service.set_client_enabled(f"RO{VALID_CUI}", False)
+    on = service.set_client_enabled(VALID_CUI, True)
+
+    assert [c["enabled"] for c in off["clients"]] == [False]
+    assert [c["enabled"] for c in on["clients"]] == [True]
+
+
+def test_switching_a_client_that_is_not_in_the_list_is_not_found(service):
+    assert error_code(lambda: service.set_client_enabled(VALID_CUI, False)) == "not_found"
+
+
+def test_renaming_or_importing_a_client_leaves_its_switch_alone(service):
+    service.save_client(VALID_CUI, "Alfa")
+    service.set_client_enabled(VALID_CUI, False)
+
+    service.save_client(VALID_CUI, "Alfa Nou")
+    service.import_clients("clienti.csv", f"CUI,Denumire\n{VALID_CUI},Alfa Trei\n".encode())
+
+    assert service.clients()["clients"][0]["enabled"] is False
+
+
+def test_a_client_that_is_switched_off_is_not_downloaded(service, anaf, cfg):
+    service.save_client(VALID_CUI, "Alfa")
+    service.set_client_enabled(VALID_CUI, False)
+    anaf.add("3001", xml=rich_invoice_xml(number="A1"))
+
+    assert error_code(lambda: service.sync(VALID_CUI)) == "client_off"
+    store = Store(cfg.db_path)
+    assert store.runs() == []  # refused before anything was started
+    store.close()
+
+
+def test_a_cui_that_is_not_in_the_client_list_is_downloaded_as_before(service, anaf):
+    anaf.add("3001", xml=rich_invoice_xml(number="A1"))
+
+    assert service.sync(VALID_CUI)["new_count"] == 1
+
+
+def test_the_clients_that_are_on_are_listed_by_name(service, cfg):
+    service.save_client(OTHER_VALID_CUI, "Beta")
+    service.save_client(VALID_CUI, "Alfa")
+    service.set_client_enabled(OTHER_VALID_CUI, False)
+
+    store = Store(cfg.db_path)
+    assert store.clients_switched_on() == [{"cui": VALID_CUI, "name": "Alfa"}]
+    assert store.client_switch_counts() == (1, 1)
+    assert (store.client_enabled(VALID_CUI), store.client_enabled(OTHER_VALID_CUI), store.client_enabled("99")) == (True, False, None)
+    store.close()
+
+
+def test_switching_a_client_is_written_in_the_journal(service, cfg):
+    journal.configure(cfg.db_path)
+    try:
+        service.save_client(VALID_CUI, "Alfa")
+        service.set_client_enabled(VALID_CUI, False)
+
+        lines = [e for e in journal.events(cfg.db_path)["events"] if e["event"] == "client.switched"]
+    finally:
+        journal.configure(None)
+
+    assert [e["data"] for e in lines] == [{"cui": VALID_CUI, "client": "Alfa", "enabled": False}]
