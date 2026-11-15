@@ -267,3 +267,19 @@ export type RuleTestResult = {
   reason: string // the program's English line
   suggestion: RuleSuggestion | null
 }
+
+/** One automatic download as the program recorded it. Moments are the PC's own time, without a zone. */
+export type ScheduleRun = {
+  slot: string; attempt: number; started_at: string; finished_at: string | null
+  status: 'ok' | 'partial' | 'failed' | 'unreachable' | 'interrupted' | 'running'
+  clients: number; failed_clients: number; new: number; review: number
+  error: { code: string; message: string } | null
+  retry_at: string | null
+}
+/** The automatic download: what was chosen, when it runs next, and how the last one went. */
+export type ScheduleStatus = {
+  enabled: boolean; days: number[]; times: string[]; next_at: string | null
+  running: { started_at: string; done: number; total: number } | null
+  last_run: ScheduleRun | null
+  clients_on: number; clients_off: number
+}

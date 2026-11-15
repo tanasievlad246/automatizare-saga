@@ -8,8 +8,9 @@ import { PillTabs } from '@/components/PillTabs'
 import { Button } from '@/components/ui/button'
 import { api } from '../api'
 import { SyncDialog } from '../clients/SyncDialog'
-import { errorMessage } from '../errorMessages'
+import { errorMessage, messageForCode } from '../errorMessages'
 import { formatWhen } from '../format'
+import { useSchedule } from '../schedule/useSchedule'
 import type { Invoice } from '../types'
 import { ImportedInSagaCard } from './ImportedInSagaCard'
 import { InvoicesTable } from './InvoicesTable'
@@ -31,6 +32,13 @@ export function ClientInvoicesPage() {
   const client = useQuery({ queryKey: ['clients'], queryFn: api.clients }).data?.clients.find((each) => each.cui === cui)
   const { data, error, isPending } = useQuery({ queryKey: ['invoices', cui], queryFn: () => api.receivedInvoices(cui) })
   const invoices = data?.invoices ?? []
+  const automaticDownloadRuns = Boolean(useSchedule().data?.running)
+  // Why the button is off, if it is: the client is switched off, or the program is downloading by itself.
+  const whyNot = client && !client.enabled
+    ? messageForCode('client_off')
+    : automaticDownloadRuns
+      ? 'Programul descarcă acum facturile, singur. Butonul revine când se termină.'
+      : null
 
   const chosen = search.get('arata') ?? VIEWS.find((view) => invoices.some(view.includes))?.value ?? 'toate'
   const shown = invoices.filter(VIEWS.find((view) => view.value === chosen)?.includes ?? (() => true))
@@ -49,10 +57,13 @@ export function ClientInvoicesPage() {
             {client && ` · Ultima descărcare: ${formatWhen(client.last_sync_at)}`}
           </PageTitle>
         </div>
-        <Button size="lg" onClick={() => setSyncing(true)}>
-          <Download aria-hidden />
-          Descarcă facturile
-        </Button>
+        <div className="flex max-w-md flex-col items-start gap-2">
+          <Button size="lg" disabled={whyNot !== null} onClick={() => setSyncing(true)}>
+            <Download aria-hidden />
+            Descarcă facturile
+          </Button>
+          {whyNot && <p className="text-muted-foreground">{whyNot}</p>}
+        </div>
       </div>
 
       {error && <Notice tone="attention">{errorMessage(error)}</Notice>}

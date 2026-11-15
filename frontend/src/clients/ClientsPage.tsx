@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { api } from '../api'
 import { errorMessage } from '../errorMessages'
 import { countOf } from '../format'
+import { useSchedule } from '../schedule/useSchedule'
 import type { Client } from '../types'
 import { AddClientDialog } from './AddClientDialog'
 import { ClientRow } from './ClientRow'
@@ -20,6 +21,8 @@ export function ClientsPage() {
   // Read again when the window is returned to, so counts from this morning are not shown as today's.
   const { data, error, isPending } = useQuery({ queryKey: ['clients'], queryFn: api.clients, refetchOnWindowFocus: true })
   const clients = data?.clients ?? []
+  // While the program downloads by itself, no download is started by hand.
+  const running = useSchedule().data?.running ?? null
   const [clientsToSync, setClientsToSync] = useState<Client[] | null>(null)
   const [importing, setImporting] = useState(false)
   const [adding, setAdding] = useState(false)
@@ -40,7 +43,7 @@ export function ClientsPage() {
         <Button
           size="lg"
           className="h-auto min-h-14 max-w-full py-2 text-left whitespace-normal"
-          disabled={onClients.length === 0}
+          disabled={onClients.length === 0 || running !== null}
           onClick={() => setClientsToSync(onClients)}
         >
           <Download aria-hidden />
@@ -49,6 +52,14 @@ export function ClientsPage() {
         <Button size="lg" variant="outline" onClick={() => setImporting(true)}>Importă clienți din Excel</Button>
         <Button size="lg" variant="outline" onClick={() => setAdding(true)}>Adaugă un client</Button>
       </div>
+      {running && (
+        <Notice tone="fresh" className="-mt-3">
+          <p className="text-lg font-semibold">
+            Programul descarcă acum facturile, singur: {running.done} din {countOf(running.total, 'un client', 'clienți')}.
+          </p>
+          <p>Butoanele de descărcare revin când se termină. Lista se actualizează singură.</p>
+        </Notice>
+      )}
       {offLine && <p className="-mt-3 text-lg text-muted-foreground">{offLine}</p>}
 
       {firstWaiting && (
@@ -78,7 +89,7 @@ export function ClientsPage() {
 
       <div className="flex flex-col gap-3">
         {clients.map((client) => (
-          <ClientRow key={client.cui} client={client} blocked={false} onSync={() => setClientsToSync([client])} />
+          <ClientRow key={client.cui} client={client} blocked={running !== null} onSync={() => setClientsToSync([client])} />
         ))}
       </div>
 

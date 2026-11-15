@@ -2,6 +2,7 @@
 // is known to write become Romanian sentences; anything else keeps the English line.
 
 import { countOf, formatPercent, formatUsd } from '../format'
+import { describeWhen } from '../schedule/scheduleTexts'
 import type { JournalLine } from '../types'
 
 export const LEVEL_NAMES: Record<JournalLine['level'], string> = {
@@ -40,6 +41,12 @@ const HOW_A_COPY_WAS_MADE: Record<string, string> = {
   manual: 'la cererea dumneavoastră', auto: 'automat', 'before-restore': 'înaintea restaurării',
 }
 
+// The causes a failed automatic download names in the journal; any other is in the technical details.
+const AUTO_FAILURES: Record<string, string> = {
+  login_needed: 'trebuie să vă conectați din nou la ANAF',
+  anaf_limit_reached: 'ANAF a limitat numărul de cereri pentru azi',
+}
+
 const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
   'program.started': (data) => `Programul a pornit. Versiunea ${text(data.version)}.`,
   'program.stopped': () => 'Programul s-a oprit.',
@@ -56,6 +63,33 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
   },
   'sync.failed': (data) => `Descărcarea pentru ${who(data)} nu a reușit.`,
   'sync.message_failed': () => 'Un mesaj de la ANAF nu a putut fi salvat. Se încearcă din nou la următoarea descărcare.',
+
+  'schedule.saved': (data) =>
+    data.enabled
+      ? `Descărcarea automată a fost pornită: ${describeWhen(data.days as number[], data.times as string[])}.`
+      : 'Descărcarea automată a fost oprită.',
+  'sync.auto_started': (data) =>
+    `Descărcarea automată a început.${Number(data.attempt) > 1 ? ` Este încercarea ${text(data.attempt)} din 4.` : ''}`,
+  'sync.auto_finished': (data) => {
+    const found = [
+      Number(data.new) > 0 && countOf(Number(data.new), 'o factură nouă', 'facturi noi'),
+      Number(data.review) > 0 && `${text(data.review)} de verificat`,
+    ].filter(Boolean) as string[]
+    switch (data.status) {
+      case 'ok':
+        return `Descărcarea automată s-a terminat: ${found.length ? found.join(', ') : 'nimic nou'}.`
+      case 'partial':
+        return `Descărcarea automată s-a terminat: ${found.length ? found.join(', ') : 'nimic nou'}. Nu a fost completă; se reia la următoarea descărcare.`
+      case 'unreachable':
+        return Number(data.attempt) >= 4
+          ? 'Descărcarea automată nu a ajuns la ANAF. A fost ultima încercare pentru această oră.'
+          : 'Descărcarea automată nu a ajuns la ANAF. Programul mai încearcă peste un sfert de oră.'
+      default: {
+        const cause = AUTO_FAILURES[text(data.error)]
+        return `Descărcarea automată nu a reușit${cause ? `: ${cause}` : ''}.`
+      }
+    }
+  },
 
   'anaf.call': (_, line) => `ANAF a răspuns${line.duration_ms === null ? '' : ` în ${formatDuration(line.duration_ms)}`}.`,
   'anaf.unreachable': () => 'Nu am putut ajunge la ANAF. Verificați conexiunea la internet.',

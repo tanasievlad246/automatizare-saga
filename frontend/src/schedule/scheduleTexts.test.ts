@@ -1,0 +1,128 @@
+import { describe, expect, it } from 'vitest'
+import { messageForCode } from '../errorMessages'
+import type { ScheduleRun, ScheduleStatus } from '../types'
+import { describeWhen, formProblem, menuNote, pollEvery, stateCard } from './scheduleTexts'
+
+const NOW = new Date(2026, 10, 16, 9, 0)
+
+const status = (over: Partial<ScheduleStatus> = {}): ScheduleStatus => ({
+  enabled: true, days: [0, 1, 2, 3, 4], times: ['08:00'], next_at: '2026-11-17T08:00:00', running: null, last_run: null,
+  clients_on: 3, clients_off: 0, ...over,
+})
+const run = (over: Partial<ScheduleRun> = {}): ScheduleRun => ({
+  slot: '2026-11-16T08:00:00', attempt: 1, started_at: '2026-11-16T08:00:20', finished_at: '2026-11-16T08:01:05',
+  status: 'ok', clients: 3, failed_clients: 0, new: 7, review: 2, error: null, retry_at: null, ...over,
+})
+const NEXT = 'Următoarea descărcare: mâine, la 08:00'
+
+describe('the days and hours in words', () => {
+  it('writes a run of days, every day, a list and a single day', () => {
+    expect(describeWhen([0, 1, 2, 3, 4], ['08:00'])).toBe('de luni până vineri, la 08:00')
+    expect(describeWhen([0, 1, 2, 3, 4, 5, 6], ['08:00', '14:00'])).toBe('în fiecare zi, la 08:00 și 14:00')
+    expect(describeWhen([0, 2, 4], ['08:00', '12:00', '16:00'])).toBe('luni, miercuri și vineri, la 08:00, 12:00 și 16:00')
+    expect(describeWhen([5], ['09:30'])).toBe('sâmbătă, la 09:30')
+  })
+})
+
+describe('what is wrong with the form', () => {
+  it('names the first problem, and none while the schedule is off', () => {
+    expect(formProblem(true, [], ['08:00'])).toBe('Alegeți cel puțin o zi.')
+    expect(formProblem(false, [], ['08:00'])).toBeNull()
+    expect(formProblem(true, [0], ['08:00', '08:00'])).toBe('Aceeași oră apare de două ori.')
+    expect(formProblem(true, [0], ['08:00', ''])).toBe('Completați ora.')
+    expect(formProblem(true, [0], ['08:00'])).toBeNull()
+  })
+})
+
+describe('the state card', () => {
+  it('is calm when the last download went well', () => {
+    expect(stateCard(status({ last_run: run() }), NOW)).toEqual({
+      tone: 'done', title: NEXT, text: 'Ultima: azi, 08:00 · 3 clienți · 7 facturi noi · 2 de verificat.', journal: true, clients: false,
+    })
+    const none = stateCard(status(), NOW)
+    expect(none).toMatchObject({ tone: 'done', title: NEXT, text: 'Nu a fost făcută încă nicio descărcare automată.', journal: false })
+    expect(stateCard(status({ last_run: run({ new: 0, review: 0, clients: 1 }) }), NOW).text)
+      .toBe('Ultima: azi, 08:00 · un client · nimic nou.')
+  })
+
+  it('says that it is off', () => {
+    expect(stateCard(status({ enabled: false, next_at: null, last_run: run({ status: 'failed' }) }), NOW)).toMatchObject({
+      tone: 'plain', title: 'Descărcarea automată este oprită',
+      text: 'Facturile se descarcă doar când apăsați dumneavoastră „Descarcă facturile”, pe pagina Clienți.',
+    })
+  })
+
+  it('says that it is downloading', () => {
+    const running = { started_at: '2026-11-16T08:00:20', done: 2, total: 3 }
+    expect(stateCard(status({ running, last_run: run({ status: 'running' }) }), NOW)).toMatchObject({
+      tone: 'fresh', title: 'Se descarcă acum: 2 din 3 clienți',
+      text: 'A început azi, 08:00. Pagina se schimbă singură când se termină.',
+    })
+    expect(stateCard(status({ running: { ...running, total: 0 } }), NOW).title).toBe('Se descarcă acum')
+  })
+
+  it('says that no client is on', () => {
+    expect(stateCard(status({ clients_on: 0, clients_off: 2 }), NOW)).toMatchObject({
+      tone: 'attention', title: 'Niciun client nu este pornit',
+      text: 'Descărcarea automată nu are ce descărca. Porniți clienții din lista de clienți.', clients: true,
+    })
+  })
+
+  it('says why a download failed', () => {
+    const failed = stateCard(status({ last_run: run({ status: 'failed', error: { code: 'login_needed', message: 'x' } }) }), NOW)
+    expect(failed).toMatchObject({ tone: 'attention', title: 'Descărcarea de azi, 08:00 nu a reușit' })
+    expect(failed.text).toBe(`${messageForCode('login_needed')} ${NEXT}.`)
+  })
+
+  it('says when ANAF could not be reached', () => {
+    const card = (over: Partial<ScheduleRun>) => stateCard(status({ last_run: run({ status: 'unreachable', ...over }) }), NOW)
+    expect(card({ retry_at: '2026-11-16T08:15:20' })).toMatchObject({
+      tone: 'attention', title: 'Descărcarea de azi, 08:00 nu a ajuns la ANAF',
+      text: 'Verificați conexiunea la internet. Programul mai încearcă azi, la 08:15 (încercarea 2 din 4).',
+    })
+    expect(card({ attempt: 4 }).text).toBe(`Verificați conexiunea la internet. Programul a încercat de 4 ori. ${NEXT}.`)
+    expect(card({ attempt: 1 }).text).toBe(`Verificați conexiunea la internet. Programul a încercat o dată. ${NEXT}.`)
+  })
+
+  it('says that a download was interrupted', () => {
+    const card = (over: Partial<ScheduleRun>) => stateCard(status({ last_run: run({ status: 'interrupted', ...over }) }), NOW)
+    expect(card({ retry_at: '2026-11-16T08:15:20' })).toMatchObject({
+      title: 'Descărcarea de azi, 08:00 a fost întreruptă',
+      text: 'Programul sau calculatorul a fost oprit în timpul ei. Programul o reia azi, la 08:15.',
+    })
+    expect(card({ attempt: 4 }).text).toBe(`Programul sau calculatorul a fost oprit în timpul ei. ${NEXT}.`)
+  })
+
+  it('says that a download was not complete', () => {
+    expect(stateCard(status({ last_run: run({ status: 'partial', failed_clients: 1 }) }), NOW)).toMatchObject({
+      tone: 'attention', title: 'Ultima descărcare, azi, 08:00, nu a fost completă', journal: true,
+      text: '3 clienți · 7 facturi noi · 2 de verificat. Pentru un client descărcarea nu a reușit; se reia la următoarea descărcare.',
+    })
+    expect(stateCard(status({ last_run: run({ status: 'partial', failed_clients: 0 }) }), NOW).text)
+      .toBe('3 clienți · 7 facturi noi · 2 de verificat. Unele facturi nu s-au putut descărca; se reiau la următoarea descărcare.')
+  })
+})
+
+describe('the note in the menu', () => {
+  it('shows only what needs a look', () => {
+    expect(menuNote(undefined)).toBeNull()
+    expect(menuNote(status({ last_run: run() }))).toBeNull()
+    expect(menuNote(status({ running: { started_at: '2026-11-16T08:00:20', done: 0, total: 3 } })))
+      .toEqual({ text: 'Se descarcă acum', tone: 'fresh' })
+    for (const bad of ['failed', 'unreachable', 'interrupted'] as const) {
+      expect(menuNote(status({ last_run: run({ status: bad }) }))).toEqual({ text: 'Ultima nu a reușit', tone: 'attention' })
+    }
+    expect(menuNote(status({ enabled: false, last_run: run({ status: 'failed' }) }))).toBeNull()
+  })
+})
+
+describe('how often the page asks', () => {
+  it('asks fast while downloading, slowly while waiting, never while off', () => {
+    const running = { started_at: '2026-11-16T08:00:20', done: 0, total: 3 }
+    expect(pollEvery(undefined)).toBe(false)
+    expect(pollEvery(status({ enabled: false }))).toBe(false)
+    expect(pollEvery(status())).toBe(30000)
+    expect(pollEvery(status({ running }))).toBe(3000)
+    expect(pollEvery(status({ enabled: false, running }))).toBe(3000)
+  })
+})

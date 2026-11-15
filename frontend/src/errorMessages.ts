@@ -36,6 +36,11 @@ export function errorMessage(error: unknown, here: Record<string, string> = {}):
   return (error instanceof ApiError && (here[error.code] ?? MESSAGES[error.code])) || UNKNOWN
 }
 
+/** The sentence for a failure's code alone; the general one for a code not known here. */
+export function messageForCode(code: string): string {
+  return MESSAGES[code] ?? UNKNOWN
+}
+
 /** The program's own words about a failure, for whoever helps the person. */
 export function errorDetail(error: unknown): string {
   return error instanceof Error ? error.message : String(error)

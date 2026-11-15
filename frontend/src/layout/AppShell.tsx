@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { ChartColumn, DatabaseBackup, KeyRound, ListChecks, ScrollText, Users } from 'lucide-react'
+import { CalendarClock, ChartColumn, DatabaseBackup, KeyRound, ListChecks, ScrollText, Users } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
@@ -7,6 +7,8 @@ import { Toaster } from '@/components/ui/sonner'
 import { cn } from '@/lib/utils'
 import { api } from '../api'
 import { countOf } from '../format'
+import { menuNote } from '../schedule/scheduleTexts'
+import { useRefreshWhenAutomaticDownloadEnds, useSchedule } from '../schedule/useSchedule'
 import type { UpdateStatus } from '../types'
 import { AnafConnectionBadge } from './AnafConnectionBadge'
 import { Brand } from './Brand'
@@ -19,6 +21,7 @@ import { UpdateNotice } from './UpdateNotice'
 
 const SCREENS = [
   { to: '/', label: 'Clienți', icon: Users },
+  { to: '/descarcare-automata', label: 'Descărcare automată', icon: CalendarClock },
   { to: '/reguli', label: 'Reguli de clasificare', icon: ListChecks },
   { to: '/costuri', label: 'Costuri Jev', icon: ChartColumn },
   { to: '/copii', label: 'Copii de siguranță', icon: DatabaseBackup },
@@ -39,6 +42,9 @@ export function AppShell() {
   // must not keep yesterday's answer.
   const proposedRules =
     useQuery({ queryKey: ['proposed-rules'], queryFn: api.proposedRules, refetchOnWindowFocus: true }).data?.count ?? 0
+  // Here, not on one screen: what an automatic download brought must show up on whichever screen is open.
+  useRefreshWhenAutomaticDownloadEnds()
+  const scheduleNote = menuNote(useSchedule().data)
   // The same question the SAGA folder chip asks: one answer, shared.
   const isDemo = useQuery({ queryKey: ['saga-folder'], queryFn: api.sagaFolder }).data?.demo === true
   const update = useQuery({ queryKey: ['program-update'], queryFn: () => api.updateStatus(), refetchOnWindowFocus: true }).data
@@ -80,6 +86,17 @@ export function AppShell() {
               <Icon aria-hidden className="size-5.5 shrink-0" />
               <span className="flex flex-col">
                 {label}
+                {to === '/descarcare-automata' && scheduleNote && (
+                  <span
+                    className={cn(
+                      'text-sm font-bold',
+                      scheduleNote.tone === 'fresh' ? 'text-primary' : 'text-attention-foreground',
+                      'in-aria-[current=page]:text-secondary-foreground',
+                    )}
+                  >
+                    {scheduleNote.text}
+                  </span>
+                )}
                 {to === '/reguli' && proposedRules > 0 && (
                   <span className="text-sm font-bold text-primary in-aria-[current=page]:text-secondary-foreground">
                     {countOf(proposedRules, 'o regulă propusă', 'reguli propuse')}

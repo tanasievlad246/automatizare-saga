@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { ApiError } from './api'
 import { errorDetail, errorMessage } from './errorMessages'
 import {
-  countOf, formatAmount, formatDate, formatFromWhen, formatMoney, formatPercent, formatPeriod, formatUsd, formatSize, formatWhen,
+  countOf, formatAmount, formatDate, formatFromWhen, formatMoney, formatNext, formatPercent, formatPeriod, formatUsd, formatSize, formatWhen,
   shortPath,
 } from './format'
 
@@ -172,5 +172,14 @@ describe('the size of a file', () => {
     expect(formatSize(41 * 1024 * 1024)).toBe('41 MB')
     expect(formatSize(850 * 1024)).toBe('850 KB')
     expect(formatSize(12)).toBe('1 KB')
+  })
+})
+
+describe('the next download', () => {
+  const now = new Date(2026, 10, 15, 9, 0)
+  it('says today, tomorrow, or the weekday and date', () => {
+    expect(formatNext('2026-11-15T14:00:00', now)).toBe('azi, la 14:00')
+    expect(formatNext('2026-11-16T08:00:00', now)).toBe('mâine, la 08:00')
+    expect(formatNext('2026-11-18T08:00:00', now)).toBe('miercuri, 18.11.2026, la 08:00')
   })
 })

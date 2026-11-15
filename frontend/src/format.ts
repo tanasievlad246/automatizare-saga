@@ -31,6 +31,16 @@ export function formatFromWhen(iso: string, now = new Date()): string {
   return `${/^\d/.test(when) ? 'din' : 'de'} ${when}`
 }
 
+const WEEKDAY = new Intl.DateTimeFormat('ro-RO', { weekday: 'long' })
+
+/** A moment still to come: "azi, la 14:00", "mâine, la 08:00" or "miercuri, 18.11.2026, la 08:00". */
+export function formatNext(iso: string, now = new Date()): string {
+  const moment = new Date(iso)
+  const daysAhead = Math.round((startOfDay(moment) - startOfDay(now)) / 86_400_000)
+  const day = daysAhead === 0 ? 'azi' : daysAhead === 1 ? 'mâine' : `${WEEKDAY.format(moment)}, ${DAY.format(moment)}`
+  return `${day}, la ${TIME.format(moment)}`
+}
+
 function startOfDay(moment: Date): number {
   return new Date(moment.getFullYear(), moment.getMonth(), moment.getDate()).getTime()
 }

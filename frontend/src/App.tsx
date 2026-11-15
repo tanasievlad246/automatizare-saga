@@ -7,6 +7,7 @@ import { ClientInvoicesPage } from './invoices/ClientInvoicesPage'
 import { InvoicePage } from './invoices/InvoicePage'
 import { JournalPage } from './journal/JournalPage'
 import { AppShell } from './layout/AppShell'
+import { SchedulePage } from './schedule/SchedulePage'
 import { RulesPage } from './rules/RulesPage'
 import { RuleTestPage } from './rules/test/RuleTestPage'
 import { SecretsPage } from './secrets/SecretsPage'
@@ -33,6 +34,7 @@ export default function App() {
             <Route index element={<ClientsPage />} />
             <Route path="clienti/:cui" element={<ClientInvoicesPage />} />
             <Route path="clienti/:cui/facturi/:id" element={<InvoicePage />} />
+            <Route path="descarcare-automata" element={<SchedulePage />} />
             <Route path="reguli" element={<RulesPage />} />
             {/* The menu keeps "Reguli de clasificare" marked here: its address starts with /reguli. */}
             <Route path="reguli/test" element={<RuleTestPage />} />
