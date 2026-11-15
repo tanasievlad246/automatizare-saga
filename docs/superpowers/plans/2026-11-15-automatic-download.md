@@ -809,3 +809,16 @@ Built as planned, in the order 1, 2, 3, 5, 4, 6, each task reviewed on its own, 
 - **Two more journal sentences**: a run stopped by ANAF's daily limit, and one refused by ANAF for every client.
 
 Tests at the end: `uv run pytest -q` 1016 passed; `pnpm --dir frontend test` 133 passed. Checked in a browser against made-up data: the switch (mouse and keyboard), a schedule saved from the page running by itself at its minute, the running state on the client list and in the menu, a run failing for lack of a login and one refused by ANAF, the form's notice, the invoices page of a client that is off. Not checked: anything on Windows.
+
+## After the owner's follow-up (2026-11-15)
+
+The owner asked for the small things that had been left, and for the author line to move from the foot of the menu to a footer of the whole page. Built in one round, reviewed, and looked at in a browser.
+
+- **The author line is a footer of every screen** (`frontend/src/layout/PageFooter.tsx`, on the canvas as "Subsolul paginii"): one muted line, "© 2026 … · e-mail", at the bottom of the window on a short screen and after the content on a long one. The foot of the menu ends with the version and "Caută o versiune nouă".
+- **A run whose record could not be saved** is shown as it ended and is not made again: the record is kept in memory and saved at the next look (`schedule.py`).
+- **"Vezi în jurnal" opens that run's own lines**: the journal screen reads the operation it shows from the address (`#/jurnal?operatiune=…`), so the browser's Back button works there too.
+- **"azi" and "mâine" follow the clock** on the schedule card (`useNow`).
+- **Keyboard**: "Salvează" keeps the focus after a save (it is marked unavailable instead of disabled); after a time is removed the focus goes to "Adaugă încă o oră"; the remove button of an empty time is named by its position.
+- **Small**: the running state's icon turns; the switch's off colour is a design token; a code named like an inherited property is not taken for a known error code.
+
+Tests at the end: `uv run pytest -q` 1019 passed; `pnpm --dir frontend test` 137 passed.
