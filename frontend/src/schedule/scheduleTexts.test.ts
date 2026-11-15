@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { messageForCode } from '../errorMessages'
 import type { ScheduleRun, ScheduleStatus } from '../types'
-import { describeWhen, formProblem, menuNote, pollEvery, sameSchedule, stateCard } from './scheduleTexts'
+import { describeWhen, formProblem, menuNote, onSavedChange, pollEvery, sameSchedule, stateCard } from './scheduleTexts'
 
 const NOW = new Date(2026, 10, 16, 9, 0)
 
@@ -140,5 +140,17 @@ describe('how often the page asks', () => {
     expect(pollEvery(status())).toBe(30000)
     expect(pollEvery(status({ running }))).toBe(3000)
     expect(pollEvery(status({ enabled: false, running }))).toBe(3000)
+  })
+})
+
+describe('what the form does when the saved schedule is not the one it follows', () => {
+  const a = { enabled: true, days: [0], times: ['08:00'] }
+  const b = { enabled: true, days: [0, 1], times: ['08:00'] }
+  const c = { enabled: false, days: [2], times: ['09:00'] }
+  it('follows when nothing would be lost, shows a notice when edits would', () => {
+    expect(onSavedChange(c, a, { ...a, days: [0] })).toBe('nothing')
+    expect(onSavedChange(a, a, b)).toBe('follow')
+    expect(onSavedChange(b, a, b)).toBe('follow')
+    expect(onSavedChange(c, a, b)).toBe('notice')
   })
 })

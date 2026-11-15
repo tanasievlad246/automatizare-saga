@@ -37,6 +37,13 @@ export function sameSchedule(a: ScheduleChoice, b: ScheduleChoice): boolean {
   return key(a) === key(b)
 }
 
+/** What the form does when the saved schedule is not the one it follows. */
+export function onSavedChange(draft: ScheduleChoice, followed: ScheduleChoice, saved: ScheduleChoice): 'nothing' | 'follow' | 'notice' {
+  if (sameSchedule(saved, followed)) return 'nothing'
+  // A draft equal to the old or to the new saved schedule has no edits to lose.
+  return sameSchedule(draft, followed) || sameSchedule(draft, saved) ? 'follow' : 'notice'
+}
+
 /** What keeps the form from being saved. The hours are checked even while it is off; the days only while it is on. */
 export function formProblem(enabled: boolean, days: number[], times: string[]): string | null {
   if (enabled && days.length === 0) return 'Alegeți cel puțin o zi.'

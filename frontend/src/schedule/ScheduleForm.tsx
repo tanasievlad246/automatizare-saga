@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils'
 import { api } from '../api'
 import { showError } from '../errorMessages'
 import type { ScheduleStatus } from '../types'
-import { DAY_NAMES, formProblem, MOST_TIMES, sameSchedule, type ScheduleChoice } from './scheduleTexts'
+import { DAY_NAMES, formProblem, MOST_TIMES, onSavedChange, sameSchedule, type ScheduleChoice } from './scheduleTexts'
 
 // The hours offered, in this order, when a person adds one.
 const SUGGESTED_TIMES = ['12:00', '16:00', '10:00', '18:00']
@@ -27,29 +27,34 @@ export function ScheduleForm({ saved }: { saved: ScheduleStatus }) {
   // `followed` is the saved schedule the draft started from; the draft is what is being edited.
   const [followed, setFollowed] = useState<ScheduleChoice>(choiceOf(saved))
   const [draft, setDraft] = useState<ScheduleChoice>(choiceOf(saved))
-  const [changedElsewhere, setChangedElsewhere] = useState(false)
+  // The answer to her own save, until the saved schedule the page holds is that answer.
+  const [answered, setAnswered] = useState<ScheduleChoice | null>(null)
   const { enabled, days, times } = draft
 
-  if (!sameSchedule(saved, followed)) {
-    if (sameSchedule(draft, followed)) {
+  let notice = false
+  if (answered) {
+    // Her own save came back: follow it, and keep what she typed since.
+    if (sameSchedule(saved, answered)) {
+      setFollowed(choiceOf(saved))
+      setAnswered(null)
+    }
+  } else {
+    const change = onSavedChange(draft, followed, saved)
+    if (change === 'follow') {
       setFollowed(choiceOf(saved))
       setDraft(choiceOf(saved))
-    } else if (!changedElsewhere) {
-      setChangedElsewhere(true)
     }
+    notice = change === 'notice'
   }
   const showSaved = () => {
     setFollowed(choiceOf(saved))
     setDraft(choiceOf(saved))
-    setChangedElsewhere(false)
   }
 
   const save = useMutation({
     mutationFn: (choice: ScheduleChoice) => api.saveSchedule({ ...choice, days: sorted(choice.days), times: sorted(choice.times) }),
     onSuccess: (status) => {
-      // The answer is what the form follows now; what was typed since is kept.
-      setFollowed(choiceOf(status))
-      setChangedElsewhere(false)
+      setAnswered(choiceOf(status))
       queryClient.setQueryData(['schedule'], status)
       toast.success('Descărcarea automată a fost salvată.')
     },
@@ -135,7 +140,7 @@ export function ScheduleForm({ saved }: { saved: ScheduleStatus }) {
         <p className="text-muted-foreground">Cel mult patru ore pe zi.</p>
       </div>
 
-      {changedElsewhere && (
+      {notice && (
         <Notice tone="attention" className="flex-wrap items-center">
           <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
             <p className="min-w-0 flex-[1_1_320px] font-semibold">
