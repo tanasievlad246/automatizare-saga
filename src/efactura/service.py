@@ -243,7 +243,8 @@ class Service:
         start: str | None = None, end: str | None = None, cover_gap: bool = False,
     ) -> dict:
         """Download for every client that is switched on, one after another, each for the
-        same period (`days`, or `start` and `end`, with `cover_gap`: see `sync`).
+        same period (`days`, or `start` and `end`, with `cover_gap`: see `sync`). A first day
+        older than ANAF keeps is asked for from the oldest day it keeps.
 
         One client's failure does not stop the others, except a failure that would be the
         same for all of them (STOPS_THE_RUN). `progress(position, total)` is told before
@@ -270,7 +271,9 @@ class Service:
             if not still_on:
                 continue
             try:
-                result = self._sync_waiting(cui, days=days, start=start, end=end, cover_gap=cover_gap)
+                result = self._sync_waiting(
+                    cui, days=days, start=self._within_reach(start), end=end, cover_gap=cover_gap
+                )
             except EfacturaError as exc:
                 if exc.code == CLIENT_OFF:
                     continue
@@ -311,6 +314,15 @@ class Service:
             "stopped_by": stopped_by,
             "results": results,
         }
+
+    def _within_reach(self, start: str | None) -> str | None:
+        """The first day to ask for, moved up to the oldest day ANAF keeps. It is worked out for
+        each client by the clock of that moment: a run that passes midnight would otherwise
+        ask the clients after it for a day that has just become too old."""
+        if start is None:
+            return None
+        oldest = (self._now() - timedelta(days=MAX_DAYS)).date()
+        return max(_day(start), oldest).isoformat()
 
     def _sync_waiting(self, cui: str, **period) -> dict:
         """`sync`, but when another download holds the lock, wait and try again."""
@@ -1768,12 +1780,16 @@ def _plan_window(
     # The sixtieth day back is allowed, from the hour ANAF still reaches.
     begin = max(begin, now - timedelta(days=MAX_DAYS) + OLDEST_MARGIN)
     end_of_last_day = datetime(last.year, last.month, last.day, tzinfo=now.tzinfo) + timedelta(days=1)
+    finish = min(end_of_last_day, now - CLOCK_MARGIN)
+    if begin >= finish:
+        # The sixtieth day back in its last minutes, or today in its first: nothing lies between.
+        raise EfacturaError(INVALID_INPUT, "ANAF has no moment left to be asked for in these days.")
     # A range that stops before today leaves the days after it unfetched, so it cannot
     # move the "everything is saved up to here" mark.
     covers_gap = covered_until is None or begin <= datetime.fromisoformat(covered_until)
     return _Window(
         begin=begin,
-        finish=min(end_of_last_day, now - CLOCK_MARGIN),
+        finish=finish,
         days=(last - first).days + 1,
         reaches_back=last == today and covers_gap,
     )

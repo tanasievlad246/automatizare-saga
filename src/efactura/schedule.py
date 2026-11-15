@@ -443,7 +443,7 @@ def _run(cfg, now, make_service, clock, found, trace, period: Period) -> dict:
         asked = asked_for(period, clock.date())
         service = (make_service or Service)(cfg)
         answer = service.sync_all(progress=_progress, **asked)
-    except EfacturaError as exc:  # the period has no day left to ask for
+    except EfacturaError as exc:  # a refusal, such as a period with no day left: said as it is, not as a fault
         log.warning("The automatic download was refused: %s", exc.message)
         answer = {"status": "failed", "error": {"code": exc.code, "message": exc.message}}
     except Exception as exc:

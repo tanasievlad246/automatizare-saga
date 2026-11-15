@@ -822,3 +822,18 @@ The owner asked for the small things that had been left, and for the author line
 - **Small**: the running state's icon turns; the switch's off colour is a design token; a code named like an inherited property is not taken for a known error code.
 
 Tests at the end: `uv run pytest -q` 1019 passed; `pnpm --dir frontend test` 137 passed.
+
+## The period, and the times in 24 hours (2026-11-15, after 0.5.0)
+
+The owner asked for a start and an end date for the automatic download, buttons for the last 3, 5, 7 and 10 days, and the time chosen in 24 hours. The decisions are in the design under "Added after 0.5.0". Built on the branch `schedule-period`, with the tests first, reviewed once, and looked at in a browser.
+
+- **The schedule holds a period** (`schedule.Period`): `{"days": N}` or `{"start", "end"}`. `checked` takes it; with `today`, a schedule that is on is refused a period that has not begun or that ended over 60 days ago. `asked_for(period, today)` is what a run passes to `sync_all`: the days as a minimum (`cover_gap`), or the chosen days cut to those that have come and that ANAF keeps.
+- **`Service.sync_all`** takes `days`, `start`, `end` and `cover_gap` and passes them to each client's `sync`. The first day is moved up to the oldest day ANAF keeps for each client by the clock of that moment, so a run that passes midnight does not lose the clients after it.
+- **`_plan_window`** refuses dates of which ANAF keeps no moment (the sixtieth day back, asked for in its last minutes).
+- **`PUT /sync/schedule`** takes `period` (`days` strictly a number); left out, the stored period stays. `GET` returns it. The journal's `schedule.saved` and `sync.auto_started` carry it.
+- **The page**: `SchedulePeriodFields` (four buttons, two date fields, a sentence saying what the choice means), `TimeOfDayField` (hours 00 to 23, minutes 00 to 59), the shared `DateField`, and in `scheduleTexts.ts` `describePeriod`, `periodSays`, the period's refusals in `formProblem`, the "Perioada aleasă s-a încheiat" card and the menu note. A download that failed for another reason is said before a period that is over.
+- **The page tests run on Romania's clock** (`test.env.TZ` in `vite.config.ts`); `daysAgo` counts on the calendar.
+
+Left as they are, known: the per-client journal line of a download with chosen dates still says "pentru ultimele N zile"; the first day's midnight is taken with today's offset from UTC, so a period that begins before a change of the clock starts an hour late; while the schedule is off, the sentence under the fields does not say that ANAF no longer has a period that ended over 60 days ago.
+
+Tests at the end: `uv run pytest -q` 1072 passed; `pnpm --dir frontend test` 153 passed. Seen in a browser against made-up data: the form with the period and the two lists for the time, the three refusals, a schedule saved from the page, a run at its minute asking for the chosen days, the card and the menu note of a period that is over, a narrow window.

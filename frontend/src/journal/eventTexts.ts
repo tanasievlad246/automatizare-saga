@@ -46,6 +46,7 @@ const AUTO_FAILURES: Record<string, string> = {
   login_needed: 'trebuie să vă conectați din nou la ANAF',
   anaf_limit_reached: 'ANAF a limitat numărul de cereri pentru azi',
   anaf_error: 'ANAF a răspuns cu o eroare',
+  invalid_input: 'ANAF nu mai păstrează facturile din perioada aleasă',
 }
 
 const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
@@ -68,7 +69,7 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
   'schedule.saved': (data) => {
     if (!data.enabled) return 'Descărcarea automată a fost oprită.'
     // Lines written before the period existed do not carry one.
-    const period = data.period ? `, cu ${describePeriod(data.period as SchedulePeriod)}` : ''
+    const period = data.period ? `, pentru ${describePeriod(data.period as SchedulePeriod)}` : ''
     return `Descărcarea automată a fost pornită: ${describeWhen(data.days as number[], data.times as string[])}${period}.`
   },
   'sync.auto_started': (data) =>

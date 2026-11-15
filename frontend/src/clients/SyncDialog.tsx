@@ -5,6 +5,7 @@ import { DateField } from '@/components/DateField'
 import { PillTabs } from '@/components/PillTabs'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { ANAF_KEEPS_DAYS, ANAF_KEEPS_LINE } from '../anafKeeps'
 import { ApiError, api } from '../api'
 import type { SyncPeriod } from '../api'
 import { errorMessage } from '../errorMessages'
@@ -17,7 +18,6 @@ const PERIODS = [1, 2, 3, 5, 10, 15, 30].map((days) => ({
   label: days === 1 ? 'Ultima zi' : `Ultimele ${countOf(days, 'zi', 'zile')}`,
 }))
 const USUAL_PERIOD = 5
-const ANAF_KEEPS_DAYS = 60
 
 type Outcome = { result: SyncResult } | { error: unknown } | 'running' | 'waiting'
 
@@ -105,9 +105,7 @@ export function SyncDialog({ clients, someAreOff, onClose }: { clients: Client[]
                 <DateField id="sync-end" label="Până la" value={end} min={start || daysAgo(ANAF_KEEPS_DAYS)} max={today()} onChange={(day) => { setEnd(day); setDays(null) }} />
               </div>
             </div>
-            <p className="text-muted-foreground">
-              ANAF păstrează facturile doar 60 de zile. Facturile descărcate deja nu se descarcă a doua oară.
-            </p>
+            <p className="text-muted-foreground">{ANAF_KEEPS_LINE}</p>
           </>
         )}
 

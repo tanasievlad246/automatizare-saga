@@ -326,3 +326,40 @@ def test_dates_that_make_no_sense_end_the_run_as_failed(service):
 
     assert answer["status"] == "failed"
     assert {r["error"]["code"] for r in answer["results"]} == {"invalid_input"}
+
+
+def test_a_minimum_of_days_reaches_back_to_the_last_complete_run(cfg, anaf):
+    ten_days_ago = Service(cfg, http=anaf.client(), now=lambda: NOW - timedelta(days=10))
+    ten_days_ago.save_client(VALID_CUI, "Alfa")
+    assert ten_days_ago.sync_all()["status"] == "ok"
+    service = Service(cfg, http=anaf.client(), now=lambda: NOW)
+
+    anaf.list_requests.clear()
+    service.sync_all(days=3, cover_gap=True)
+    (_, first, last), = _asked_of_anaf(anaf)
+    assert last - first >= timedelta(days=10)
+
+    anaf.list_requests.clear()
+    service.sync_all(days=3)
+    (_, first, last), = _asked_of_anaf(anaf)
+    assert last - first == timedelta(days=3)
+
+
+def test_a_run_that_passes_midnight_keeps_its_first_day_within_what_anaf_keeps(cfg, anaf):
+    before, after = (datetime(2026, 11, day, *time, tzinfo=NOW.tzinfo) for day, time in ((11, (23, 59, 30)), (12, (0, 0, 30))))
+    clock = {"now": before}
+    service = Service(cfg, http=anaf.client(), now=lambda: clock["now"])
+    service.save_client(OTHER_VALID_CUI, "Beta")
+    service.save_client(VALID_CUI, "Alfa")
+
+    def midnight_passes_before_the_second_client(position, total):
+        if position == 1:
+            clock["now"] = after
+
+    # 12 September is the sixtieth day back on the 11th, and one day too old on the 12th.
+    answer = service.sync_all(midnight_passes_before_the_second_client, start="2026-09-12", end="2026-11-11")
+
+    assert [(r["name"], r["ok"]) for r in answer["results"]] == [("Alfa", True), ("Beta", True)]
+    # Each was asked from as far back as ANAF reaches at its own moment.
+    as_far_back = timedelta(days=60) - timedelta(minutes=5)
+    assert [first for _, first, _ in _asked_of_anaf(anaf)] == [before - as_far_back, after - as_far_back]

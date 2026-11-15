@@ -1,5 +1,6 @@
 // What the "Descărcare automată" screen and the menu say, written from the schedule's status.
 
+import { ANAF_KEEPS_DAYS } from '../anafKeeps'
 import { knowsCode, messageForCode } from '../errorMessages'
 import { countOf, daysAgo, formatDate, formatFromWhen, formatNext, formatWhen, today } from '../format'
 import type { SchedulePeriod, ScheduleRun, ScheduleStatus } from '../types'
@@ -9,7 +10,9 @@ export const DAY_NAMES = ['Luni', 'Marți', 'Miercuri', 'Joi', 'Vineri', 'Sâmb�
 export const MOST_TIMES = 4
 /** The periods offered as buttons: the last so many days. */
 export const PERIOD_DAYS = [3, 5, 7, 10]
-const ANAF_KEEPS_DAYS = 60
+
+/** A day as the date fields and the program write it. A year typed with five digits is not one. */
+const isDay = (text: string) => /^\d{4}-\d{2}-\d{2}$/.test(text)
 
 const day = (index: number) => DAY_NAMES[index].toLowerCase()
 
@@ -31,25 +34,25 @@ export function describeWhen(days: number[], times: string[]): string {
   return `${which}, la ${listed(times)}`
 }
 
-/** "facturile din ultimele 7 zile" or "facturile din 01.11.2026 – 30.11.2026" */
+/**
+ * "facturile sosite în ultimele 7 zile" or "facturile sosite în perioada 01.11.2026 – 30.11.2026".
+ * "Sosite": ANAF goes by the day an invoice reached it, not by the date written on it.
+ */
 export function describePeriod(period: SchedulePeriod): string {
-  if ('days' in period) return `facturile din ${period.days === 1 ? 'ultima zi' : `ultimele ${countOf(period.days, 'zi', 'zile')}`}`
+  if ('days' in period) return `facturile sosite în ${period.days === 1 ? 'ultima zi' : `ultimele ${countOf(period.days, 'zi', 'zile')}`}`
   const first = formatDate(period.start)
-  return `facturile din ${period.start === period.end ? first : `${first} – ${formatDate(period.end)}`}`
+  return period.start === period.end ? `facturile sosite pe ${first}` : `facturile sosite în perioada ${first} – ${formatDate(period.end)}`
 }
 
 /** Under the period's fields: what the choice means at each download. */
 export function periodSays(period: SchedulePeriod): string {
+  if (!('days' in period) && (!isDay(period.start) || !isDay(period.end) || period.start > period.end)) {
+    return 'Alegeți prima și ultima zi a perioadei.'
+  }
   const each = `La fiecare descărcare, programul aduce ${describePeriod(period)}.`
-  if ('days' in period) return `${each} Dacă a stat oprit mai mult de atât, merge înapoi până la ultima descărcare completă.`
-  if (!period.start || !period.end || period.start > period.end) return 'Alegeți prima și ultima zi a perioadei.'
-  return `${each} Zilele rămân aceleași: după ${formatDate(period.end)} nu mai vin facturi noi până nu alegeți altă perioadă.`
-}
-
-/** The last day of a period of chosen dates that is over, while the schedule is on; null otherwise. */
-function endedOn(status: ScheduleStatus, now: Date): string | null {
-  const { period } = status
-  return status.enabled && 'end' in period && period.end < today(now) ? period.end : null
+  return 'days' in period
+    ? `${each} Dacă a stat oprit mai mult de atât, merge înapoi până la ultima descărcare completă.`
+    : `${each} Perioada rămâne aceeași: după ${formatDate(period.end)} nu mai vin facturi noi până nu alegeți altă perioadă.`
 }
 
 export type ScheduleChoice = { enabled: boolean; days: number[]; times: string[]; period: SchedulePeriod }
@@ -84,7 +87,7 @@ export function formProblem(enabled: boolean, days: number[], times: string[], p
   if (enabled && days.length === 0) return 'Alegeți cel puțin o zi.'
   if (new Set(times).size < times.length) return 'Aceeași oră apare de două ori.'
   if ('days' in period) return null
-  if (!period.start || !period.end) return 'Alegeți amândouă zilele perioadei.'
+  if (!isDay(period.start) || !isDay(period.end)) return 'Alegeți amândouă zilele perioadei.'
   if (period.start > period.end) return 'Prima zi a perioadei este după ultima.'
   if (!enabled) return null
   if (period.start > today(now)) return 'Prima zi a perioadei nu poate fi după azi.'
@@ -100,6 +103,17 @@ export type StateCard = {
 
 const NOT_DONE_STATUSES: ScheduleRun['status'][] = ['failed', 'unreachable', 'interrupted']
 
+/**
+ * The last day of a period of chosen dates that is over, when that is the thing to say: the schedule is on, and
+ * the last download did not fail for another reason (one refused over the period itself is the same news).
+ */
+function endedOn(status: ScheduleStatus, now: Date): string | null {
+  const { period, last_run: run } = status
+  if (!status.enabled || !('end' in period) || period.end >= today(now)) return null
+  const failedOtherwise = run !== null && NOT_DONE_STATUSES.includes(run.status) && run.error?.code !== 'invalid_input'
+  return failedOtherwise ? null : period.end
+}
+
 /** "3 clienți · 7 facturi noi · 2 de verificat" */
 function outcome(run: ScheduleRun): string {
   const parts = [countOf(run.clients, 'un client', 'clienți')]
@@ -109,7 +123,10 @@ function outcome(run: ScheduleRun): string {
   return parts.join(' · ')
 }
 
-/** What the card at the top of the screen says, first match wins: running, off, no client on, a period that is over, the last run. */
+/**
+ * What the card at the top of the screen says, first match wins: running, off, no client on, a period that is over
+ * (unless the last run failed for another reason), the last run.
+ */
 export function stateCard(status: ScheduleStatus, now = new Date()): StateCard {
   const card = (tone: StateCard['tone'], title: string, text: string, links: Partial<Pick<StateCard, 'journal' | 'clients'>> = {}): StateCard =>
     ({ tone, title, text, journal: false, clients: false, ...links })
@@ -134,10 +151,11 @@ export function stateCard(status: ScheduleStatus, now = new Date()): StateCard {
   }
   const ended = endedOn(status, now)
   if (ended) {
+    // Past the 60 days every download is refused, so the next one is not announced.
     const what = ended < daysAgo(ANAF_KEEPS_DAYS, now)
-      ? 'ANAF păstrează facturile doar 60 de zile, așa că din perioada aceasta nu mai are ce aduce. Alegeți mai jos altă perioadă.'
-      : `Descărcarea automată mai aduce doar facturile din perioada aceasta. Pentru cele sosite după ${formatDate(ended)}, alegeți mai jos altă perioadă.`
-    return card('attention', `Perioada aleasă s-a încheiat pe ${formatDate(ended)}`, then(what), { journal: Boolean(run) })
+      ? 'ANAF păstrează facturile doar 60 de zile, așa că programul nu mai are ce aduce din perioada aceasta. Alegeți mai jos altă perioadă.'
+      : then(`Descărcarea automată mai aduce doar facturile din perioada aceasta. Pentru cele sosite după ${formatDate(ended)}, alegeți mai jos altă perioadă.`)
+    return card('attention', `Perioada aleasă s-a încheiat pe ${formatDate(ended)}`, what, { journal: Boolean(run) })
   }
   if (run && NOT_DONE_STATUSES.includes(run.status)) {
     const when = formatFromWhen(run.started_at, now)

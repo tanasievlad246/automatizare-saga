@@ -25,7 +25,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictInt
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -199,7 +199,7 @@ class ClientSwitchRequest(BaseModel):
 
 
 class PeriodRequest(BaseModel):
-    days: int | None = None  # the last so many days, 1-60
+    days: StrictInt | None = None  # the last so many days, 1-60; a number, not "7" or true
     start: str | None = None  # or a first day, YYYY-MM-DD, with a last one
     end: str | None = None
 

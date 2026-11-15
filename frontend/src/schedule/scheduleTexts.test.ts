@@ -51,6 +51,11 @@ describe('what is wrong with the form', () => {
     expect(withDates(true, '2026-11-16', '2026-11-16')).toBeNull()
   })
 
+  it('takes only days written as the date fields write them', () => {
+    expect(withDates(false, '2026-11-01', '20265-11-30')).toBe('Alegeți amândouă zilele perioadei.')
+    expect(withDates(false, '01.11.2026', '2026-11-30')).toBe('Alegeți amândouă zilele perioadei.')
+  })
+
   it('refuses a period ANAF cannot be asked for only while the schedule is on', () => {
     expect(withDates(true, '2026-11-17', '2026-11-30')).toBe('Prima zi a perioadei nu poate fi după azi.')
     expect(withDates(false, '2026-11-17', '2026-11-30')).toBeNull()
@@ -269,19 +274,19 @@ describe('the journal address of a run', () => {
 
 describe('the period in words', () => {
   it('says which invoices a download brings', () => {
-    expect(describePeriod({ days: 7 })).toBe('facturile din ultimele 7 zile')
-    expect(describePeriod({ days: 1 })).toBe('facturile din ultima zi')
-    expect(describePeriod({ days: 30 })).toBe('facturile din ultimele 30 de zile')
-    expect(describePeriod({ start: '2026-11-01', end: '2026-11-30' })).toBe('facturile din 01.11.2026 – 30.11.2026')
-    expect(describePeriod({ start: '2026-11-16', end: '2026-11-16' })).toBe('facturile din 16.11.2026')
+    expect(describePeriod({ days: 7 })).toBe('facturile sosite în ultimele 7 zile')
+    expect(describePeriod({ days: 1 })).toBe('facturile sosite în ultima zi')
+    expect(describePeriod({ days: 30 })).toBe('facturile sosite în ultimele 30 de zile')
+    expect(describePeriod({ start: '2026-11-01', end: '2026-11-30' })).toBe('facturile sosite în perioada 01.11.2026 – 30.11.2026')
+    expect(describePeriod({ start: '2026-11-16', end: '2026-11-16' })).toBe('facturile sosite pe 16.11.2026')
   })
 
   it('explains under the fields what the choice means', () => {
     expect(periodSays({ days: 3 })).toBe(
-      'La fiecare descărcare, programul aduce facturile din ultimele 3 zile. Dacă a stat oprit mai mult de atât, merge înapoi până la ultima descărcare completă.',
+      'La fiecare descărcare, programul aduce facturile sosite în ultimele 3 zile. Dacă a stat oprit mai mult de atât, merge înapoi până la ultima descărcare completă.',
     )
     expect(periodSays({ start: '2026-11-01', end: '2026-11-30' })).toBe(
-      'La fiecare descărcare, programul aduce facturile din 01.11.2026 – 30.11.2026. Zilele rămân aceleași: după 30.11.2026 nu mai vin facturi noi până nu alegeți altă perioadă.',
+      'La fiecare descărcare, programul aduce facturile sosite în perioada 01.11.2026 – 30.11.2026. Perioada rămâne aceeași: după 30.11.2026 nu mai vin facturi noi până nu alegeți altă perioadă.',
     )
   })
 
@@ -289,6 +294,7 @@ describe('the period in words', () => {
     expect(periodSays({ start: '2026-11-01', end: '' })).toBe('Alegeți prima și ultima zi a perioadei.')
     expect(periodSays({ start: '', end: '' })).toBe('Alegeți prima și ultima zi a perioadei.')
     expect(periodSays({ start: '2026-11-30', end: '2026-11-01' })).toBe('Alegeți prima și ultima zi a perioadei.')
+    expect(periodSays({ start: '2026-11-01', end: '20265-11-30' })).toBe('Alegeți prima și ultima zi a perioadei.')
   })
 })
 
@@ -296,19 +302,37 @@ describe('a period whose last day has passed', () => {
   const ended = { start: '2026-11-01', end: '2026-11-15' }
   const lastDayToday = { start: '2026-11-01', end: '2026-11-16' }
 
-  it('is what the state card says, before anything about the last run, with the next download and the way to the journal', () => {
-    const failed = run({ status: 'failed', error: { code: 'login_needed', message: 'x' } })
-    expect(stateCard(status({ period: ended, last_run: failed }), NOW)).toEqual({
+  const refused = run({ status: 'failed', error: { code: 'invalid_input', message: 'x' } })
+  const noLogin = run({ status: 'failed', error: { code: 'login_needed', message: 'x' } })
+
+  it('is what the state card says after a download that went well, with the next one and the way to the journal', () => {
+    expect(stateCard(status({ period: ended, last_run: run() }), NOW)).toEqual({
       tone: 'attention', title: 'Perioada aleasă s-a încheiat pe 15.11.2026',
       text: 'Descărcarea automată mai aduce doar facturile din perioada aceasta. Pentru cele sosite după 15.11.2026, alegeți mai jos altă perioadă. Următoarea descărcare: mâine, la 08:00.',
       journal: true, clients: false,
     })
     expect(stateCard(status({ period: ended }), NOW).journal).toBe(false)
+    expect(stateCard(status({ period: ended, last_run: run({ status: 'partial', failed_clients: 1 }) }), NOW).title)
+      .toBe('Perioada aleasă s-a încheiat pe 15.11.2026')
+  })
+
+  it('gives way to a download that did not work for another reason', () => {
+    expect(stateCard(status({ period: ended, last_run: noLogin }), NOW).title).toBe('Descărcarea de azi, 08:00 nu a reușit')
+    expect(stateCard(status({ period: ended, last_run: run({ status: 'unreachable' }) }), NOW).title)
+      .toBe('Descărcarea de azi, 08:00 nu a ajuns la ANAF')
+    expect(stateCard(status({ period: ended, last_run: run({ status: 'interrupted' }) }), NOW).title)
+      .toBe('Descărcarea de azi, 08:00 a fost întreruptă')
+    expect(menuNote(status({ period: ended, last_run: noLogin }), NOW)).toEqual({ text: 'Ultima nu a reușit', tone: 'attention' })
+  })
+
+  it('is still said when the download was refused because of the period itself', () => {
+    expect(stateCard(status({ period: ended, last_run: refused }), NOW).title).toBe('Perioada aleasă s-a încheiat pe 15.11.2026')
+    expect(menuNote(status({ period: ended, last_run: refused }), NOW)).toEqual({ text: 'Perioada s-a încheiat', tone: 'attention' })
   })
 
   it('says that ANAF has nothing left of a period that ended over 60 days ago', () => {
     expect(stateCard(status({ period: { start: '2026-08-01', end: '2026-09-16' } }), NOW).text)
-      .toBe('ANAF păstrează facturile doar 60 de zile, așa că din perioada aceasta nu mai are ce aduce. Alegeți mai jos altă perioadă. Următoarea descărcare: mâine, la 08:00.')
+      .toBe('ANAF păstrează facturile doar 60 de zile, așa că programul nu mai are ce aduce din perioada aceasta. Alegeți mai jos altă perioadă.')
     expect(stateCard(status({ period: { start: '2026-08-01', end: '2026-09-17' } }), NOW).text)
       .toBe('Descărcarea automată mai aduce doar facturile din perioada aceasta. Pentru cele sosite după 17.09.2026, alegeți mai jos altă perioadă. Următoarea descărcare: mâine, la 08:00.')
   })
@@ -321,7 +345,8 @@ describe('a period whose last day has passed', () => {
   })
 
   it('is what the menu says, unless a download is going', () => {
-    expect(menuNote(status({ period: ended, last_run: run({ status: 'failed' }) }), NOW)).toEqual({ text: 'Perioada s-a încheiat', tone: 'attention' })
+    expect(menuNote(status({ period: ended, last_run: run() }), NOW)).toEqual({ text: 'Perioada s-a încheiat', tone: 'attention' })
+    expect(menuNote(status({ period: ended }), NOW)).toEqual({ text: 'Perioada s-a încheiat', tone: 'attention' })
     expect(menuNote(status({ period: lastDayToday }), NOW)).toBeNull()
     expect(menuNote(status({ enabled: false, period: ended }), NOW)).toBeNull()
     expect(menuNote(status({ period: ended, running: { started_at: '2026-11-16T08:00:20', done: 0, total: 1 } }), NOW))

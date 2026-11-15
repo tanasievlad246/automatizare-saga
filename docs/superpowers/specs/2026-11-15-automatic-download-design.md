@@ -118,4 +118,18 @@ Windows: the background thread under the window-less start, and a run made up af
 
 ## Not included
 
-Windows Task Scheduler; a schedule per client; e-mail or pop-up notifications; a spending limit for Jev; choosing the period of an automatic download; a "run now" button.
+Windows Task Scheduler; a schedule per client; e-mail or pop-up notifications; a spending limit for Jev; a "run now" button. (Choosing the period of an automatic download was on this list; it was added afterwards, see below.)
+
+## Added after 0.5.0: the period, and the times in 24 hours (2026-11-15)
+
+The owner asked: "set the start and end dates for the cronjob sync from e factura, and also have buttons for last 3 days, 5 days, 7 days, 10 days", and "make the time selector 24hour time format". Everything beyond those sentences is a call.
+
+- The schedule holds a period beside its days and times: `{"days": N}` or `{"start", "end"}` (dates as `YYYY-MM-DD`). The screen offers 3, 5, 7 and 10 days as buttons and two date fields, under "Facturile din ce perioadă?", worded like the download window.
+- **(call)** The buttons mean "the last N days at each run", not dates filled in once: a download that repeats has to move with the calendar.
+- **(call)** A number of days is a minimum (`cover_gap`), as in the download window: after a pause the run reaches back to the last complete run, so no day is skipped.
+- **(call)** Two chosen days stay the same at every run. The last day may be ahead when it is saved ("this month"); each run asks for the days that have come. The first day may be older than 60 days; each run asks from the oldest day ANAF keeps.
+- **(call)** Once the last day has passed the runs go on (the first one after it brings that day's late invoices) and bring nothing newer; the state card and the menu say "Perioada s-a încheiat". Once the last day is over 60 days back the run fails with `invalid_input` before anyone is contacted.
+- **(call)** While the schedule is on, a period that has not begun, or that ended over 60 days ago, is refused when saving, by the program and by the form. While it is off only the shape is checked, so it can always be switched off.
+- **(call)** `PUT /sync/schedule` without `period` keeps the stored one. A schedule saved by 0.5.0 asks for the last 7 days; `default_days` no longer decides the automatic download. `efactura sync-all` keeps the default period.
+- **(call)** The time of day is chosen from two lists, hours 00 to 23 and minutes 00 to 59. The browser's own time field follows the PC's regional settings, which is where AM and PM came from; nothing in a page can force it to 24 hours.
+- **(call)** The date fields stay the browser's own, as in the download window and on the costs screen; the sentence under them writes the days as `zz.ll.aaaa`.

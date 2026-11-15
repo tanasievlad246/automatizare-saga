@@ -190,9 +190,15 @@ describe('days as the date fields write them', () => {
     expect(today(new Date(2026, 10, 16, 23, 55))).toBe('2026-11-16')
   })
 
+  it('runs on Romania\'s clock, which the next test needs', () => {
+    expect(new Date(2026, 0, 15).getTimezoneOffset()).toBe(-120)
+    expect(new Date(2026, 6, 15).getTimezoneOffset()).toBe(-180)
+  })
+
   it('counts days back on the calendar, across months and the change of the clock', () => {
     expect(daysAgo(60, new Date(2026, 10, 16, 9, 0))).toBe('2026-09-17')
-    expect(daysAgo(1, new Date(2026, 2, 29, 0, 30))).toBe('2026-03-28')
+    // 29 March 2026 has 23 hours and 25 October has 25: a day is not always 24 hours back.
+    expect(daysAgo(1, new Date(2026, 2, 30, 0, 30))).toBe('2026-03-29')
     expect(daysAgo(1, new Date(2026, 9, 25, 23, 30))).toBe('2026-10-24')
     expect(daysAgo(0, new Date(2026, 10, 16, 9, 0))).toBe('2026-11-16')
   })

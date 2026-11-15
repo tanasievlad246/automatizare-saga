@@ -524,7 +524,7 @@ def test_the_schedule_holds_the_period_to_download(api):
 
 def test_a_bad_period_answers_400(api):
     body = {"enabled": False, "days": [0], "times": ["08:00"]}
-    for period in ({}, {"days": 61}, {"days": 3, "start": "2026-11-01", "end": "2026-11-30"},
+    for period in ({}, {"days": 61}, {"days": True}, {"days": "7"}, {"days": 3, "start": "2026-11-01", "end": "2026-11-30"},
                    {"start": "2026-11-30", "end": "2026-11-01"}, {"start": "2026-11-01"}):
         answer = api.put("/sync/schedule", json={**body, "period": period})
         assert (answer.status_code, answer.json()["error"]["code"]) == (400, "invalid_input"), period

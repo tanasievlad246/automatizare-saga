@@ -94,6 +94,7 @@ The program can download invoices by itself, for every client that is switched o
 - **The program has to be running.** The running program looks at the schedule half a minute after it starts and then every half minute. A PC that is off, or a program that is stopped, downloads nothing; the moments it missed are not lost, see the next point.
 - **A missed moment is made up once.** When the program finds that a moment has passed without a download, it runs one download for the latest such moment, however many were missed. A moment that was already past when the schedule was saved is never made up.
 - **What a run does:** the same as a download by hand for each client that is on, one after another, then the invoices just saved are given an account and their SAGA files are written. A client that fails does not stop the others. A failure that would be the same for all of them (the login is needed, ANAF's limit is reached, the settings are wrong, ANAF cannot be reached) stops the run, and it is recorded how it ended: `ok`, `partial`, `failed` or `unreachable`.
+- **Which invoices a run asks for.** The schedule holds a period, chosen on the same screen: the last 3, 5, 7 or 10 days, or a first and a last day. A number of days is a minimum: after a pause the run reaches back to the last complete run, as a download by hand does. Two chosen days stay the same at every run; each run asks for those of them that have come (the last day may still be ahead when it is saved) and that ANAF still keeps. Once the last day has passed, the runs bring nothing newer, and the screen and the menu say so. Once it is more than 60 days back, the run ends as `failed` with `invalid_input` before anyone is contacted. A schedule that is on cannot be saved with a period that has not begun or that ended more than 60 days ago. A schedule saved before the period existed asks for the last 7 days; `default_days` in `config.toml` no longer decides the automatic download.
 - **Three more attempts.** A run that could not reach ANAF, or that the program did not live to finish, is tried again a quarter of an hour later, up to four attempts in all. The next moment of the schedule starts over. A run that failed for another reason (no login, for instance) is not repeated until the next moment.
 - **A run in which no client succeeded is a failed run.** It is recorded as `failed` with the first client's error (ANAF's, for instance), shown as failed on the page, and not tried again before the next moment. One client failing among others leaves the run `partial`.
 - **A download made by hand** at the same time is waited for, one client at a time, for about a minute per client; after that the client counts as failed. The two never write together.
@@ -181,7 +182,7 @@ The page opens at `http://autosaga.localhost:8765/ui/`. `http://127.0.0.1:8765/u
 | **One invoice** | The invoice as a person reads it, ANAF's XML, the SAGA XML; its account and who chose it; accept Jev's proposal or pick another; a rule proposed from it when no rule decided it; the path of the SAGA file |
 | **Reguli de clasificare** | Rules proposed from recent decisions, the rules, the accounts Jev chooses from, how sure Jev must be, the question Jev is asked. The button "Testează regulile" opens the rule test, see [Testing the rules](#testing-the-rules) |
 | **Costuri Jev** | Cost between two dates, by day, week, month or year, and every invoice Jev classified |
-| **Descărcare automată** | Switch the automatic download on or off, the days and times (up to four a day), when the next one is, and how the last one went. See [Automatic download](#automatic-download) |
+| **Descărcare automată** | Switch the automatic download on or off, the days and times (up to four a day, chosen as 00 to 23 hours whatever the PC's regional settings), the period of the invoices (the last 3, 5, 7 or 10 days, or two dates), when the next one is, and how the last one went. See [Automatic download](#automatic-download) |
 | **Copii de siguranță** | The folder for the copies of the database, when the last one was made and when the next is due, "Fă o copie acum", and the copies kept, each with "Restaurează". See [Backups](#backups) |
 | **Jurnal** | What the program did, line by line: everything or only the problems, by area, period or a word; one line opens to its technical details and to the whole operation it belongs to. See [The journal](#the-journal) |
 | **Chei și parole** | The OpenRouter key and ANAF client details (hidden until asked for, changeable), and when the ANAF login expires |
@@ -397,8 +398,8 @@ Routes that exist for the screen and have no command:
 |---|---|
 | `GET /clients`, `POST /clients` with `{"cui", "name"}`, `DELETE /clients/{cui}` | The client list |
 | `PUT /clients/{cui}/enabled` with `{"enabled": true}` or `false` | Switch a client on or off |
-| `GET /sync/schedule` | When the program downloads by itself: `enabled`, `days` (0 is Monday), `times`, `next_at`, the run in progress (`running`), the last run with its `retry_at`, and how many clients are on and off. Not written in the journal |
-| `PUT /sync/schedule` with `{"enabled", "days": [0, 1], "times": ["08:00"]}` | Save the schedule (at most four times, `HH:MM`) and answer the same as `GET`. Answers 400 for a schedule that makes no sense |
+| `GET /sync/schedule` | When the program downloads by itself: `enabled`, `days` (0 is Monday), `times`, `period` (`{"days": 7}`, or `{"start", "end"}`), `next_at`, the run in progress (`running`), the last run with its `retry_at`, and how many clients are on and off. Not written in the journal |
+| `PUT /sync/schedule` with `{"enabled", "days": [0, 1], "times": ["08:00"], "period": {"days": 7}}` | Save the schedule (at most four times, `HH:MM`) and answer the same as `GET`. `period` is `{"days": 1 to 60}` or `{"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}`; left out, the stored period stays. Answers 400 for a schedule that makes no sense |
 | `POST /clients/import?filename=clienti.xlsx` (the file as the body) | Add clients from Excel or CSV |
 | `POST /invoices/uploaded` with `{"ids": [...], "uploaded": true}` | Mark several invoices as uploaded, or not |
 | `GET /invoices/{id}/view` | One invoice: the row, the parsed invoice, both XML texts, Jev's answer, and `rule_suggestion` (the rule proposed from it, or `null`) |
@@ -656,6 +657,8 @@ For the automatic download:
 
 - **The thread** that looks at the schedule runs inside the program started without a window. That start is itself unconfirmed on Windows; if the program runs, the thread runs.
 - **A run made up after sleep:** a PC that wakes from sleep is expected to make up the moment it slept through within half a minute. Not yet seen on Windows.
+- **The period:** a run with the last days and a run with two chosen days were watched on macOS against made-up data. Neither has asked the real ANAF.
+- **The date fields** (here and in the download window) are the browser's own, so they show the day and the month in the order of the PC's regional settings. How they look on the Windows PC has not been seen; the sentence under them always writes the days as `zz.ll.aaaa`.
 
 For the screen:
 

@@ -1,5 +1,6 @@
 import { DateField } from '@/components/DateField'
 import { PillTabs } from '@/components/PillTabs'
+import { ANAF_KEEPS_LINE } from '../anafKeeps'
 import { countOf, today } from '../format'
 import type { SchedulePeriod } from '../types'
 import { PERIOD_DAYS, periodSays } from './scheduleTexts'
@@ -15,17 +16,16 @@ export function SchedulePeriodFields({ period, onChange }: { period: SchedulePer
     <div className="flex flex-col gap-2.5">
       <h3 className="font-sans text-lg font-bold">Facturile din ce perioadă?</h3>
       <PillTabs label="Perioada" options={LAST_DAYS} value={'days' in period ? period.days : null} onChange={(days) => onChange({ days })} />
-      <div className="flex flex-col gap-3 rounded-xl bg-background px-5 py-4.5">
-        <p className="font-bold">sau alegeți zilele</p>
+      <div role="group" aria-labelledby="schedule-dates" className="flex flex-col gap-3 rounded-xl bg-background px-5 py-4.5">
+        <p id="schedule-dates" className="font-bold">sau alegeți zilele</p>
         <div className="flex flex-wrap gap-x-5 gap-y-3.5">
           <DateField id="schedule-start" label="De la" value={dates.start} max={lastStart} onChange={(start) => onChange({ ...dates, start })} />
-          <DateField id="schedule-end" label="Până la" value={dates.end} min={dates.start || undefined} onChange={(end) => onChange({ ...dates, end })} />
+          {/* With a last day allowed, the browser stops the year at four digits. */}
+          <DateField id="schedule-end" label="Până la" value={dates.end} min={dates.start || undefined} max="9999-12-31" onChange={(end) => onChange({ ...dates, end })} />
         </div>
       </div>
-      <p>{periodSays(period)}</p>
-      <p className="text-muted-foreground">
-        ANAF păstrează facturile doar 60 de zile. Facturile descărcate deja nu se descarcă a doua oară.
-      </p>
+      <p aria-live="polite">{periodSays(period)}</p>
+      <p className="text-muted-foreground">{ANAF_KEEPS_LINE}</p>
     </div>
   )
 }

@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import path from 'node:path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
@@ -16,6 +17,10 @@ export default defineConfig({
     // Built straight into the Python package, so `efactura serve` needs nothing else.
     outDir: '../src/efactura/ui',
     emptyOutDir: true,
+  },
+  test: {
+    // The page is used on a PC in Romania, and some days show their edges only on its clock (the change of the hour).
+    env: { TZ: 'Europe/Bucharest' },
   },
   server: {
     port: 5173,

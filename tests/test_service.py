@@ -902,3 +902,11 @@ def test_a_range_may_start_on_the_sixtieth_day_back(service, anaf, logged_in):
     start, _ = window_of(anaf)
     assert start == ms(NOW - timedelta(days=60) + timedelta(minutes=5))  # as far back as ANAF goes
     assert error_code(lambda: service.sync(VALID_CUI, start="2026-09-11")) == "invalid_input"
+
+
+def test_a_range_anaf_keeps_no_moment_of_is_refused(service, anaf, clock, logged_in):
+    # The sixtieth day back, asked for in its last minutes: what ANAF still reaches of it begins after it ends.
+    clock["now"] = NOW.replace(hour=23, minute=57)
+
+    assert error_code(lambda: service.sync(VALID_CUI, start="2026-09-12", end="2026-09-12")) == "invalid_input"
+    assert anaf.list_requests == []
