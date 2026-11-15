@@ -198,10 +198,17 @@ class ClientSwitchRequest(BaseModel):
     enabled: bool
 
 
+class PeriodRequest(BaseModel):
+    days: int | None = None  # the last so many days, 1-60
+    start: str | None = None  # or a first day, YYYY-MM-DD, with a last one
+    end: str | None = None
+
+
 class ScheduleRequest(BaseModel):
     enabled: bool
     days: list[int]
     times: list[str]
+    period: PeriodRequest | None = None  # which invoices each run asks for; left out, it stays as stored
 
 
 class SagaFolderRequest(BaseModel):
@@ -400,7 +407,8 @@ def create_app(
 
     @router.put("/sync/schedule", dependencies=documented_key, summary="Choose when the program downloads by itself")
     def set_sync_schedule(body: ScheduleRequest):
-        return call(lambda s: s.set_schedule(body.enabled, body.days, body.times))
+        period = body.period.model_dump(exclude_none=True) if body.period else None
+        return call(lambda s: s.set_schedule(body.enabled, body.days, body.times, period))
 
     @router.get("/invoices", dependencies=documented_key, summary="Saved messages")
     def invoices(

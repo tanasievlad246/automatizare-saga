@@ -508,6 +508,29 @@ def test_a_bad_schedule_answers_400(api):
     assert api.get("/sync/schedule").json()["enabled"] is False
 
 
+def test_the_schedule_holds_the_period_to_download(api):
+    assert api.get("/sync/schedule").json()["period"] == {"days": 7}
+
+    body = {"enabled": False, "days": [0], "times": ["08:00"]}
+    saved = api.put("/sync/schedule", json={**body, "period": {"days": 3}})
+    assert (saved.status_code, saved.json()["period"]) == (200, {"days": 3})
+
+    dates = {"start": "2026-11-01", "end": "2026-11-30"}
+    assert api.put("/sync/schedule", json={**body, "period": dates}).json()["period"] == dates
+    # A program written before the period existed says nothing about it: it stays.
+    assert api.put("/sync/schedule", json=body).json()["period"] == dates
+    assert api.get("/sync/schedule").json()["period"] == dates
+
+
+def test_a_bad_period_answers_400(api):
+    body = {"enabled": False, "days": [0], "times": ["08:00"]}
+    for period in ({}, {"days": 61}, {"days": 3, "start": "2026-11-01", "end": "2026-11-30"},
+                   {"start": "2026-11-30", "end": "2026-11-01"}, {"start": "2026-11-01"}):
+        answer = api.put("/sync/schedule", json={**body, "period": period})
+        assert (answer.status_code, answer.json()["error"]["code"]) == (400, "invalid_input"), period
+    assert api.get("/sync/schedule").json()["period"] == {"days": 7}
+
+
 def test_reading_the_schedule_is_not_written_in_the_journal(api, cfg):
     from efactura import journal
 

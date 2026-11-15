@@ -238,8 +238,12 @@ class Service:
             "messages": messages,
         }
 
-    def sync_all(self, progress: Callable[[int, int], None] | None = None) -> dict:
-        """Download for every client that is switched on, one after another.
+    def sync_all(
+        self, progress: Callable[[int, int], None] | None = None, days: int | None = None,
+        start: str | None = None, end: str | None = None, cover_gap: bool = False,
+    ) -> dict:
+        """Download for every client that is switched on, one after another, each for the
+        same period (`days`, or `start` and `end`, with `cover_gap`: see `sync`).
 
         One client's failure does not stop the others, except a failure that would be the
         same for all of them (STOPS_THE_RUN). `progress(position, total)` is told before
@@ -266,7 +270,7 @@ class Service:
             if not still_on:
                 continue
             try:
-                result = self._sync_waiting(cui)
+                result = self._sync_waiting(cui, days=days, start=start, end=end, cover_gap=cover_gap)
             except EfacturaError as exc:
                 if exc.code == CLIENT_OFF:
                     continue
@@ -308,11 +312,11 @@ class Service:
             "results": results,
         }
 
-    def _sync_waiting(self, cui: str) -> dict:
+    def _sync_waiting(self, cui: str, **period) -> dict:
         """`sync`, but when another download holds the lock, wait and try again."""
         for attempt in range(1, BUSY_TRIES + 1):
             try:
-                return self.sync(cui)
+                return self.sync(cui, **period)
             except EfacturaError as exc:
                 if exc.code != BUSY or attempt == BUSY_TRIES:
                     raise
@@ -725,21 +729,28 @@ class Service:
         """When the program downloads by itself, and how the last run went."""
         return schedule.status(self.cfg, self._now())
 
-    def set_schedule(self, enabled, days, times) -> dict:
-        """Save when the program downloads by itself. A schedule that makes no sense is
-        refused (invalid_input) and the one stored stays."""
-        wanted = schedule.checked(enabled, days, times)
+    def set_schedule(self, enabled, days, times, period=None) -> dict:
+        """Save when the program downloads by itself, and for which period: {"days": 7}, or
+        {"start": ..., "end": ...}; left out, the stored period stays. A schedule that makes no
+        sense is refused (invalid_input) and the one stored stays."""
         store = self._open_store()
         try:
-            saved = schedule.save(store, wanted, schedule.local_clock(self._now()))
+            clock = schedule.local_clock(self._now())
+            if period is None:
+                period = schedule.read(store).period.as_dict()
+            saved = schedule.save(store, schedule.checked(enabled, days, times, period, clock.date()), clock)
             if saved.enabled:
                 names = ", ".join(DAY_NAMES[day] for day in saved.days)
-                message = f"Automatic download switched on: days {names}, at {', '.join(saved.times)}."
+                message = (
+                    f"Automatic download switched on: days {names}, at {', '.join(saved.times)}, "
+                    f"{saved.period.in_words()}."
+                )
             else:
                 message = "Automatic download switched off."
             journal.record(
                 "settings", "schedule.saved", message,
                 enabled=saved.enabled, days=list(saved.days), times=list(saved.times),
+                period=saved.period.as_dict(),
             )
         finally:
             store.close()

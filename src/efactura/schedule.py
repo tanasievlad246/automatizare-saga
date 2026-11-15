@@ -13,6 +13,9 @@ made up once, and only the latest of several is. A run that could not reach ANAF
 record never got its end, is tried again a quarter of an hour later, up to four attempts in
 all; the next slot drops whatever attempts the one before was still owed. A slot that was
 already past when the schedule was saved never runs.
+
+Each run asks ANAF for the schedule's period: the last so many days, or the days between
+two dates the person chose, as far as they have come and as far back as ANAF keeps.
 """
 
 from __future__ import annotations
@@ -23,11 +26,11 @@ import re
 import threading
 import time
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Callable
 
 from . import journal
-from .config import Config
+from .config import MAX_DAYS, Config
 from .errors import INTERNAL_ERROR, INVALID_INPUT, EfacturaError
 from .store import Store
 
@@ -39,8 +42,27 @@ RETRY_AFTER = timedelta(minutes=15)
 MAX_ATTEMPTS = 4
 MAX_TIMES = 4
 CUT_OFF = ("running", "interrupted")  # a record whose run never wrote its end
+USUAL_DAYS = 7  # the period of a schedule that never chose one
 
 _TIME = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
+_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+@dataclass(frozen=True)
+class Period:
+    """Which invoices a run asks ANAF for: the last `days` days, or the days from `start` to `end`."""
+
+    days: int | None = USUAL_DAYS
+    start: str | None = None  # YYYY-MM-DD, with `end`, when `days` is None
+    end: str | None = None
+
+    def as_dict(self) -> dict:
+        return {"days": self.days} if self.days is not None else {"start": self.start, "end": self.end}
+
+    def in_words(self) -> str:
+        if self.days is None:
+            return f"the days from {self.start} to {self.end}"
+        return "the last day" if self.days == 1 else f"the last {self.days} days"
 
 
 @dataclass(frozen=True)
@@ -49,14 +71,19 @@ class Schedule:
     days: tuple[int, ...] = (0, 1, 2, 3, 4)  # 0 is Monday
     times: tuple[str, ...] = ("08:00",)
     saved_at: str | None = None  # the PC's clock, to the second
+    period: Period = Period()
 
 
 def _refuse(message: str) -> EfacturaError:
     return EfacturaError(INVALID_INPUT, message)
 
 
-def checked(enabled, days, times) -> Schedule:
-    """A schedule with its days and times sorted, or invalid_input saying which rule it broke."""
+def checked(enabled, days, times, period=None, today: date | None = None) -> Schedule:
+    """A schedule with its days and times sorted, or invalid_input saying which rule it broke.
+
+    `period` left out is the usual one. With `today`, a schedule that is on is also refused a
+    period ANAF cannot be asked for: one that has not begun, or that ended over 60 days ago.
+    """
     if not isinstance(enabled, bool):
         raise _refuse("The schedule must be either on or off.")
     if not isinstance(days, (list, tuple)):
@@ -75,7 +102,55 @@ def checked(enabled, days, times) -> Schedule:
         raise _refuse("Each time must be written HH:MM, from 00:00 to 23:59.")
     if len(set(times)) != len(times):
         raise _refuse("A time may be listed only once.")
-    return Schedule(enabled, tuple(sorted(days)), tuple(sorted(times)), None)
+    return Schedule(
+        enabled, tuple(sorted(days)), tuple(sorted(times)), None,
+        _checked_period(period, today if enabled else None),
+    )
+
+
+def _checked_period(period, today: date | None) -> Period:
+    if period is None:
+        return Period()
+    if not isinstance(period, dict) or set(period) not in ({"days"}, {"start", "end"}):
+        raise _refuse("The period must be either `days` or a `start` and an `end`.")
+    if "days" in period:
+        days = period["days"]
+        if not isinstance(days, int) or isinstance(days, bool) or not 1 <= days <= MAX_DAYS:
+            raise _refuse(f"The period's days must be a number from 1 to {MAX_DAYS}.")
+        return Period(days=days)
+    first, last = _day(period["start"]), _day(period["end"])
+    if first > last:
+        raise _refuse("The period's first day must not be after its last.")
+    chosen = Period(days=None, start=first.isoformat(), end=last.isoformat())
+    if today is not None:
+        if first > today:
+            raise _refuse("The period's first day must not be after today.")
+        asked_for(chosen, today)  # refuses a period ANAF has nothing left of
+    return chosen
+
+
+def _day(text) -> date:
+    try:
+        if isinstance(text, str) and _DAY.fullmatch(text):
+            return date.fromisoformat(text)
+    except ValueError:
+        pass
+    raise _refuse("The period's days are written like 2026-11-03.")
+
+
+def asked_for(period: Period, today: date) -> dict:
+    """What one run passes to `Service.sync`. A number of days is a minimum, widened back to the
+    last complete run. Chosen dates are cut to the days that have come and that ANAF still keeps;
+    invalid_input when none is left."""
+    if period.days is not None:
+        return {"days": period.days, "cover_gap": True}
+    first = max(date.fromisoformat(period.start), today - timedelta(days=MAX_DAYS))
+    last = min(date.fromisoformat(period.end), today)
+    if first > last:
+        raise _refuse(
+            f"The chosen period has no day to ask ANAF for: it has not begun, or it ended over {MAX_DAYS} days ago."
+        )
+    return {"start": first.isoformat(), "end": last.isoformat()}
 
 
 def read(store: Store) -> Schedule:
@@ -85,7 +160,8 @@ def read(store: Store) -> Schedule:
         saved_at = stored.get("saved_at")
         if saved_at is not None and datetime.fromisoformat(saved_at).tzinfo is not None:
             return Schedule()  # the clock is kept without a zone; one with a zone cannot be compared
-        return replace(checked(stored["enabled"], stored["days"], stored["times"]), saved_at=saved_at)
+        wanted = checked(stored["enabled"], stored["days"], stored["times"], stored.get("period"))
+        return replace(wanted, saved_at=saved_at)
     except (ValueError, TypeError, KeyError, AttributeError, EfacturaError):
         return Schedule()
 
@@ -96,7 +172,10 @@ def save(store: Store, schedule: Schedule, clock: datetime) -> Schedule:
     store.set_setting(
         SETTING,
         json.dumps(
-            {"enabled": saved.enabled, "days": list(saved.days), "times": list(saved.times), "saved_at": saved.saved_at}
+            {
+                "enabled": saved.enabled, "days": list(saved.days), "times": list(saved.times),
+                "saved_at": saved.saved_at, "period": saved.period.as_dict(),
+            }
         ),
     )
     return saved
@@ -299,6 +378,7 @@ def status(cfg: Config, now: datetime | None = None) -> dict:
         "enabled": current.enabled,
         "days": list(current.days),
         "times": list(current.times),
+        "period": current.period.as_dict(),
         "next_at": _text(next_slot(current, clock)) if current.enabled else None,
         "running": running,
         "last_run": last,
@@ -319,7 +399,8 @@ def run_if_due(
         try:
             last = _last(store)  # lets go of a held record a later stored one has overtaken
             _save_held(store)
-            found = due(read(store), last, clock)
+            current = read(store)
+            found = due(current, last, clock)
         finally:
             store.close()
         if found is None:
@@ -330,7 +411,7 @@ def run_if_due(
             _running = {"started_at": _text(clock), "done": 0, "total": 0}
         try:
             with journal.trace(fresh=True) as trace:
-                return _run(cfg, now, make_service, clock, found, trace)
+                return _run(cfg, now, make_service, clock, found, trace, current.period)
         finally:
             with _lock:
                 _running = None
@@ -339,7 +420,7 @@ def run_if_due(
         return None
 
 
-def _run(cfg, now, make_service, clock, found, trace) -> dict:
+def _run(cfg, now, make_service, clock, found, trace, period: Period) -> dict:
     global _held
     from .service import Service  # service.py imports this module
 
@@ -352,14 +433,19 @@ def _run(cfg, now, make_service, clock, found, trace) -> dict:
     journal.configure(cfg.db_path)
     _write_record(cfg, record)
     journal.record(
-        "sync", "sync.auto_started", f"Automatic download started for {record['slot']} (attempt {attempt}).",
-        slot=record["slot"], attempt=attempt,
+        "sync", "sync.auto_started",
+        f"Automatic download started for {record['slot']} (attempt {attempt}), {period.in_words()}.",
+        slot=record["slot"], attempt=attempt, period=period.as_dict(),
     )
     began = time.monotonic()
     service = None
     try:
+        asked = asked_for(period, clock.date())
         service = (make_service or Service)(cfg)
-        answer = service.sync_all(progress=_progress)
+        answer = service.sync_all(progress=_progress, **asked)
+    except EfacturaError as exc:  # the period has no day left to ask for
+        log.warning("The automatic download was refused: %s", exc.message)
+        answer = {"status": "failed", "error": {"code": exc.code, "message": exc.message}}
     except Exception as exc:
         log.exception("The automatic download failed")
         answer = {"status": "failed", "error": {"code": INTERNAL_ERROR, "message": repr(exc)}}

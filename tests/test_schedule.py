@@ -1,13 +1,13 @@
 """When the program downloads by itself: the rules, with a clock moved by hand."""
 
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 
 from efactura import schedule
 from efactura.errors import EfacturaError
-from efactura.schedule import Schedule
+from efactura.schedule import Period, Schedule
 from efactura.store import Store
 
 MONDAY = datetime(2026, 11, 16)  # a Monday
@@ -208,3 +208,120 @@ def test_a_stored_run_record_with_a_zoned_moment_counts_as_unreadable(store):
         assert schedule.last_run(store) is None
 
     assert schedule.due(WEEKDAYS_AT_8, schedule.last_run(store), at(0, 8, 20)) == (at(0, 8), 1)
+
+
+# --- the period: which invoices each run asks for ---------------------------------------------
+
+TODAY = date(2026, 11, 16)
+NOVEMBER = {"start": "2026-11-01", "end": "2026-11-30"}
+
+
+def test_a_schedule_that_never_chose_a_period_asks_for_the_last_seven_days(store):
+    assert Schedule().period == Period(days=7)
+    # A schedule saved before the period existed.
+    store.set_setting(schedule.SETTING, '{"enabled": true, "days": [0], "times": ["08:00"], "saved_at": null}')
+    assert schedule.read(store) == Schedule(True, (0,), ("08:00",), None, Period(days=7))
+
+
+@pytest.mark.parametrize(
+    "asked, kept",
+    [
+        ({"days": 3}, Period(days=3)),
+        ({"days": 60}, Period(days=60)),
+        (NOVEMBER, Period(days=None, start="2026-11-01", end="2026-11-30")),
+        ({"start": "2026-11-16", "end": "2026-11-16"}, Period(days=None, start="2026-11-16", end="2026-11-16")),
+    ],
+)
+def test_a_saved_period_is_read_back(store, asked, kept):
+    saved = schedule.save(store, schedule.checked(True, [0], ["08:00"], asked, TODAY), at(0, 7))
+
+    assert saved.period == kept
+    assert schedule.read(store).period == kept
+    assert kept.as_dict() == asked
+
+
+@pytest.mark.parametrize(
+    "period",
+    [
+        {}, "7", [7], 7,                                                    # neither days nor two dates
+        {"days": 0}, {"days": 61}, {"days": True}, {"days": "7"}, {"days": 7.0},
+        {"days": 7, "start": "2026-11-01"}, {"days": 7, **NOVEMBER},       # both ways at once
+        {"start": "2026-11-01"}, {"end": "2026-11-30"},                     # one date only
+        {"start": "2026-11-10", "end": "2026-11-01"},                      # the first day after the last
+        {"start": "01.11.2026", "end": "2026-11-30"}, {"start": "2026-11-01", "end": "2026-11-31"},
+        {"start": 20261101, "end": "2026-11-30"}, {"start": None, "end": "2026-11-30"},
+        {"start": "20261101", "end": "2026-11-30"},                        # only YYYY-MM-DD is a date here
+    ],
+)
+def test_a_period_that_makes_no_sense_is_refused(period):
+    with pytest.raises(EfacturaError) as refused:
+        schedule.checked(False, [0], ["08:00"], period)
+    assert refused.value.code == "invalid_input"
+
+
+@pytest.mark.parametrize(
+    "period",
+    [
+        {"start": "2026-11-17", "end": "2026-11-30"},  # begins tomorrow
+        {"start": "2026-08-01", "end": "2026-09-16"},  # ended 61 days ago: ANAF has nothing left of it
+    ],
+)
+def test_a_period_anaf_cannot_be_asked_for_is_refused_only_while_the_schedule_is_on(period):
+    with pytest.raises(EfacturaError) as refused:
+        schedule.checked(True, [0], ["08:00"], period, TODAY)
+    assert refused.value.code == "invalid_input"
+
+    assert schedule.checked(False, [0], ["08:00"], period, TODAY).period.as_dict() == period
+
+
+@pytest.mark.parametrize(
+    "period",
+    [
+        {"start": "2026-08-01", "end": "2026-09-17"},  # its last day is the sixtieth back
+        {"start": "2026-08-01", "end": "2027-01-31"},  # began long ago, still running
+        {"start": "2026-11-16", "end": "2026-12-31"},  # begins today
+    ],
+)
+def test_a_period_with_a_day_anaf_still_has_is_accepted(period):
+    assert schedule.checked(True, [0], ["08:00"], period, TODAY).period.as_dict() == period
+
+
+def test_a_stored_period_that_went_stale_is_still_read(store):
+    stale = {"start": "2026-01-01", "end": "2026-01-31"}
+    schedule.save(store, schedule.checked(False, [0], ["08:00"], stale), at(0, 7))
+    store.set_setting(schedule.SETTING, store.get_setting(schedule.SETTING).replace("false", "true"))
+
+    read = schedule.read(store)
+
+    assert read.enabled is True
+    assert read.period.as_dict() == stale
+
+
+def test_a_run_asks_for_the_last_days_as_a_minimum_that_reaches_back_to_the_last_complete_run():
+    assert schedule.asked_for(Period(days=3), TODAY) == {"days": 3, "cover_gap": True}
+
+
+@pytest.mark.parametrize(
+    "period, asked",
+    [
+        (NOVEMBER, {"start": "2026-11-01", "end": "2026-11-16"}),                       # up to today, not beyond
+        ({"start": "2026-11-01", "end": "2026-11-10"}, {"start": "2026-11-01", "end": "2026-11-10"}),
+        ({"start": "2026-08-01", "end": "2026-12-31"}, {"start": "2026-09-17", "end": "2026-11-16"}),  # 60 days back
+        ({"start": "2026-08-01", "end": "2026-09-17"}, {"start": "2026-09-17", "end": "2026-09-17"}),
+    ],
+)
+def test_a_run_asks_for_the_chosen_days_that_have_come_and_that_anaf_still_keeps(period, asked):
+    assert schedule.asked_for(schedule.checked(False, [0], ["08:00"], period).period, TODAY) == asked
+
+
+@pytest.mark.parametrize(
+    "period",
+    [
+        {"start": "2026-08-01", "end": "2026-09-16"},  # ended more than 60 days ago
+        {"start": "2026-11-17", "end": "2026-11-30"},  # not begun (the clock was moved back)
+    ],
+)
+def test_a_period_with_no_day_left_to_ask_for_is_refused_at_the_run(period):
+    with pytest.raises(EfacturaError) as refused:
+        schedule.asked_for(schedule.checked(False, [0], ["08:00"], period).period, TODAY)
+    assert refused.value.code == "invalid_input"

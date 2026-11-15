@@ -65,10 +65,11 @@ def make_service(anaf):
     return lambda cfg: Service(cfg, http=anaf.client(), now=lambda: MONDAY_8)
 
 
-def switch_on(cfg, days=(0, 1, 2, 3, 4), times=("08:00",)):
+def switch_on(cfg, days=(0, 1, 2, 3, 4), times=("08:00",), period=None):
     store = Store(cfg.db_path)
     try:
-        schedule.save(store, schedule.checked(True, list(days), list(times)), datetime(2026, 11, 13, 17))
+        wanted = schedule.checked(True, list(days), list(times), period)
+        schedule.save(store, wanted, datetime(2026, 11, 13, 17))
     finally:
         store.close()
 
@@ -182,7 +183,7 @@ def test_the_page_can_see_a_run_in_progress(cfg):
     seen = []
 
     class Slow:
-        def sync_all(self, progress=None):
+        def sync_all(self, progress=None, **period):
             progress(1, 3)
             seen.append(schedule.status(cfg, MONDAY_8)["running"])
             return {"ok": True, "status": "ok", "clients": 3, "failed_clients": 0, "new": 0,
@@ -203,7 +204,7 @@ def test_a_service_that_breaks_ends_the_run_as_failed(cfg):
     closed = []
 
     class Broken:
-        def sync_all(self, progress=None):
+        def sync_all(self, progress=None, **period):
             progress(0, 2)
             raise RuntimeError("boom")
 
@@ -309,7 +310,7 @@ def test_a_run_is_one_story_in_the_journal(cfg, anaf, make_service):
 
 def test_a_run_that_fails_is_written_as_an_error(cfg):
     class Broken:
-        def sync_all(self, progress=None):
+        def sync_all(self, progress=None, **period):
             raise RuntimeError("boom")
 
         def close(self):
@@ -346,7 +347,8 @@ def test_saving_the_schedule_is_written_in_the_journal(cfg, make_service):
     assert shown["days"] == [0, 1]
     assert shown["next_at"] is not None
     saved = [line for line in journal.events(cfg.db_path, area="settings")["events"] if line["event"] == "schedule.saved"]
-    assert saved[0]["data"] == {"enabled": True, "days": [0, 1], "times": ["08:00"]}
+    assert saved[0]["data"] == {"enabled": True, "days": [0, 1], "times": ["08:00"], "period": {"days": 7}}
+    assert saved[0]["message"] == "Automatic download switched on: days Monday, Tuesday, at 08:00, the last 7 days."
     assert service.schedule() == shown
 
 
@@ -363,7 +365,7 @@ def test_a_schedule_that_makes_no_sense_is_not_saved(cfg, make_service):
 
 
 class _Empty:
-    def sync_all(self, progress=None):
+    def sync_all(self, progress=None, **period):
         return {"ok": True, "status": "ok", "clients": 0, "failed_clients": 0, "new": 0,
                 "review": 0, "stopped_by": None, "results": []}
 
@@ -474,3 +476,101 @@ def test_the_end_of_a_run_reads_the_clock_again(cfg, monkeypatch):
     record = schedule.run_if_due(cfg, None, lambda cfg: _Empty())
 
     assert (record["started_at"], record["finished_at"]) == ("2026-11-16T08:00:20", "2026-11-16T08:03:00")
+
+
+# --- the period ------------------------------------------------------------------------------
+
+class _Asked:
+    """A service that only remembers the period each run asked it for."""
+
+    def __init__(self):
+        self.asked = []
+
+    def sync_all(self, progress=None, **period):
+        self.asked.append(period)
+        return _Empty().sync_all()
+
+    def close(self):
+        pass
+
+
+def test_a_run_asks_for_the_last_days_the_schedule_holds(cfg):
+    service = _Asked()
+    switch_on(cfg, period={"days": 3})
+
+    record = schedule.run_if_due(cfg, MONDAY_8, lambda cfg: service)
+
+    assert record["status"] == "ok"
+    assert service.asked == [{"days": 3, "cover_gap": True}]
+
+
+def test_a_run_asks_for_the_chosen_days_up_to_today(cfg):
+    service = _Asked()
+    switch_on(cfg, period={"start": "2026-11-01", "end": "2026-11-30"})
+
+    schedule.run_if_due(cfg, MONDAY_8, lambda cfg: service)
+
+    assert service.asked == [{"start": "2026-11-01", "end": "2026-11-16"}]
+
+
+def test_the_chosen_days_are_what_anaf_is_asked_for(cfg, anaf, make_service):
+    with_clients(cfg, make_service, (VALID_CUI, "Alfa"))
+    switch_on(cfg, period={"start": "2026-11-10", "end": "2026-11-12"})
+
+    record = schedule.run_if_due(cfg, MONDAY_8, make_service)
+
+    assert record["status"] == "ok"
+    asked = anaf.list_requests[-1]
+    first, after_last = (datetime.fromtimestamp(int(asked[name]) / 1000) for name in ("startTime", "endTime"))
+    assert (first, after_last) == (datetime(2026, 11, 10), datetime(2026, 11, 13))
+
+
+def test_a_run_whose_period_has_no_day_left_fails_before_anyone_is_contacted(cfg):
+    made = []
+    switch_on(cfg, period={"start": "2026-08-01", "end": "2026-08-31"})
+
+    record = schedule.run_if_due(cfg, MONDAY_8, lambda cfg: made.append(cfg))
+
+    assert (record["status"], record["error"]["code"]) == ("failed", "invalid_input")
+    assert made == []
+    assert stored_last_run(cfg)["status"] == "failed"
+    assert schedule.status(cfg, MONDAY_8)["running"] is None
+
+
+def test_the_run_writes_its_period_in_the_journal(cfg):
+    switch_on(cfg, period={"start": "2026-11-01", "end": "2026-11-30"})
+
+    schedule.run_if_due(cfg, MONDAY_8, lambda cfg: _Asked())
+
+    started = [line for line in journal.events(cfg.db_path, area="sync")["events"] if line["event"] == "sync.auto_started"]
+    assert started[0]["data"]["period"] == {"start": "2026-11-01", "end": "2026-11-30"}
+    assert started[0]["message"].endswith("the days from 2026-11-01 to 2026-11-30.")
+
+
+def test_the_status_carries_the_period(cfg, make_service):
+    service = make_service(cfg)
+    assert service.schedule()["period"] == {"days": 7}
+
+    shown = service.set_schedule(True, [0], ["08:00"], {"start": "2026-11-01", "end": "2026-11-30"})
+
+    assert shown["period"] == {"start": "2026-11-01", "end": "2026-11-30"}
+    assert service.schedule() == shown
+
+
+def test_saving_the_schedule_without_a_period_keeps_the_one_stored(cfg, make_service):
+    service = make_service(cfg)
+    service.set_schedule(True, [0], ["08:00"], {"days": 3})
+
+    shown = service.set_schedule(False, [0], ["09:00"])
+
+    assert (shown["times"], shown["period"]) == (["09:00"], {"days": 3})
+
+
+def test_a_period_that_has_not_begun_is_not_saved_while_the_schedule_is_on(cfg, make_service):
+    service = make_service(cfg)  # its clock says Monday, 16 November
+
+    with pytest.raises(EfacturaError) as raised:
+        service.set_schedule(True, [0], ["08:00"], {"start": "2026-11-17", "end": "2026-11-30"})
+
+    assert raised.value.code == INVALID_INPUT
+    assert service.schedule()["period"] == {"days": 7}

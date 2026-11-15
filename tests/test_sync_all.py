@@ -294,3 +294,35 @@ def test_a_client_removed_during_the_run_is_skipped(service, cfg, anaf):
         assert {row["cui"] for row in store.runs()} == {VALID_CUI}
     finally:
         store.close()
+
+
+# --- the period ------------------------------------------------------------------------------
+
+def _asked_of_anaf(anaf):
+    """For each list request: the client, and the first and last moment asked for, on NOW's clock."""
+    moment = lambda millis: datetime.fromtimestamp(int(millis) / 1000, tz=NOW.tzinfo)  # noqa: E731
+    return [(str(r["cif"]), moment(r["startTime"]), moment(r["endTime"])) for r in anaf.list_requests]
+
+
+def test_chosen_dates_are_asked_of_anaf_for_every_client(service, anaf):
+    answer = service.sync_all(start="2026-11-03", end="2026-11-05")
+
+    first = datetime(2026, 11, 3, tzinfo=NOW.tzinfo)
+    after_last = datetime(2026, 11, 6, tzinfo=NOW.tzinfo)
+    assert answer["status"] == "ok"
+    assert _asked_of_anaf(anaf) == [(VALID_CUI, first, after_last), (OTHER_VALID_CUI, first, after_last)]
+
+
+def test_a_number_of_days_is_asked_of_anaf_for_every_client(service, anaf):
+    service.sync_all(days=2)
+
+    asked = _asked_of_anaf(anaf)
+    assert [cui for cui, _, _ in asked] == [VALID_CUI, OTHER_VALID_CUI]
+    assert all(last - first == timedelta(days=2) for _, first, last in asked)
+
+
+def test_dates_that_make_no_sense_end_the_run_as_failed(service):
+    answer = service.sync_all(start="2026-11-09", end="2026-11-03")
+
+    assert answer["status"] == "failed"
+    assert {r["error"]["code"] for r in answer["results"]} == {"invalid_input"}
