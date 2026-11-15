@@ -130,7 +130,6 @@ export function stateCard(status: ScheduleStatus, now = new Date()): StateCard {
     : card('done', title, 'Nu a fost făcută încă nicio descărcare automată.')
 }
 
-/** The first line of the notice on the client list while the program downloads by itself. */
 /** The name of the button that removes a time: the time itself, or its position when the field is empty. */
 export function removeTimeName(time: string, index: number): string {
   return `Scoate ora ${time || index + 1}`
@@ -141,6 +140,7 @@ export function journalAddress(trace: string | null | undefined): string {
   return trace ? `/jurnal?operatiune=${encodeURIComponent(trace)}` : '/jurnal'
 }
 
+/** The first line of the notice on the client list while the program downloads by itself. */
 export function runningLine(done: number, total: number): string {
   return total > 1 ? `Programul descarcă acum facturile, singur: ${done} din ${total} clienți.` : 'Programul descarcă acum facturile, singur.'
 }
