@@ -20,8 +20,7 @@ export function SchedulePage() {
       {status && (
         <>
           <ScheduleStateCard status={status} />
-          {/* The key remounts the form when the saved schedule changes, so it shows what is saved. */}
-          <ScheduleForm key={JSON.stringify([status.enabled, status.days, status.times])} saved={status} />
+          <ScheduleForm saved={status} />
           <section aria-label="Bine de știut" className="flex flex-col gap-3 rounded-2xl border bg-card px-5.5 py-5">
             <h2 className="font-sans text-xl font-bold">Bine de știut</h2>
             <ul className="flex list-disc flex-col gap-2.5 pl-6 text-lg">

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { messageForCode } from '../errorMessages'
 import type { ScheduleRun, ScheduleStatus } from '../types'
-import { describeWhen, formProblem, menuNote, pollEvery, stateCard } from './scheduleTexts'
+import { describeWhen, formProblem, menuNote, pollEvery, sameSchedule, stateCard } from './scheduleTexts'
 
 const NOW = new Date(2026, 10, 16, 9, 0)
 
@@ -31,6 +31,22 @@ describe('what is wrong with the form', () => {
     expect(formProblem(true, [0], ['08:00', '08:00'])).toBe('Aceeași oră apare de două ori.')
     expect(formProblem(true, [0], ['08:00', ''])).toBe('Completați ora.')
     expect(formProblem(true, [0], ['08:00'])).toBeNull()
+  })
+
+  it('checks the hours whatever the switch says; only the days depend on it', () => {
+    expect(formProblem(false, [0], ['08:00', '08:00'])).toBe('Aceeași oră apare de două ori.')
+    expect(formProblem(false, [], ['08:00', ''])).toBe('Completați ora.')
+    expect(formProblem(false, [], ['08:00'])).toBeNull()
+  })
+})
+
+describe('whether two schedules are the same', () => {
+  const base = { enabled: true, days: [0, 4], times: ['08:00', '14:00'] }
+  it('ignores the order the days and hours were chosen in', () => {
+    expect(sameSchedule({ enabled: true, days: [4, 0], times: ['14:00', '08:00'] }, base)).toBe(true)
+    expect(sameSchedule({ ...base, enabled: false }, base)).toBe(false)
+    expect(sameSchedule({ ...base, days: [0] }, { ...base, days: [0, 1] })).toBe(false)
+    expect(sameSchedule({ ...base, times: ['08:00'] }, { ...base, times: ['08:30'] })).toBe(false)
   })
 })
 

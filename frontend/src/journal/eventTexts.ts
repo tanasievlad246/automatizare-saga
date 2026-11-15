@@ -91,6 +91,8 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
     }
   },
 
+  'sync.record_unsaved': () => 'Descărcarea automată s-a terminat, dar rezultatul ei nu a putut fi salvat.',
+
   'anaf.call': (_, line) => `ANAF a răspuns${line.duration_ms === null ? '' : ` în ${formatDuration(line.duration_ms)}`}.`,
   'anaf.unreachable': () => 'Nu am putut ajunge la ANAF. Verificați conexiunea la internet.',
   'anaf.connected': () => 'Conectarea la ANAF a reușit.',

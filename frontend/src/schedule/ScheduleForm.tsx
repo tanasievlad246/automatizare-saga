@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Check, X } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
+import { Notice } from '@/components/Notice'
 import { PillTabs } from '@/components/PillTabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -9,22 +10,46 @@ import { cn } from '@/lib/utils'
 import { api } from '../api'
 import { showError } from '../errorMessages'
 import type { ScheduleStatus } from '../types'
-import { DAY_NAMES, formProblem, MOST_TIMES } from './scheduleTexts'
+import { DAY_NAMES, formProblem, MOST_TIMES, sameSchedule, type ScheduleChoice } from './scheduleTexts'
 
 // The hours offered, in this order, when a person adds one.
 const SUGGESTED_TIMES = ['12:00', '16:00', '10:00', '18:00']
 
 const sorted = <T,>(items: T[]) => [...items].sort()
+const choiceOf = ({ enabled, days, times }: ScheduleChoice): ScheduleChoice => ({ enabled, days, times })
 
-/** What to download when: nothing changes until "Salvează" is pressed. */
+/**
+ * What to download when: nothing changes until "Salvează" is pressed. The form stays mounted
+ * (so focus stays where it is) and follows the saved schedule only while it holds no edits.
+ */
 export function ScheduleForm({ saved }: { saved: ScheduleStatus }) {
   const queryClient = useQueryClient()
-  const [enabled, setEnabled] = useState(saved.enabled)
-  const [days, setDays] = useState(saved.days)
-  const [times, setTimes] = useState(saved.times)
+  // `followed` is the saved schedule the draft started from; the draft is what is being edited.
+  const [followed, setFollowed] = useState<ScheduleChoice>(choiceOf(saved))
+  const [draft, setDraft] = useState<ScheduleChoice>(choiceOf(saved))
+  const [changedElsewhere, setChangedElsewhere] = useState(false)
+  const { enabled, days, times } = draft
+
+  if (!sameSchedule(saved, followed)) {
+    if (sameSchedule(draft, followed)) {
+      setFollowed(choiceOf(saved))
+      setDraft(choiceOf(saved))
+    } else if (!changedElsewhere) {
+      setChangedElsewhere(true)
+    }
+  }
+  const showSaved = () => {
+    setFollowed(choiceOf(saved))
+    setDraft(choiceOf(saved))
+    setChangedElsewhere(false)
+  }
+
   const save = useMutation({
-    mutationFn: () => api.saveSchedule({ enabled, days: sorted(days), times: sorted(times) }),
+    mutationFn: (choice: ScheduleChoice) => api.saveSchedule({ ...choice, days: sorted(choice.days), times: sorted(choice.times) }),
     onSuccess: (status) => {
+      // The answer is what the form follows now; what was typed since is kept.
+      setFollowed(choiceOf(status))
+      setChangedElsewhere(false)
       queryClient.setQueryData(['schedule'], status)
       toast.success('Descărcarea automată a fost salvată.')
     },
@@ -32,10 +57,10 @@ export function ScheduleForm({ saved }: { saved: ScheduleStatus }) {
   })
 
   const problem = formProblem(enabled, days, times)
-  const unchanged =
-    enabled === saved.enabled &&
-    sorted(days).join() === sorted(saved.days).join() &&
-    sorted(times).join() === sorted(saved.times).join()
+  const unchanged = sameSchedule(draft, followed)
+  const setEnabled = (value: boolean) => setDraft({ ...draft, enabled: value })
+  const setDays = (value: number[]) => setDraft({ ...draft, days: value })
+  const setTimes = (value: string[]) => setDraft({ ...draft, times: value })
 
   const toggleDay = (index: number) => setDays(days.includes(index) ? days.filter((day) => day !== index) : [...days, index])
   const setTime = (at: number, time: string) => setTimes(times.map((each, index) => (index === at ? time : each)))
@@ -110,8 +135,20 @@ export function ScheduleForm({ saved }: { saved: ScheduleStatus }) {
         <p className="text-muted-foreground">Cel mult patru ore pe zi.</p>
       </div>
 
+      {changedElsewhere && (
+        <Notice tone="attention" className="flex-wrap items-center">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+            <p className="min-w-0 flex-[1_1_320px] font-semibold">
+              Descărcarea automată a fost schimbată din altă parte cât timp lucrați aici.
+            </p>
+            <Button type="button" className="bg-attention-foreground hover:bg-attention-foreground/85" onClick={showSaved}>
+              Arată ce este salvat
+            </Button>
+          </div>
+        </Notice>
+      )}
       <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
-        <Button size="lg" disabled={problem !== null || unchanged || save.isPending} onClick={() => save.mutate()}>
+        <Button size="lg" disabled={problem !== null || unchanged || save.isPending} onClick={() => save.mutate(draft)}>
           Salvează
         </Button>
         {problem ? (

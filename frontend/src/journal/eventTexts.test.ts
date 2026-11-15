@@ -136,6 +136,7 @@ describe('a line of the journal, in Romanian', () => {
     expect(say('sync.auto_finished', { status: 'failed', error: 'internal_error' })).toBe('Descărcarea automată nu a reușit.')
     expect(say('sync.auto_finished', { status: 'unreachable', attempt: 1 }))
       .toBe('Descărcarea automată nu a ajuns la ANAF. Programul mai încearcă peste un sfert de oră.')
+    expect(say('sync.record_unsaved', {})).toBe('Descărcarea automată s-a terminat, dar rezultatul ei nu a putut fi salvat.')
     expect(say('sync.auto_finished', { status: 'unreachable', attempt: 4 }))
       .toBe('Descărcarea automată nu a ajuns la ANAF. A fost ultima încercare pentru această oră.')
   })

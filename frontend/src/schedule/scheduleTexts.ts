@@ -28,10 +28,18 @@ export function describeWhen(days: number[], times: string[]): string {
   return `${which}, la ${listed(times)}`
 }
 
-/** What keeps the form from being saved; null while the schedule is off or the form is right. */
+export type ScheduleChoice = { enabled: boolean; days: number[]; times: string[] }
+
+/** The same schedule, whatever order the days and the times were chosen in. */
+export function sameSchedule(a: ScheduleChoice, b: ScheduleChoice): boolean {
+  const key = (choice: ScheduleChoice) =>
+    JSON.stringify([choice.enabled, [...choice.days].sort((x, y) => x - y), [...choice.times].sort()])
+  return key(a) === key(b)
+}
+
+/** What keeps the form from being saved. The hours are checked even while it is off; the days only while it is on. */
 export function formProblem(enabled: boolean, days: number[], times: string[]): string | null {
-  if (!enabled) return null
-  if (days.length === 0) return 'Alegeți cel puțin o zi.'
+  if (enabled && days.length === 0) return 'Alegeți cel puțin o zi.'
   if (times.some((time) => time === '')) return 'Completați ora.'
   if (new Set(times).size < times.length) return 'Aceeași oră apare de două ori.'
   return null
