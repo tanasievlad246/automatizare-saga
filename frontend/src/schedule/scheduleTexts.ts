@@ -44,6 +44,12 @@ export function onSavedChange(draft: ScheduleChoice, followed: ScheduleChoice, s
   return sameSchedule(draft, followed) || sameSchedule(draft, saved) ? 'follow' : 'notice'
 }
 
+/** After her own save: has the saved schedule the page shows become her answer yet? */
+export function ownSaveArrival(saved: ScheduleChoice, answer: ScheduleChoice, before: ScheduleChoice): 'arrived' | 'waiting' | 'overtaken' {
+  if (sameSchedule(saved, answer)) return 'arrived'
+  return sameSchedule(saved, before) ? 'waiting' : 'overtaken'
+}
+
 /** What keeps the form from being saved. The hours are checked even while it is off; the days only while it is on. */
 export function formProblem(enabled: boolean, days: number[], times: string[]): string | null {
   if (enabled && days.length === 0) return 'Alegeți cel puțin o zi.'

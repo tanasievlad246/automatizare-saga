@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils'
 import { api } from '../api'
 import { showError } from '../errorMessages'
 import type { ScheduleStatus } from '../types'
-import { DAY_NAMES, formProblem, MOST_TIMES, onSavedChange, sameSchedule, type ScheduleChoice } from './scheduleTexts'
+import { DAY_NAMES, formProblem, MOST_TIMES, onSavedChange, ownSaveArrival, sameSchedule, type ScheduleChoice } from './scheduleTexts'
 
 // The hours offered, in this order, when a person adds one.
 const SUGGESTED_TIMES = ['12:00', '16:00', '10:00', '18:00']
@@ -27,18 +27,19 @@ export function ScheduleForm({ saved }: { saved: ScheduleStatus }) {
   // `followed` is the saved schedule the draft started from; the draft is what is being edited.
   const [followed, setFollowed] = useState<ScheduleChoice>(choiceOf(saved))
   const [draft, setDraft] = useState<ScheduleChoice>(choiceOf(saved))
-  // The answer to her own save, until the saved schedule the page holds is that answer.
-  const [answered, setAnswered] = useState<ScheduleChoice | null>(null)
+  // Her own save: its answer, and the schedule the form followed before it, until the page shows the answer.
+  const [answered, setAnswered] = useState<{ answer: ScheduleChoice; before: ScheduleChoice } | null>(null)
   const { enabled, days, times } = draft
 
+  const arrival = answered && ownSaveArrival(saved, answered.answer, answered.before)
   let notice = false
-  if (answered) {
-    // Her own save came back: follow it, and keep what she typed since.
-    if (sameSchedule(saved, answered)) {
-      setFollowed(choiceOf(saved))
-      setAnswered(null)
-    }
-  } else {
+  if (arrival === 'arrived') {
+    // Follow the answer and keep what she typed since.
+    setFollowed(choiceOf(saved))
+    setAnswered(null)
+  } else if (arrival !== 'waiting') {
+    // No save is waiting, or something else was saved meanwhile (then `followed` is still the old one).
+    if (arrival === 'overtaken') setAnswered(null)
     const change = onSavedChange(draft, followed, saved)
     if (change === 'follow') {
       setFollowed(choiceOf(saved))
@@ -49,12 +50,15 @@ export function ScheduleForm({ saved }: { saved: ScheduleStatus }) {
   const showSaved = () => {
     setFollowed(choiceOf(saved))
     setDraft(choiceOf(saved))
+    setAnswered(null)
   }
 
   const save = useMutation({
     mutationFn: (choice: ScheduleChoice) => api.saveSchedule({ ...choice, days: sorted(choice.days), times: sorted(choice.times) }),
     onSuccess: (status) => {
-      setAnswered(choiceOf(status))
+      setAnswered({ answer: choiceOf(status), before: followed })
+      // A read that started before her save must not put the old schedule back.
+      void queryClient.cancelQueries({ queryKey: ['schedule'] })
       queryClient.setQueryData(['schedule'], status)
       toast.success('Descărcarea automată a fost salvată.')
     },

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { messageForCode } from '../errorMessages'
 import type { ScheduleRun, ScheduleStatus } from '../types'
-import { describeWhen, formProblem, menuNote, onSavedChange, pollEvery, sameSchedule, stateCard } from './scheduleTexts'
+import { describeWhen, formProblem, menuNote, onSavedChange, ownSaveArrival, pollEvery, sameSchedule, stateCard } from './scheduleTexts'
 
 const NOW = new Date(2026, 10, 16, 9, 0)
 
@@ -152,5 +152,17 @@ describe('what the form does when the saved schedule is not the one it follows',
     expect(onSavedChange(a, a, b)).toBe('follow')
     expect(onSavedChange(b, a, b)).toBe('follow')
     expect(onSavedChange(c, a, b)).toBe('notice')
+  })
+})
+
+describe('after her own save', () => {
+  const a = { enabled: true, days: [0], times: ['08:00'] }
+  const b = { enabled: true, days: [0, 1], times: ['08:00'] }
+  const c = { enabled: false, days: [2], times: ['09:00'] }
+  it('tells whether the saved schedule became her answer, is still the old one, or was overtaken', () => {
+    expect(ownSaveArrival(b, b, a)).toBe('arrived')
+    expect(ownSaveArrival(a, a, a)).toBe('arrived')
+    expect(ownSaveArrival(a, b, a)).toBe('waiting')
+    expect(ownSaveArrival(c, b, a)).toBe('overtaken')
   })
 })
