@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { messageForCode } from '../errorMessages'
 import type { ScheduleRun, ScheduleStatus } from '../types'
-import { describeWhen, formProblem, menuNote, onSavedChange, ownSaveArrival, pollEvery, runEnded, runningLine, sameSchedule, stateCard } from './scheduleTexts'
+import { describeWhen, formProblem, journalAddress, menuNote, onSavedChange, ownSaveArrival, pollEvery, runEnded, removeTimeName, runningLine, sameSchedule, stateCard } from './scheduleTexts'
 
 const NOW = new Date(2026, 10, 16, 9, 0)
 
@@ -11,7 +11,7 @@ const status = (over: Partial<ScheduleStatus> = {}): ScheduleStatus => ({
 })
 const run = (over: Partial<ScheduleRun> = {}): ScheduleRun => ({
   slot: '2026-11-16T08:00:00', attempt: 1, started_at: '2026-11-16T08:00:20', finished_at: '2026-11-16T08:01:05',
-  status: 'ok', clients: 3, failed_clients: 0, new: 7, review: 2, error: null, retry_at: null, ...over,
+  status: 'ok', clients: 3, failed_clients: 0, new: 7, review: 2, error: null, retry_at: null, trace: 'c418053e30a7', ...over,
 })
 const NEXT = 'Următoarea descărcare: mâine, la 08:00'
 
@@ -220,5 +220,21 @@ describe('whether an automatic download ended that the lists have not seen', () 
     expect(runEnded(finished('2026-11-16T08:01:05'), finished('2026-11-16T08:01:05'))).toBe(false)
     expect(runEnded(finished('2026-11-15T08:01:00'), finished('2026-11-15T08:01:00', { running }))).toBe(false)
     expect(runEnded(status(), status())).toBe(false)
+  })
+})
+
+describe('the remove button of a time', () => {
+  it('is named by its time, or by its position when the field is empty', () => {
+    expect(removeTimeName('14:00', 1)).toBe('Scoate ora 14:00')
+    expect(removeTimeName('', 1)).toBe('Scoate ora 2')
+  })
+})
+
+describe('the journal address of a run', () => {
+  it('is the whole journal without a trace, and the run\'s own lines with one', () => {
+    expect(journalAddress(null)).toBe('/jurnal')
+    expect(journalAddress(undefined)).toBe('/jurnal')
+    expect(journalAddress('')).toBe('/jurnal')
+    expect(journalAddress('c418053e30a7')).toBe('/jurnal?operatiune=c418053e30a7')
   })
 })

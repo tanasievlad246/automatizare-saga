@@ -1,5 +1,6 @@
 import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
 import { useState } from 'react'
+import { useSearchParams } from 'react-router'
 import { ErrorNotice } from '@/components/ErrorNotice'
 import { Notice } from '@/components/Notice'
 import { PageTitle } from '@/components/PageTitle'
@@ -18,7 +19,10 @@ const EVERYTHING: JournalChoice = { shown: 'tot', details: false, area: '', peri
 /** What the program did, newest first. One operation can be shown whole, in the order it happened. */
 export function JournalPage() {
   const [choice, setChoice] = useState(EVERYTHING)
-  const [operation, setOperation] = useState<string | null>(null) // the trace being looked at, if any
+  // The operation being looked at, if any, is in the address, so that a link can open it and Back leaves it.
+  const [params, setParams] = useSearchParams()
+  const operation = params.get('operatiune') || null
+  const setOperation = (trace: string | null) => setParams(trace ? { operatiune: trace } : {})
 
   const filter: JournalFilter = operation ? { trace: operation } : filterFor(choice)
   const journal = useInfiniteQuery({

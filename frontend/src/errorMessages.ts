@@ -43,7 +43,7 @@ export function messageForCode(code: string): string {
 
 /** Whether a failure's code has a sentence of its own here (the general one is not that). */
 export function knowsCode(code: string): boolean {
-  return code in MESSAGES
+  return Object.hasOwn(MESSAGES, code)
 }
 
 /** The program's own words about a failure, for whoever helps the person. */

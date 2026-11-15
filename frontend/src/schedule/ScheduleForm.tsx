@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Check, X } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Notice } from '@/components/Notice'
 import { PillTabs } from '@/components/PillTabs'
@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils'
 import { api } from '../api'
 import { showError } from '../errorMessages'
 import type { ScheduleStatus } from '../types'
-import { DAY_NAMES, formProblem, MOST_TIMES, onSavedChange, ownSaveArrival, sameSchedule, type ScheduleChoice } from './scheduleTexts'
+import { DAY_NAMES, formProblem, MOST_TIMES, onSavedChange, ownSaveArrival, removeTimeName, sameSchedule, type ScheduleChoice } from './scheduleTexts'
 
 // The hours offered, in this order, when a person adds one.
 const SUGGESTED_TIMES = ['12:00', '16:00', '10:00', '18:00']
@@ -30,6 +30,13 @@ export function ScheduleForm({ saved }: { saved: ScheduleStatus }) {
   // Her own save: its answer, and the schedule the form followed before it, until the page shows the answer.
   const [answered, setAnswered] = useState<{ answer: ScheduleChoice; before: ScheduleChoice } | null>(null)
   const { enabled, days, times } = draft
+  const addTimeButton = useRef<HTMLButtonElement>(null)
+  const removedATime = useRef(false)
+  // After a removal the button pressed is gone: the focus goes to "Adaugă încă o oră", once it is drawn.
+  useEffect(() => {
+    if (removedATime.current) addTimeButton.current?.focus()
+    removedATime.current = false
+  }, [draft.times])
 
   const arrival = answered && ownSaveArrival(saved, answered.answer, answered.before)
   let notice = false
@@ -67,6 +74,7 @@ export function ScheduleForm({ saved }: { saved: ScheduleStatus }) {
 
   const problem = formProblem(enabled, days, times)
   const unchanged = sameSchedule(draft, followed)
+  const unavailable = problem !== null || unchanged || save.isPending
   const setEnabled = (value: boolean) => setDraft({ ...draft, enabled: value })
   const setDays = (value: number[]) => setDraft({ ...draft, days: value })
   const setTimes = (value: string[]) => setDraft({ ...draft, times: value })
@@ -129,8 +137,11 @@ export function ScheduleForm({ saved }: { saved: ScheduleStatus }) {
                   type="button"
                   variant="ghost"
                   size="icon"
-                  aria-label={`Scoate ora ${time}`}
-                  onClick={() => setTimes(times.filter((_, at) => at !== index))}
+                  aria-label={removeTimeName(time, index)}
+                  onClick={() => {
+                    setTimes(times.filter((_, at) => at !== index))
+                    removedATime.current = true
+                  }}
                 >
                   <X aria-hidden className="text-muted-foreground" />
                 </Button>
@@ -138,7 +149,7 @@ export function ScheduleForm({ saved }: { saved: ScheduleStatus }) {
             </div>
           ))}
           {times.length < MOST_TIMES && (
-            <Button type="button" variant="link" className="px-0" onClick={addTime}>Adaugă încă o oră</Button>
+            <Button ref={addTimeButton} type="button" variant="link" className="px-0" onClick={addTime}>Adaugă încă o oră</Button>
           )}
         </div>
         <p className="text-muted-foreground">Cel mult patru ore pe zi.</p>
@@ -157,7 +168,14 @@ export function ScheduleForm({ saved }: { saved: ScheduleStatus }) {
         </Notice>
       )}
       <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
-        <Button size="lg" disabled={problem !== null || unchanged || save.isPending} onClick={() => save.mutate(draft)}>
+        {/* aria-disabled, not disabled: a disabled button gives up the keyboard focus it has just been
+            pressed with. It looks disabled and does nothing while nothing can be saved. */}
+        <Button
+          size="lg"
+          aria-disabled={unavailable}
+          className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
+          onClick={() => !unavailable && save.mutate(draft)}
+        >
           Salvează
         </Button>
         {problem ? (

@@ -4,7 +4,7 @@ import { api } from '../api'
 import type { UpdateStatus } from '../types'
 import { COULD_NOT_LOOK, shownVersion, whatTheLookFound } from './programUpdate'
 
-/** At the foot of the menu: the version installed, and a way to look for a newer one now. */
+/** At the foot of the menu, which ends with it: the version installed, and a way to look for a newer one now. */
 export function ProgramVersion({ status, onUpdate }: { status: UpdateStatus; onUpdate: () => void }) {
   const queryClient = useQueryClient()
   const look = useMutation({

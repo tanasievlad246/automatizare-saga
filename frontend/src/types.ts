@@ -275,6 +275,7 @@ export type ScheduleRun = {
   clients: number; failed_clients: number; new: number; review: number
   error: { code: string; message: string } | null
   retry_at: string | null
+  trace: string | null // the journal's number for this run's own lines
 }
 /** The automatic download: what was chosen, when it runs next, and how the last one went. */
 export type ScheduleStatus = {

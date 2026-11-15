@@ -31,6 +31,7 @@
     --color-border: var(--border);
     --color-input: var(--input);
     --color-ring: var(--ring);
+    --color-switch-off: var(--switch-off);
 
     /* What an invoice's state looks like. Each always comes with its word. */
     --color-fresh: var(--fresh);
@@ -70,6 +71,7 @@
     --border: #d5dbe3;
     --input: #8793a3;
     --ring: #1b55c5;
+    --switch-off: #868f9b;
     --radius: 0.625rem;
 
     --fresh: #e4edfc;

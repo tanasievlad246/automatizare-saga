@@ -186,7 +186,7 @@ The page opens at `http://autosaga.localhost:8765/ui/`. `http://127.0.0.1:8765/u
 | **Jurnal** | What the program did, line by line: everything or only the problems, by area, period or a word; one line opens to its technical details and to the whole operation it belongs to. See [The journal](#the-journal) |
 | **Chei și parole** | The OpenRouter key and ANAF client details (hidden until asked for, changeable), and when the ANAF login expires |
 
-On every screen, a notice appears on top when a newer release of the program exists; see [Updating](#updating). The foot of the menu, under the last entry, holds three things: the installed version ("AutoSaga 0.4.0"), the button "Caută o versiune nouă" (always there, also on a development copy; it says what it found, and when a newer release exists it offers "Actualizează programul"), and the author line, "© 2026 Tanasie Vlad-Cristian" with a `mailto:` link to the address. The author line is written in the page's code, not read from the settings.
+On every screen, a notice appears on top when a newer release of the program exists; see [Updating](#updating). The foot of the menu, under the last entry, holds two things: the installed version ("AutoSaga 0.4.0") and the button "Caută o versiune nouă" (always there, also on a development copy; it says what it found, and when a newer release exists it offers "Actualizează programul"). The author line, "© 2026 Tanasie Vlad-Cristian" with a `mailto:` link to the address, is in the footer of every screen, across the whole page. It is written in the page's code, not read from the settings.
 
 On every screen, the top bar holds the name, the **folder for SAGA** and the **ANAF connection**:
 

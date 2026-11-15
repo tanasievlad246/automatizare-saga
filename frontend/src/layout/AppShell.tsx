@@ -13,7 +13,7 @@ import type { UpdateStatus } from '../types'
 import { AnafConnectionBadge } from './AnafConnectionBadge'
 import { Brand } from './Brand'
 import { DemoLabel } from './DemoLabel'
-import { Credits } from './Credits'
+import { PageFooter } from './PageFooter'
 import { ProgramVersion } from './ProgramVersion'
 import { SagaFolderChip } from './SagaFolderChip'
 import { UpdateDialog } from './UpdateDialog'
@@ -106,7 +106,6 @@ export function AppShell() {
             </NavLink>
           ))}
           {update && <ProgramVersion status={update} onUpdate={() => setUpdating(update)} />}
-          <Credits />
         </nav>
         <main className="min-w-0 flex-1 px-8 pt-7 pb-12">
           {/* Wide enough for tables on a large monitor; screens of text set a narrower width themselves. */}
@@ -118,6 +117,7 @@ export function AppShell() {
           </div>
         </main>
       </div>
+      <PageFooter />
       {updating && <UpdateDialog status={updating} onClose={() => setUpdating(null)} />}
       {/* pointer-events-auto: a window that is open switches the rest of the page off for
           the mouse; the messages must stay readable and closable above it. */}
