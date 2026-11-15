@@ -30,8 +30,10 @@ from .clients_file import read_client_rows
 from .config import MAX_DAYS, Config
 from .errors import (
     ANAF_ERROR,
+    ANAF_LIMIT_REACHED,
     BUSY,
     CLIENT_OFF,
+    CONFIG_ERROR,
     INTERNAL_ERROR,
     INVALID_CUI,
     INVALID_INPUT,
@@ -57,6 +59,17 @@ from .store import JEV_INSTRUCTIONS, RULE_TEST, Store
 from .suggestions import propose, ticked_words, words_of
 
 log = logging.getLogger(__name__)
+
+# sync_all: how long and how often a client waits for a download made by hand
+BUSY_PAUSE = 5.0
+BUSY_TRIES = 12
+# Failures that would be the same for every other client: the run stops, and says how it ended.
+STOPS_THE_RUN = {
+    LOGIN_NEEDED: "failed",
+    ANAF_LIMIT_REACHED: "failed",
+    CONFIG_ERROR: "failed",
+    NETWORK_ERROR: "unreachable",
+}
 
 # ANAF rejects an end time ahead of its own clock, so the window ends slightly in the past.
 CLOCK_MARGIN = timedelta(minutes=1)
@@ -222,6 +235,85 @@ class Service:
             "new_count": sum(m["is_new"] for m in messages),
             "messages": messages,
         }
+
+    def sync_all(self, progress: Callable[[int, int], None] | None = None) -> dict:
+        """Download for every client that is switched on, one after another.
+
+        One client's failure does not stop the others, except a failure that would be the
+        same for all of them (STOPS_THE_RUN). `progress(position, total)` is told before
+        each client, and `progress(total, total)` once at the end. Each `sync` takes the
+        lock itself; a client that finds it taken waits for a download made by hand.
+        """
+        store = self._open_store()
+        try:
+            clients = store.clients_switched_on()
+        finally:
+            store.close()
+        total = len(clients)
+        results: list[dict] = []
+        stopped_by: str | None = None
+        for position, client in enumerate(clients):
+            if progress is not None:
+                progress(position, total)
+            cui, name = client["cui"], client["name"]
+            store = self._open_store()
+            try:
+                still_on = store.client_enabled(cui) is True
+            finally:
+                store.close()
+            if not still_on:
+                continue
+            try:
+                result = self._sync_waiting(cui)
+            except EfacturaError as exc:
+                if exc.code == CLIENT_OFF:
+                    continue
+                results.append(_failed_client(cui, name, exc.code, exc.message))
+                if exc.code in STOPS_THE_RUN:
+                    stopped_by = exc.code
+                    break
+            except Exception as exc:
+                log.exception("Download for client %s failed", cui)
+                results.append(_failed_client(cui, name, INTERNAL_ERROR, repr(exc)))
+            else:
+                results.append(
+                    {
+                        "cui": cui, "name": name, "ok": True,
+                        "new_count": result["new_count"], "failed_count": result["failed_count"],
+                        "review": (result["classification"] or {}).get(REVIEW, 0),
+                    }
+                )
+        if progress is not None:
+            progress(total, total)
+        done = [r for r in results if r["ok"]]
+        failed_clients = len(results) - len(done)
+        if stopped_by:
+            status = STOPS_THE_RUN[stopped_by]
+        elif failed_clients or any(r["failed_count"] for r in done):
+            status = "partial"
+        else:
+            status = "ok"
+        return {
+            "ok": True,
+            "status": status,
+            "clients": total,
+            "failed_clients": failed_clients,
+            "new": sum(r["new_count"] for r in done),
+            "review": sum(r["review"] for r in done),
+            "stopped_by": stopped_by,
+            "results": results,
+        }
+
+    def _sync_waiting(self, cui: str) -> dict:
+        """`sync`, but when another download holds the lock, wait and try again."""
+        for attempt in range(1, BUSY_TRIES + 1):
+            try:
+                return self.sync(cui)
+            except EfacturaError as exc:
+                if exc.code != BUSY or attempt == BUSY_TRIES:
+                    raise
+            _pause(BUSY_PAUSE)
+        raise AssertionError("unreachable")  # the loop returns or raises
 
     def sync(
         self,
@@ -2012,6 +2104,10 @@ def _check_date(day: str | None, name: str = "since") -> None:
         date.fromisoformat(day)
     except ValueError:
         raise EfacturaError(INVALID_INPUT, f"{name} must be a date like 2026-11-11.") from None
+
+
+def _failed_client(cui: str, name: str, code: str, message: str) -> dict:
+    return {"cui": cui, "name": name, "ok": False, "error": {"code": code, "message": message}}
 
 
 def _pause(seconds: float) -> None:

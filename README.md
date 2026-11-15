@@ -221,6 +221,7 @@ Run them from this folder. Use `--config PATH` before the command if `config.tom
 | `uv run efactura login-finish "<address>"` | Takes the address the browser ended on and saves the login. |
 | `uv run efactura list <CUI> [--days N]` | What ANAF has, each marked new or already saved. Saves nothing. |
 | `uv run efactura sync <CUI> [--days N] [--from DATE --to DATE] [--no-classify]` | Fetches and saves everything not saved yet, then classifies the received invoices it saved. The period is the last `N` days, or the days from `--from` to `--to` (`--to` defaults to today). |
+| `uv run efactura sync-all` | Does `sync` for every client that is switched on, one after another, with the default period. It does once, now, what the schedule does, and leaves no record of an automatic run. |
 | `uv run efactura invoices [--cui CUI] [--pending] [--new] [--type T] [--since YYYY-MM-DD] [--classification S]` | Reads the database. `--pending` = not yet uploaded. `--new` = from the latest download and not yet uploaded. `T` is `primita`, `trimisa`, `erori` or `mesaj`. `S` is `pending`, `classified` or `review`. |
 | `uv run efactura invoice <id> [--xml]` | One message; `--xml` adds the XML text. |
 | `uv run efactura mark-uploaded <id>... [--undo]` | Sets (or clears) the uploaded flag. |

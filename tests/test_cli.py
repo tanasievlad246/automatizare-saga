@@ -414,3 +414,17 @@ def test_a_demo_folder_left_by_an_earlier_version_is_built_again(monkeypatch, tm
     cli.main(["demo"])
 
     assert started == [(True, 8770)] and not (old / "data" / "old.txt").exists()
+
+
+def test_sync_all_downloads_for_every_client_that_is_on(run, anaf, logged_in, config_path):
+    cfg = load_config(config_path)
+    Service(cfg, http=anaf.client(), now=lambda: NOW).save_client(VALID_CUI, "Alfa")
+    anaf.add("3001")
+
+    code, out, _ = run("sync-all")
+
+    assert code == 0
+    answer = json.loads(out)
+    assert answer["status"] == "ok"
+    assert answer["clients"] == 1
+    assert answer["new"] == 1

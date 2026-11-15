@@ -179,6 +179,8 @@ def _parser() -> argparse.ArgumentParser:
                 help="only save; these messages are never classified automatically",
             )
 
+    commands.add_parser("sync-all", help="fetch and save for every client that is switched on")
+
     invoices = commands.add_parser("invoices", help="read saved messages from the database")
     invoices.add_argument("--cui")
     invoices.add_argument("--pending", action="store_true", help="only those not yet uploaded")
@@ -383,6 +385,8 @@ def _dispatch(args: argparse.Namespace, cfg: Config, config_path: Path) -> dict 
                 return service.sync(
                     args.cui, args.days, classify=not args.no_classify, start=args.start, end=args.end
                 )
+            case "sync-all":
+                return service.sync_all()
             case "invoices":
                 return service.invoices(
                     args.cui, args.pending, args.message_type, args.since, args.classification,
