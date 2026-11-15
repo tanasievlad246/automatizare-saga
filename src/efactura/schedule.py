@@ -209,6 +209,7 @@ def due(schedule: Schedule, last: dict | None, clock: datetime) -> tuple[datetim
 
 _lock = threading.Lock()
 _running: dict | None = None  # the run in progress in this program: started_at, done, total
+_held: dict | None = None  # a finished run's record the database would not take yet, behind _lock
 _AUTO_LEVELS = {"ok": "info", "partial": "warning", "failed": "error", "unreachable": "error"}
 
 
@@ -227,6 +228,39 @@ def _progress(done: int, total: int) -> None:
             _running["done"], _running["total"] = done, total
 
 
+def _last(store: Store) -> dict | None:
+    """The last run: the record held in memory unless the stored one is a later record."""
+    global _held
+    stored = last_run(store)
+    with _lock:
+        held = _held
+        if held is None:
+            return stored
+        if stored is None or (
+            stored.get("status") == "running"
+            and (stored.get("slot"), stored.get("attempt")) == (held["slot"], held["attempt"])
+        ):
+            return dict(held)
+        _held = None  # a later record has overtaken it
+        return stored
+
+
+def _save_held(store: Store) -> None:
+    """Try again to save a held record; a failure is tried again at the next look."""
+    global _held
+    with _lock:
+        held = _held
+    if held is None:
+        return
+    try:
+        record_run(store, held)
+    except Exception:
+        return
+    with _lock:
+        if _held is held:
+            _held = None
+
+
 def _write_record(cfg: Config, record: dict) -> None:
     store = Store(cfg.db_path)
     try:
@@ -240,7 +274,7 @@ def status(cfg: Config, now: datetime | None = None) -> dict:
     clock = local_clock(now)
     store = Store(cfg.db_path)
     try:
-        current, last = read(store), last_run(store)
+        current, last = read(store), _last(store)
         on, off = store.client_switch_counts()
     finally:
         store.close()
@@ -251,7 +285,7 @@ def status(cfg: Config, now: datetime | None = None) -> dict:
             # memory is cleared after the final write, so a second read is conclusive.
             store = Store(cfg.db_path)
             try:
-                again = last_run(store)
+                again = _last(store)
             finally:
                 store.close()
             if again is not None and again.get("status") == "running":
@@ -283,7 +317,9 @@ def run_if_due(
         clock = local_clock(now)
         store = Store(cfg.db_path)
         try:
-            found = due(read(store), last_run(store), clock)
+            last = _last(store)  # lets go of a held record a later stored one has overtaken
+            _save_held(store)
+            found = due(read(store), last, clock)
         finally:
             store.close()
         if found is None:
@@ -304,6 +340,7 @@ def run_if_due(
 
 
 def _run(cfg, now, make_service, clock, found, trace) -> dict:
+    global _held
     from .service import Service  # service.py imports this module
 
     slot, attempt = found
@@ -348,6 +385,8 @@ def _run(cfg, now, make_service, clock, found, trace) -> dict:
     try:
         _write_record(cfg, record)
     except Exception as exc:
+        with _lock:
+            _held = dict(record)
         journal.record(
             "sync", "sync.record_unsaved",
             f"The automatic download ended as {record['status']}, but its record could not be saved: {exc!r}.",

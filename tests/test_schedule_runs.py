@@ -1,5 +1,6 @@
 """The program runs the schedule: run_if_due, the status the page reads, and the journal."""
 
+import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
@@ -45,6 +46,13 @@ def make_cfg(tmp_path, logged_in=True):
 @pytest.fixture
 def cfg(tmp_path):
     return make_cfg(tmp_path)
+
+
+@pytest.fixture(autouse=True)
+def nothing_held():
+    schedule._held = None
+    yield
+    schedule._held = None
 
 
 @pytest.fixture
@@ -383,6 +391,63 @@ def test_a_failed_write_of_the_final_record_does_not_hide_the_run(cfg, monkeypat
     assert finished and finished[0]["data"]["status"] == "ok"
     assert any("could not be saved" in line["message"] for line in story)
     assert schedule.status(cfg, MONDAY_8)["running"] is None
+
+
+def fail_the_final_write(monkeypatch):
+    real, calls = schedule.record_run, []
+
+    def second_fails(store, record):
+        calls.append(record["status"])
+        if len(calls) == 2:
+            raise sqlite3.OperationalError("database is locked")
+        real(store, record)
+
+    monkeypatch.setattr(schedule, "record_run", second_fails)
+    return real
+
+
+def test_a_run_whose_record_could_not_be_saved_is_shown_as_it_ended(cfg, monkeypatch):
+    fail_the_final_write(monkeypatch)
+    switch_on(cfg)
+    schedule.run_if_due(cfg, MONDAY_8, lambda cfg: _Empty())
+
+    last = schedule.status(cfg, MONDAY_8)["last_run"]
+
+    assert last["status"] == "ok"
+    assert last["finished_at"] is not None
+    assert last["retry_at"] is None
+
+
+def test_a_run_whose_record_could_not_be_saved_is_not_made_again(cfg, monkeypatch):
+    real = fail_the_final_write(monkeypatch)
+    switch_on(cfg)
+    schedule.run_if_due(cfg, MONDAY_8, lambda cfg: _Empty())
+    monkeypatch.setattr(schedule, "record_run", real)
+
+    again = schedule.run_if_due(cfg, MONDAY_8 + timedelta(minutes=16), lambda cfg: _Empty())
+
+    assert again is None
+    store = Store(cfg.db_path)
+    try:
+        assert schedule.last_run(store)["status"] == "ok"
+    finally:
+        store.close()
+
+
+def test_a_held_record_gives_way_to_a_later_stored_one(cfg, monkeypatch):
+    fail_the_final_write(monkeypatch)
+    switch_on(cfg)
+    schedule.run_if_due(cfg, MONDAY_8, lambda cfg: _Empty())
+    later = {"slot": "2026-11-17T08:00:00", "attempt": 1, "started_at": "2026-11-17T08:00:20",
+             "finished_at": "2026-11-17T08:01:00", "status": "ok", "clients": 0, "failed_clients": 0,
+             "new": 0, "review": 0, "error": None, "trace": None}
+    store = Store(cfg.db_path)
+    try:
+        store.set_setting(schedule.LAST_RUN, json.dumps(later))
+    finally:
+        store.close()
+
+    assert schedule.status(cfg, at(9, 0))["last_run"]["slot"] == "2026-11-17T08:00:00"
 
 
 def test_a_run_that_ends_between_the_two_reads_is_not_shown_as_interrupted(cfg, monkeypatch):
