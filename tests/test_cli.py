@@ -471,3 +471,25 @@ def test_one_bad_look_at_the_schedule_is_not_the_last(monkeypatch):
     cli._download_on_schedule_until(None, stopped)
 
     assert looks == [0, 1]
+
+
+def test_the_running_program_starts_both_background_threads(config_path, monkeypatch):
+    import threading
+
+    import uvicorn
+
+    started = []
+
+    class Recorder:
+        def __init__(self, target, args=(), daemon=None):
+            self.target = target
+
+        def start(self):
+            started.append(self.target)
+
+    monkeypatch.setattr(uvicorn.Server, "run", lambda self: None)
+    monkeypatch.setattr(threading, "Thread", Recorder)
+
+    cli.run_server(load_config(config_path), 9001)
+
+    assert started == [cli._keep_house_until, cli._download_on_schedule_until]

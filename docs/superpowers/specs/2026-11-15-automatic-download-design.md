@@ -41,6 +41,9 @@ Only the two quoted requests are the owner's words. Everything else below is a c
 - **(call)** When one client fails, the run goes on to the next. Four failures end the run, because every later client would fail the same way:
   - no ANAF login (`login_needed`), ANAF's daily limit of requests reached (`anaf_limit_reached`), or a missing setting (`config_error`): the run ends as failed; nothing is retried until the next scheduled moment;
   - ANAF out of reach (`network_error`): the run ends as unreachable and is tried again 15 minutes later, at most three more times for that moment.
+- **(call)** A run in which no client succeeded ends as failed, with the first client's error, and is not retried before the next moment. One client failing among others leaves the run partial.
+- **(call)** The page shows when a run was made (its start), not the moment it was scheduled for.
+- **(call)** When a run ended but its record could not be saved, the journal says so: the event `sync.record_unsaved`, at error level.
 - **(call)** Only the latest moment is ever considered: when the next moment arrives, attempts still owed to the one before it are dropped.
 - **(call)** With no client switched on, a run still happens and is recorded as fine, with 0 clients. The page says "Niciun client nu este pornit" from the count of clients, not from the run.
 - **(call)** If another download holds the program's lock (someone is downloading by hand), the run waits for it, up to a minute per client, before counting that client as failed. The wait is a loop around `sync` inside `sync_all`, on `busy` only; the lock itself and the downloads made by hand are unchanged. A restore or an update that gets in between two clients stops the program, so the run is cut off like any other; nothing more is done about it.

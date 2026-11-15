@@ -151,6 +151,25 @@ def test_anaf_out_of_reach_is_tried_again_a_quarter_of_an_hour_later(cfg):
     assert schedule.run_if_due(cfg, at(8, 15, 20), make_service)["attempt"] == 2
 
 
+def test_a_run_in_which_anaf_refused_every_client_is_recorded_as_failed(cfg, anaf, make_service, monkeypatch):
+    with_clients(cfg, make_service, (VALID_CUI, "Alfa"), (OTHER_VALID_CUI, "Beta"), (THIRD_CUI, "Gama"))
+    switch_on(cfg)
+
+    def refuse(self, cui, *a, **k):
+        raise EfacturaError("anaf_error", "ANAF said no")
+
+    monkeypatch.setattr(Service, "sync", refuse)
+
+    record = schedule.run_if_due(cfg, MONDAY_8, make_service)
+
+    assert record["status"] == "failed"
+    assert record["error"]["code"] == "anaf_error"
+    assert schedule.status(cfg, MONDAY_8)["last_run"]["retry_at"] is None
+    last = journal.events(cfg.db_path, trace=record["trace"])["events"][0]
+    assert (last["event"], last["level"]) == ("sync.auto_finished", "error")
+    assert last["data"]["error"] == "anaf_error"
+
+
 def test_the_page_can_see_a_run_in_progress(cfg):
     seen = []
 
@@ -223,6 +242,34 @@ def test_a_record_left_running_by_a_dead_program_shows_as_interrupted(cfg, make_
     assert shown["status"] == "interrupted"
     assert shown["retry_at"] == "2026-11-16T08:15:00"
     assert schedule.run_if_due(cfg, at(8, 15), make_service)["attempt"] == 2
+
+
+def test_saving_the_schedule_again_cancels_the_retry_the_status_promised(cfg):
+    def refuse(request):
+        raise httpx.ConnectError("connection reset", request=request)
+
+    make_service = lambda cfg: Service(cfg, http=httpx.Client(transport=httpx.MockTransport(refuse)), now=lambda: MONDAY_8)
+    service = with_clients(cfg, make_service, (VALID_CUI, "Alfa"))
+    switch_on(cfg)
+    assert schedule.run_if_due(cfg, MONDAY_8, make_service)["status"] == "unreachable"
+
+    later = Service(cfg, now=lambda: at(8, 5))
+    later.set_schedule(True, [0, 1, 2, 3, 4], ["08:00"])
+
+    assert schedule.status(cfg, at(8, 6))["last_run"]["retry_at"] is None
+
+
+def test_saving_the_schedule_stamps_the_services_clock(cfg):
+    service = Service(cfg, now=lambda: at(8, 5))
+
+    service.set_schedule(True, [0], ["08:00"])
+
+    store = Store(cfg.db_path)
+    try:
+        assert schedule.read(store).saved_at == "2026-11-16T08:05:00"
+    finally:
+        store.close()
+    assert schedule.run_if_due(cfg, at(8, 6), lambda cfg: Service(cfg, now=lambda: at(8, 6))) is None
 
 
 def test_run_if_due_never_raises(tmp_path):

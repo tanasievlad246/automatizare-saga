@@ -291,6 +291,8 @@ class Service:
         failed_clients = len(results) - len(done)
         if stopped_by:
             status = STOPS_THE_RUN[stopped_by]
+        elif results and not done:
+            status = "failed"  # nobody succeeded: not "not complete", a run that did not work
         elif failed_clients or any(r["failed_count"] for r in done):
             status = "partial"
         else:

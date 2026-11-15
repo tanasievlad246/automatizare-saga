@@ -95,9 +95,11 @@ The program can download invoices by itself, for every client that is switched o
 - **A missed moment is made up once.** When the program finds that a moment has passed without a download, it runs one download for the latest such moment, however many were missed. A moment that was already past when the schedule was saved is never made up.
 - **What a run does:** the same as a download by hand for each client that is on, one after another, then the invoices just saved are given an account and their SAGA files are written. A client that fails does not stop the others. A failure that would be the same for all of them (the login is needed, ANAF's limit is reached, the settings are wrong, ANAF cannot be reached) stops the run, and it is recorded how it ended: `ok`, `partial`, `failed` or `unreachable`.
 - **Three more attempts.** A run that could not reach ANAF, or that the program did not live to finish, is tried again a quarter of an hour later, up to four attempts in all. The next moment of the schedule starts over. A run that failed for another reason (no login, for instance) is not repeated until the next moment.
-- **A download made by hand** at the same time is waited for, one client at a time; the two never write together.
+- **A run in which no client succeeded is a failed run.** It is recorded as `failed` with the first client's error (ANAF's, for instance), shown as failed on the page, and not tried again before the next moment. One client failing among others leaves the run `partial`.
+- **A download made by hand** at the same time is waited for, one client at a time, for about a minute per client; after that the client counts as failed. The two never write together.
 - **It spends what a download by hand spends:** the calls to ANAF and, for invoices no rule decides, the calls to Jev, which are counted on the costs screen like any other.
-- **Where it shows:** the last run (its moment, attempt, how it ended and the counts), the run in progress and the next moment come from `GET /sync/schedule`. The journal holds `sync.auto_started` and `sync.auto_finished` and, under the same trace number, every line of the run itself.
+- **Where it shows:** the last run (its moment, attempt, how it ended and the counts), the run in progress and the next moment come from `GET /sync/schedule`. The journal holds `sync.auto_started` and `sync.auto_finished` and, under the same trace number, every line of the run itself. If the run ended but its record could not be saved, the journal says so with `sync.record_unsaved` (an error).
+- **Where it runs:** under `serve`, `start`, and `demo` serving the built page. When `efactura demo` starts the page's dev server (`pnpm` found), the background threads are not started, so a schedule saved there never runs.
 
 ## Backups
 
@@ -179,6 +181,7 @@ The page opens at `http://autosaga.localhost:8765/ui/`. `http://127.0.0.1:8765/u
 | **One invoice** | The invoice as a person reads it, ANAF's XML, the SAGA XML; its account and who chose it; accept Jev's proposal or pick another; a rule proposed from it when no rule decided it; the path of the SAGA file |
 | **Reguli de clasificare** | Rules proposed from recent decisions, the rules, the accounts Jev chooses from, how sure Jev must be, the question Jev is asked. The button "Testează regulile" opens the rule test, see [Testing the rules](#testing-the-rules) |
 | **Costuri Jev** | Cost between two dates, by day, week, month or year, and every invoice Jev classified |
+| **Descărcare automată** | Switch the automatic download on or off, the days and times (up to four a day), when the next one is, and how the last one went. See [Automatic download](#automatic-download) |
 | **Copii de siguranță** | The folder for the copies of the database, when the last one was made and when the next is due, "Fă o copie acum", and the copies kept, each with "Restaurează". See [Backups](#backups) |
 | **Jurnal** | What the program did, line by line: everything or only the problems, by area, period or a word; one line opens to its technical details and to the whole operation it belongs to. See [The journal](#the-journal) |
 | **Chei și parole** | The OpenRouter key and ANAF client details (hidden until asked for, changeable), and when the ANAF login expires |

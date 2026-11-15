@@ -175,6 +175,13 @@ def test_the_next_moment_drops_the_attempts_owed_to_the_one_before():
     assert schedule.due(TWICE_A_DAY, unreachable, at(0, 14, 0, 5)) == (at(0, 14), 1)
 
 
+def test_no_retry_is_promised_after_the_schedule_is_saved_again():
+    saved_again = replace(WEEKDAYS_AT_8, saved_at="2026-11-16T08:05:00")
+    for last in (ran(at(0, 8), "unreachable", ended=at(0, 8, 0, 30)), ran(at(0, 8), "running")):
+        assert schedule.retry_at(saved_again, last, at(0, 8, 6)) is None
+        assert schedule.due(saved_again, last, at(0, 8, 16)) is None
+
+
 def test_nothing_is_tried_again_once_the_schedule_is_off():
     unreachable = ran(at(0, 8), "unreachable", ended=at(0, 8, 0, 30))
     assert schedule.retry_at(replace(WEEKDAYS_AT_8, enabled=False), unreachable, at(0, 8, 5)) is None

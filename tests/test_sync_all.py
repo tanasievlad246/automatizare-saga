@@ -8,7 +8,7 @@ import pytest
 from efactura import auth
 from efactura.auth import Tokens
 from efactura.config import load_config
-from efactura.errors import ANAF_LIMIT_REACHED, EfacturaError
+from efactura.errors import ANAF_ERROR, ANAF_LIMIT_REACHED, EfacturaError
 from efactura.service import BUSY_PAUSE, BUSY_TRIES, Service
 from efactura.store import Store
 
@@ -203,7 +203,7 @@ def test_a_client_whose_turn_never_comes_is_its_failure(service, monkeypatch):
 
     assert answer["results"][0]["error"]["code"] == "busy"
     assert len(pauses) == BUSY_TRIES - 1
-    assert answer["status"] == "partial"
+    assert answer["status"] == "failed"  # its only client failed
 
 
 def test_the_lock_is_free_between_two_clients(service, anaf, monkeypatch):
@@ -259,3 +259,38 @@ def test_messages_left_behind_make_the_run_partial(service, anaf):
     assert answer["results"][0]["failed_count"] == 1
     assert answer["status"] == "partial"
     assert answer["failed_clients"] == 0
+
+
+def test_a_run_in_which_no_client_succeeded_is_failed(service, cfg, monkeypatch):
+    service.save_client("10000008", "Gama")
+
+    def refuse(real, self, cui):
+        raise EfacturaError(ANAF_ERROR, "x")
+
+    sync_with(monkeypatch, refuse)
+
+    answer = service.sync_all()
+
+    assert answer["status"] == "failed"
+    assert answer["failed_clients"] == 3
+    assert answer["stopped_by"] is None
+    assert len(answer["results"]) == 3
+
+
+def test_a_client_removed_during_the_run_is_skipped(service, cfg, anaf):
+    anaf.add("3001", cui=VALID_CUI)
+    anaf.add("3002", cui=OTHER_VALID_CUI)
+
+    def progress(position, total):
+        if (position, total) == (1, 2):
+            service.remove_client(OTHER_VALID_CUI)
+
+    answer = service.sync_all(progress)
+
+    assert [r["cui"] for r in answer["results"]] == [VALID_CUI]
+    assert answer["status"] == "ok"
+    store = Store(cfg.db_path)
+    try:
+        assert {row["cui"] for row in store.runs()} == {VALID_CUI}
+    finally:
+        store.close()

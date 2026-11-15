@@ -163,12 +163,18 @@ def _moment(text) -> datetime | None:
         return None
 
 
+def _after_saving(schedule: Schedule, moment: datetime | None) -> bool:
+    """Whether a moment may count: it is after the schedule was last saved (a save starts afresh)."""
+    saved_at = _moment(schedule.saved_at)
+    return moment is not None and (saved_at is None or moment > saved_at)
+
+
 def retry_at(schedule: Schedule, last: dict | None, clock: datetime) -> datetime | None:
     """When the latest slot is tried again, or None when it is not owed another attempt."""
     if not schedule.enabled or last is None:
         return None
     slot = latest_slot(schedule, clock)
-    if slot is None or _moment(last.get("slot")) != slot:
+    if slot is None or not _after_saving(schedule, slot) or _moment(last.get("slot")) != slot:
         return None
     if last.get("status") != "unreachable" and last.get("status") not in CUT_OFF:
         return None
@@ -186,8 +192,7 @@ def due(schedule: Schedule, last: dict | None, clock: datetime) -> tuple[datetim
     slot = latest_slot(schedule, clock)
     if slot is None:
         return None
-    saved_at = _moment(schedule.saved_at)
-    if saved_at is not None and slot <= saved_at:
+    if not _after_saving(schedule, slot):
         return None
     done = _moment(last.get("slot")) if last else None
     if done is None or done < slot:
@@ -333,6 +338,8 @@ def _run(cfg, now, make_service, clock, found, trace) -> dict:
             (r["error"] for r in reversed(answer["results"]) if not r["ok"] and r["error"]["code"] == answer["stopped_by"]),
             {"code": answer["stopped_by"], "message": answer["stopped_by"]},
         )
+    if error is None and answer["status"] in ("failed", "unreachable"):
+        error = next((r["error"] for r in answer.get("results", []) if not r["ok"] and r.get("error")), None)
     record.update(
         finished_at=_text(local_clock(now)), status=answer["status"],
         clients=answer.get("clients", 0), failed_clients=answer.get("failed_clients", 0),
