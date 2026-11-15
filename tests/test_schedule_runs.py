@@ -16,6 +16,7 @@ from efactura.store import Store
 from helpers import OTHER_VALID_CUI, VALID_CUI, FakeAnaf
 
 TOKENS_CLOCK = datetime(2026, 11, 11, 9, 30, tzinfo=timezone(timedelta(hours=2)))
+THIRD_CUI = "10000008"
 MONDAY_8 = datetime(2026, 11, 16, 8, 0, 20).astimezone()
 
 
@@ -87,9 +88,10 @@ def test_nothing_runs_while_the_schedule_is_off(cfg, make_service):
 
 
 def test_a_moment_that_has_come_downloads_for_every_client_that_is_on(cfg, anaf, make_service):
-    service = with_clients(cfg, make_service, (VALID_CUI, "Alfa"), (OTHER_VALID_CUI, "Beta"))
-    service.set_client_enabled(OTHER_VALID_CUI, False)
+    service = with_clients(cfg, make_service, (VALID_CUI, "Alfa"), (OTHER_VALID_CUI, "Beta"), (THIRD_CUI, "Gama"))
+    service.set_client_enabled(THIRD_CUI, False)
     anaf.add("3001", cui=VALID_CUI)
+    anaf.add("3002", cui=OTHER_VALID_CUI)
     switch_on(cfg)
 
     record = schedule.run_if_due(cfg, MONDAY_8, make_service)
@@ -97,8 +99,8 @@ def test_a_moment_that_has_come_downloads_for_every_client_that_is_on(cfg, anaf,
     assert record["slot"] == "2026-11-16T08:00:00"
     assert record["attempt"] == 1
     assert record["status"] == "ok"
-    assert record["clients"] == 1
-    assert record["new"] == 1
+    assert record["clients"] == 2
+    assert record["new"] == 2
     assert record["error"] is None
     assert record["started_at"] == record["finished_at"] == "2026-11-16T08:00:20"
     shown = schedule.status(cfg, MONDAY_8)
@@ -106,7 +108,7 @@ def test_a_moment_that_has_come_downloads_for_every_client_that_is_on(cfg, anaf,
     assert shown["next_at"] == "2026-11-17T08:00:00"
     assert shown["last_run"]["status"] == "ok"
     assert shown["last_run"]["retry_at"] is None
-    assert (shown["clients_on"], shown["clients_off"]) == (1, 1)
+    assert (shown["clients_on"], shown["clients_off"]) == (2, 1)
 
 
 def test_the_same_moment_is_not_run_twice(cfg, make_service):
@@ -303,3 +305,60 @@ def test_a_schedule_that_makes_no_sense_is_not_saved(cfg, make_service):
     assert raised.value.code == INVALID_INPUT
     shown = service.schedule()
     assert (shown["enabled"], shown["days"], shown["times"]) == (True, [2], ["09:30"])
+
+
+class _Empty:
+    def sync_all(self, progress=None):
+        return {"ok": True, "status": "ok", "clients": 0, "failed_clients": 0, "new": 0,
+                "review": 0, "stopped_by": None, "results": []}
+
+    def close(self):
+        pass
+
+
+def test_a_failed_write_of_the_final_record_does_not_hide_the_run(cfg, monkeypatch):
+    real, calls = schedule.record_run, []
+
+    def second_fails(store, record):
+        calls.append(record["status"])
+        if len(calls) == 2:
+            raise sqlite3.OperationalError("database is locked")
+        real(store, record)
+
+    monkeypatch.setattr(schedule, "record_run", second_fails)
+    switch_on(cfg)
+
+    record = schedule.run_if_due(cfg, MONDAY_8, lambda cfg: _Empty())
+
+    assert record["status"] == "ok"
+    story = journal.events(cfg.db_path, trace=record["trace"])["events"]
+    finished = [line for line in story if line["event"] == "sync.auto_finished"]
+    assert finished and finished[0]["data"]["status"] == "ok"
+    assert any("could not be saved" in line["message"] for line in story)
+    assert schedule.status(cfg, MONDAY_8)["running"] is None
+
+
+def test_a_run_that_ends_between_the_two_reads_is_not_shown_as_interrupted(cfg, monkeypatch):
+    running = {"slot": "2026-11-16T08:00:00", "attempt": 1, "started_at": "2026-11-16T08:00:20",
+               "finished_at": None, "status": "running"}
+    answers = [running, {**running, "status": "ok", "finished_at": "2026-11-16T08:01:00"}]
+    monkeypatch.setattr(schedule, "last_run", lambda store: answers.pop(0) if len(answers) > 1 else answers[0])
+    switch_on(cfg)
+
+    assert schedule.status(cfg, MONDAY_8)["last_run"]["status"] == "ok"
+
+
+def test_the_end_of_a_run_reads_the_clock_again(cfg, monkeypatch):
+    first, later = datetime(2026, 11, 16, 8, 0, 20), datetime(2026, 11, 16, 8, 3, 0)
+    seen = []
+
+    def clock(now=None):
+        seen.append(now)
+        return first if len(seen) == 1 else later
+
+    monkeypatch.setattr(schedule, "local_clock", clock)
+    switch_on(cfg)
+
+    record = schedule.run_if_due(cfg, None, lambda cfg: _Empty())
+
+    assert (record["started_at"], record["finished_at"]) == ("2026-11-16T08:00:20", "2026-11-16T08:03:00")

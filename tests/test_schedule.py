@@ -190,3 +190,14 @@ def test_a_stored_saved_at_that_carries_a_zone_counts_as_unreadable(store):
         '{"enabled": true, "days": [0], "times": ["08:00"], "saved_at": "2026-11-13T17:00:00+02:00"}',
     )
     assert schedule.read(store) == Schedule()
+
+
+def test_a_stored_run_record_with_a_zoned_moment_counts_as_unreadable(store):
+    for field in ("slot", "started_at", "finished_at"):
+        record = ran(at(0, 8))
+        record[field] = "2026-11-16T08:00:00+02:00"
+        schedule.record_run(store, record)
+
+        assert schedule.last_run(store) is None
+
+    assert schedule.due(WEEKDAYS_AT_8, schedule.last_run(store), at(0, 8, 20)) == (at(0, 8), 1)

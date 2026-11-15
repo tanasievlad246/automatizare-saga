@@ -108,7 +108,13 @@ def last_run(store: Store) -> dict | None:
         record = json.loads(store.get_setting(LAST_RUN) or "")
     except ValueError:
         return None
-    return record if isinstance(record, dict) else None
+    if not isinstance(record, dict):
+        return None
+    for field in ("slot", "started_at", "finished_at"):
+        text = record.get(field)
+        if text is not None and ((moment := _moment(text)) is None or moment.tzinfo is not None):
+            return None  # the clock is kept without a zone; a moment with one cannot be compared
+    return record
 
 
 def record_run(store: Store, record: dict) -> None:
@@ -236,9 +242,19 @@ def status(cfg: Config, now: datetime | None = None) -> dict:
     running = _in_progress()
     if last is not None:
         if last.get("status") == "running" and running is None:
-            last = {**last, "status": "interrupted"}  # its program ended before it wrote its end
-        again = None if running is not None else retry_at(current, last, clock)
-        last = {**last, "retry_at": _text(again)}
+            # The record was read before the memory: a run may have ended in between. The
+            # memory is cleared after the final write, so a second read is conclusive.
+            store = Store(cfg.db_path)
+            try:
+                again = last_run(store)
+            finally:
+                store.close()
+            if again is not None and again.get("status") == "running":
+                last = {**again, "status": "interrupted"}  # its program ended before it wrote its end
+            elif again is not None:
+                last = again
+        retry = None if running is not None else retry_at(current, last, clock)
+        last = {**last, "retry_at": _text(retry)}
     return {
         "ok": True,
         "enabled": current.enabled,
@@ -322,7 +338,14 @@ def _run(cfg, now, make_service, clock, found, trace) -> dict:
         clients=answer.get("clients", 0), failed_clients=answer.get("failed_clients", 0),
         new=answer.get("new", 0), review=answer.get("review", 0), error=error,
     )
-    _write_record(cfg, record)
+    try:
+        _write_record(cfg, record)
+    except Exception as exc:
+        journal.record(
+            "sync", "sync.record_unsaved",
+            f"The automatic download ended as {record['status']}, but its record could not be saved: {exc!r}.",
+            level="error", slot=record["slot"], attempt=attempt, status=record["status"],
+        )
     journal.record(
         "sync", "sync.auto_finished",
         f"Automatic download for {record['slot']} ended as {record['status']}.",
