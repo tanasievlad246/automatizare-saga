@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { messageForCode } from '../errorMessages'
 import type { ScheduleRun, ScheduleStatus } from '../types'
-import { describeWhen, formProblem, journalAddress, menuNote, onSavedChange, ownSaveArrival, pollEvery, runEnded, removeTimeName, runningLine, sameSchedule, stateCard } from './scheduleTexts'
+import {
+  describePeriod, describeWhen, formProblem, journalAddress, menuNote, onSavedChange, ownSaveArrival, periodSays, pollEvery, runEnded,
+  removeTimeName, runningLine, sameSchedule, stateCard,
+} from './scheduleTexts'
 
 const NOW = new Date(2026, 10, 16, 9, 0)
 
 const status = (over: Partial<ScheduleStatus> = {}): ScheduleStatus => ({
-  enabled: true, days: [0, 1, 2, 3, 4], times: ['08:00'], next_at: '2026-11-17T08:00:00', running: null, last_run: null,
+  enabled: true, days: [0, 1, 2, 3, 4], times: ['08:00'], period: { days: 7 }, next_at: '2026-11-17T08:00:00', running: null, last_run: null,
   clients_on: 3, clients_off: 0, ...over,
 })
 const run = (over: Partial<ScheduleRun> = {}): ScheduleRun => ({
@@ -25,25 +28,51 @@ describe('the days and hours in words', () => {
 })
 
 describe('what is wrong with the form', () => {
+  const usual = { days: 7 }
+  const withDates = (enabled: boolean, start: string, end: string) => formProblem(enabled, [0], ['08:00'], { start, end }, NOW)
+
   it('names the first problem, and none while the schedule is off', () => {
-    expect(formProblem(true, [], ['08:00'])).toBe('Alegeți cel puțin o zi.')
-    expect(formProblem(false, [], ['08:00'])).toBeNull()
-    expect(formProblem(true, [0], ['08:00', '08:00'])).toBe('Aceeași oră apare de două ori.')
-    expect(formProblem(true, [0], ['08:00', ''])).toBe('Completați ora.')
-    expect(formProblem(true, [0], ['08:00'])).toBeNull()
+    expect(formProblem(true, [], ['08:00'], usual, NOW)).toBe('Alegeți cel puțin o zi.')
+    expect(formProblem(false, [], ['08:00'], usual, NOW)).toBeNull()
+    expect(formProblem(true, [0], ['08:00', '08:00'], usual, NOW)).toBe('Aceeași oră apare de două ori.')
+    expect(formProblem(true, [0], ['08:00'], usual, NOW)).toBeNull()
   })
 
   it('checks the hours whatever the switch says; only the days depend on it', () => {
-    expect(formProblem(false, [0], ['08:00', '08:00'])).toBe('Aceeași oră apare de două ori.')
-    expect(formProblem(false, [], ['08:00', ''])).toBe('Completați ora.')
-    expect(formProblem(false, [], ['08:00'])).toBeNull()
+    expect(formProblem(false, [0], ['08:00', '08:00'], usual, NOW)).toBe('Aceeași oră apare de două ori.')
+    expect(formProblem(false, [], ['08:00'], usual, NOW)).toBeNull()
+  })
+
+  it('wants both days of a period, the first not after the last, whatever the switch says', () => {
+    expect(withDates(false, '2026-11-01', '')).toBe('Alegeți amândouă zilele perioadei.')
+    expect(withDates(true, '', '2026-11-30')).toBe('Alegeți amândouă zilele perioadei.')
+    expect(withDates(false, '2026-11-10', '2026-11-01')).toBe('Prima zi a perioadei este după ultima.')
+    expect(withDates(true, '2026-11-01', '2026-11-30')).toBeNull()
+    expect(withDates(true, '2026-11-16', '2026-11-16')).toBeNull()
+  })
+
+  it('refuses a period ANAF cannot be asked for only while the schedule is on', () => {
+    expect(withDates(true, '2026-11-17', '2026-11-30')).toBe('Prima zi a perioadei nu poate fi după azi.')
+    expect(withDates(false, '2026-11-17', '2026-11-30')).toBeNull()
+    expect(withDates(true, '2026-08-01', '2026-09-16'))
+      .toBe('Perioada s-a încheiat de mai mult de 60 de zile, iar ANAF nu mai păstrează facturile din ea.')
+    expect(withDates(false, '2026-08-01', '2026-09-16')).toBeNull()
+    expect(withDates(true, '2026-08-01', '2026-09-17')).toBeNull() // its last day is the sixtieth back
+    expect(withDates(true, '2026-08-01', '2027-01-31')).toBeNull() // began long ago, still running
   })
 })
 
 describe('whether two schedules are the same', () => {
-  const base = { enabled: true, days: [0, 4], times: ['08:00', '14:00'] }
+  const base = { enabled: true, days: [0, 4], times: ['08:00', '14:00'], period: { days: 7 } }
+  const november = { start: '2026-11-01', end: '2026-11-30' }
+  it('tells two periods apart', () => {
+    expect(sameSchedule({ ...base, period: { days: 3 } }, base)).toBe(false)
+    expect(sameSchedule({ ...base, period: november }, { ...base, period: { ...november } })).toBe(true)
+    expect(sameSchedule({ ...base, period: november }, { ...base, period: { ...november, end: '2026-11-29' } })).toBe(false)
+    expect(sameSchedule({ ...base, period: november }, base)).toBe(false)
+  })
   it('ignores the order the days and hours were chosen in', () => {
-    expect(sameSchedule({ enabled: true, days: [4, 0], times: ['14:00', '08:00'] }, base)).toBe(true)
+    expect(sameSchedule({ ...base, days: [4, 0], times: ['14:00', '08:00'] }, base)).toBe(true)
     expect(sameSchedule({ ...base, enabled: false }, base)).toBe(false)
     expect(sameSchedule({ ...base, days: [0] }, { ...base, days: [0, 1] })).toBe(false)
     expect(sameSchedule({ ...base, times: ['08:00'] }, { ...base, times: ['08:30'] })).toBe(false)
@@ -172,9 +201,9 @@ describe('how often the page asks', () => {
 })
 
 describe('what the form does when the saved schedule is not the one it follows', () => {
-  const a = { enabled: true, days: [0], times: ['08:00'] }
-  const b = { enabled: true, days: [0, 1], times: ['08:00'] }
-  const c = { enabled: false, days: [2], times: ['09:00'] }
+  const a = { enabled: true, days: [0], times: ['08:00'], period: { days: 7 } }
+  const b = { enabled: true, days: [0, 1], times: ['08:00'], period: { days: 7 } }
+  const c = { enabled: false, days: [2], times: ['09:00'], period: { days: 7 } }
   it('follows when nothing would be lost, shows a notice when edits would', () => {
     expect(onSavedChange(c, a, { ...a, days: [0] })).toBe('nothing')
     expect(onSavedChange(a, a, b)).toBe('follow')
@@ -184,9 +213,9 @@ describe('what the form does when the saved schedule is not the one it follows',
 })
 
 describe('after her own save', () => {
-  const a = { enabled: true, days: [0], times: ['08:00'] }
-  const b = { enabled: true, days: [0, 1], times: ['08:00'] }
-  const c = { enabled: false, days: [2], times: ['09:00'] }
+  const a = { enabled: true, days: [0], times: ['08:00'], period: { days: 7 } }
+  const b = { enabled: true, days: [0, 1], times: ['08:00'], period: { days: 7 } }
+  const c = { enabled: false, days: [2], times: ['09:00'], period: { days: 7 } }
   it('tells whether the saved schedule became her answer, is still the old one, or was overtaken', () => {
     expect(ownSaveArrival(b, b, a)).toBe('arrived')
     expect(ownSaveArrival(a, a, a)).toBe('arrived')
@@ -224,9 +253,8 @@ describe('whether an automatic download ended that the lists have not seen', () 
 })
 
 describe('the remove button of a time', () => {
-  it('is named by its time, or by its position when the field is empty', () => {
-    expect(removeTimeName('14:00', 1)).toBe('Scoate ora 14:00')
-    expect(removeTimeName('', 1)).toBe('Scoate ora 2')
+  it('is named by its time', () => {
+    expect(removeTimeName('14:00')).toBe('Scoate ora 14:00')
   })
 })
 
@@ -236,5 +264,67 @@ describe('the journal address of a run', () => {
     expect(journalAddress(undefined)).toBe('/jurnal')
     expect(journalAddress('')).toBe('/jurnal')
     expect(journalAddress('c418053e30a7')).toBe('/jurnal?operatiune=c418053e30a7')
+  })
+})
+
+describe('the period in words', () => {
+  it('says which invoices a download brings', () => {
+    expect(describePeriod({ days: 7 })).toBe('facturile din ultimele 7 zile')
+    expect(describePeriod({ days: 1 })).toBe('facturile din ultima zi')
+    expect(describePeriod({ days: 30 })).toBe('facturile din ultimele 30 de zile')
+    expect(describePeriod({ start: '2026-11-01', end: '2026-11-30' })).toBe('facturile din 01.11.2026 – 30.11.2026')
+    expect(describePeriod({ start: '2026-11-16', end: '2026-11-16' })).toBe('facturile din 16.11.2026')
+  })
+
+  it('explains under the fields what the choice means', () => {
+    expect(periodSays({ days: 3 })).toBe(
+      'La fiecare descărcare, programul aduce facturile din ultimele 3 zile. Dacă a stat oprit mai mult de atât, merge înapoi până la ultima descărcare completă.',
+    )
+    expect(periodSays({ start: '2026-11-01', end: '2026-11-30' })).toBe(
+      'La fiecare descărcare, programul aduce facturile din 01.11.2026 – 30.11.2026. Zilele rămân aceleași: după 30.11.2026 nu mai vin facturi noi până nu alegeți altă perioadă.',
+    )
+  })
+
+  it('asks for the two days while they are not both there, in their order', () => {
+    expect(periodSays({ start: '2026-11-01', end: '' })).toBe('Alegeți prima și ultima zi a perioadei.')
+    expect(periodSays({ start: '', end: '' })).toBe('Alegeți prima și ultima zi a perioadei.')
+    expect(periodSays({ start: '2026-11-30', end: '2026-11-01' })).toBe('Alegeți prima și ultima zi a perioadei.')
+  })
+})
+
+describe('a period whose last day has passed', () => {
+  const ended = { start: '2026-11-01', end: '2026-11-15' }
+  const lastDayToday = { start: '2026-11-01', end: '2026-11-16' }
+
+  it('is what the state card says, before anything about the last run, with the next download and the way to the journal', () => {
+    const failed = run({ status: 'failed', error: { code: 'login_needed', message: 'x' } })
+    expect(stateCard(status({ period: ended, last_run: failed }), NOW)).toEqual({
+      tone: 'attention', title: 'Perioada aleasă s-a încheiat pe 15.11.2026',
+      text: 'Descărcarea automată mai aduce doar facturile din perioada aceasta. Pentru cele sosite după 15.11.2026, alegeți mai jos altă perioadă. Următoarea descărcare: mâine, la 08:00.',
+      journal: true, clients: false,
+    })
+    expect(stateCard(status({ period: ended }), NOW).journal).toBe(false)
+  })
+
+  it('says that ANAF has nothing left of a period that ended over 60 days ago', () => {
+    expect(stateCard(status({ period: { start: '2026-08-01', end: '2026-09-16' } }), NOW).text)
+      .toBe('ANAF păstrează facturile doar 60 de zile, așa că din perioada aceasta nu mai are ce aduce. Alegeți mai jos altă perioadă. Următoarea descărcare: mâine, la 08:00.')
+    expect(stateCard(status({ period: { start: '2026-08-01', end: '2026-09-17' } }), NOW).text)
+      .toBe('Descărcarea automată mai aduce doar facturile din perioada aceasta. Pentru cele sosite după 17.09.2026, alegeți mai jos altă perioadă. Următoarea descărcare: mâine, la 08:00.')
+  })
+
+  it('is not said on the last day, while the schedule is off, or while a download is going', () => {
+    expect(stateCard(status({ period: lastDayToday }), NOW).title).toBe(NEXT)
+    expect(stateCard(status({ enabled: false, next_at: null, period: ended }), NOW).title).toBe('Descărcarea automată este oprită')
+    const running = { started_at: '2026-11-16T08:00:20', done: 0, total: 1 }
+    expect(stateCard(status({ period: ended, running }), NOW).title).toBe('Se descarcă acum')
+  })
+
+  it('is what the menu says, unless a download is going', () => {
+    expect(menuNote(status({ period: ended, last_run: run({ status: 'failed' }) }), NOW)).toEqual({ text: 'Perioada s-a încheiat', tone: 'attention' })
+    expect(menuNote(status({ period: lastDayToday }), NOW)).toBeNull()
+    expect(menuNote(status({ enabled: false, period: ended }), NOW)).toBeNull()
+    expect(menuNote(status({ period: ended, running: { started_at: '2026-11-16T08:00:20', done: 0, total: 1 } }), NOW))
+      .toEqual({ text: 'Se descarcă acum', tone: 'fresh' })
   })
 })

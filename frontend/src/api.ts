@@ -3,7 +3,7 @@
 import type {
   AuthStatus, BackupStatus, Client, CostGroup, Costs, ImportResult, Invoice, InvoiceView, JevCall, JournalLine,
   ProposedRules,
-  RuleEvidence, RuleFields, RuleTestResult, RulesOverview, ScheduleStatus, Secret, SyncResult, UpdateStatus,
+  RuleEvidence, RuleFields, RuleTestResult, RulesOverview, SchedulePeriod, ScheduleStatus, Secret, SyncResult, UpdateStatus,
 } from './types'
 
 /** What the program answers when it refuses: a stable code and an English explanation. */
@@ -83,7 +83,7 @@ export const api = {
     call<ImportResult>('POST', `/clients/import${query({ filename: file.name })}`, file),
 
   schedule: () => call<ScheduleStatus>('GET', '/sync/schedule'),
-  saveSchedule: (schedule: { enabled: boolean; days: number[]; times: string[] }) =>
+  saveSchedule: (schedule: { enabled: boolean; days: number[]; times: string[]; period: SchedulePeriod }) =>
     call<ScheduleStatus>('PUT', '/sync/schedule', schedule),
 
   sync: (cui: string, period: SyncPeriod) => call<SyncResult>('POST', '/sync', { cui, ...period }),

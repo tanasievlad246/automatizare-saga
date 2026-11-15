@@ -101,8 +101,7 @@ export function formatClock(iso: string): string {
 }
 
 /** Today as the date fields and the API write it: "2026-11-13". */
-export function today(): string {
-  const now = new Date()
+export function today(now = new Date()): string {
   return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10)
 }
 
@@ -125,8 +124,7 @@ export function folderOf(path: string): string {
   return path.replace(/[\\/][^\\/]*$/, '')
 }
 
-/** The day `days` days before today, as the date fields write it. */
-export function daysAgo(days: number): string {
-  const then = new Date(Date.now() - days * 86_400_000)
-  return new Date(then.getTime() - then.getTimezoneOffset() * 60_000).toISOString().slice(0, 10)
+/** The day `days` days before today, as the date fields write it. Counted on the calendar: a day is not always 24 hours. */
+export function daysAgo(days: number, now = new Date()): string {
+  return today(new Date(now.getFullYear(), now.getMonth(), now.getDate() - days, 12))
 }

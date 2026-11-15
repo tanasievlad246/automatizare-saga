@@ -1,12 +1,15 @@
 // What the "Descărcare automată" screen and the menu say, written from the schedule's status.
 
 import { knowsCode, messageForCode } from '../errorMessages'
-import { countOf, formatFromWhen, formatNext, formatWhen } from '../format'
-import type { ScheduleRun, ScheduleStatus } from '../types'
+import { countOf, daysAgo, formatDate, formatFromWhen, formatNext, formatWhen, today } from '../format'
+import type { SchedulePeriod, ScheduleRun, ScheduleStatus } from '../types'
 
 export const DAY_NAMES = ['Luni', 'Marți', 'Miercuri', 'Joi', 'Vineri', 'Sâmbătă', 'Duminică']
 /** The most times of day one schedule may hold. */
 export const MOST_TIMES = 4
+/** The periods offered as buttons: the last so many days. */
+export const PERIOD_DAYS = [3, 5, 7, 10]
+const ANAF_KEEPS_DAYS = 60
 
 const day = (index: number) => DAY_NAMES[index].toLowerCase()
 
@@ -28,12 +31,34 @@ export function describeWhen(days: number[], times: string[]): string {
   return `${which}, la ${listed(times)}`
 }
 
-export type ScheduleChoice = { enabled: boolean; days: number[]; times: string[] }
+/** "facturile din ultimele 7 zile" or "facturile din 01.11.2026 – 30.11.2026" */
+export function describePeriod(period: SchedulePeriod): string {
+  if ('days' in period) return `facturile din ${period.days === 1 ? 'ultima zi' : `ultimele ${countOf(period.days, 'zi', 'zile')}`}`
+  const first = formatDate(period.start)
+  return `facturile din ${period.start === period.end ? first : `${first} – ${formatDate(period.end)}`}`
+}
+
+/** Under the period's fields: what the choice means at each download. */
+export function periodSays(period: SchedulePeriod): string {
+  const each = `La fiecare descărcare, programul aduce ${describePeriod(period)}.`
+  if ('days' in period) return `${each} Dacă a stat oprit mai mult de atât, merge înapoi până la ultima descărcare completă.`
+  if (!period.start || !period.end || period.start > period.end) return 'Alegeți prima și ultima zi a perioadei.'
+  return `${each} Zilele rămân aceleași: după ${formatDate(period.end)} nu mai vin facturi noi până nu alegeți altă perioadă.`
+}
+
+/** The last day of a period of chosen dates that is over, while the schedule is on; null otherwise. */
+function endedOn(status: ScheduleStatus, now: Date): string | null {
+  const { period } = status
+  return status.enabled && 'end' in period && period.end < today(now) ? period.end : null
+}
+
+export type ScheduleChoice = { enabled: boolean; days: number[]; times: string[]; period: SchedulePeriod }
 
 /** The same schedule, whatever order the days and the times were chosen in. */
 export function sameSchedule(a: ScheduleChoice, b: ScheduleChoice): boolean {
+  const period = (chosen: SchedulePeriod) => ('days' in chosen ? [chosen.days] : [chosen.start, chosen.end])
   const key = (choice: ScheduleChoice) =>
-    JSON.stringify([choice.enabled, [...choice.days].sort((x, y) => x - y), [...choice.times].sort()])
+    JSON.stringify([choice.enabled, [...choice.days].sort((x, y) => x - y), [...choice.times].sort(), period(choice.period)])
   return key(a) === key(b)
 }
 
@@ -50,11 +75,22 @@ export function ownSaveArrival(saved: ScheduleChoice, answer: ScheduleChoice, be
   return sameSchedule(saved, before) ? 'waiting' : 'overtaken'
 }
 
-/** What keeps the form from being saved. The hours are checked even while it is off; the days only while it is on. */
-export function formProblem(enabled: boolean, days: number[], times: string[]): string | null {
+/**
+ * What keeps the form from being saved, as the program itself would refuse it. The hours and the period's two
+ * days are checked even while it is off; the days of the week, and whether ANAF can still be asked for the
+ * period, only while it is on.
+ */
+export function formProblem(enabled: boolean, days: number[], times: string[], period: SchedulePeriod, now = new Date()): string | null {
   if (enabled && days.length === 0) return 'Alegeți cel puțin o zi.'
-  if (times.some((time) => time === '')) return 'Completați ora.'
   if (new Set(times).size < times.length) return 'Aceeași oră apare de două ori.'
+  if ('days' in period) return null
+  if (!period.start || !period.end) return 'Alegeți amândouă zilele perioadei.'
+  if (period.start > period.end) return 'Prima zi a perioadei este după ultima.'
+  if (!enabled) return null
+  if (period.start > today(now)) return 'Prima zi a perioadei nu poate fi după azi.'
+  if (period.end < daysAgo(ANAF_KEEPS_DAYS, now)) {
+    return 'Perioada s-a încheiat de mai mult de 60 de zile, iar ANAF nu mai păstrează facturile din ea.'
+  }
   return null
 }
 
@@ -73,7 +109,7 @@ function outcome(run: ScheduleRun): string {
   return parts.join(' · ')
 }
 
-/** What the card at the top of the screen says, first match wins: running, off, no client on, the last run. */
+/** What the card at the top of the screen says, first match wins: running, off, no client on, a period that is over, the last run. */
 export function stateCard(status: ScheduleStatus, now = new Date()): StateCard {
   const card = (tone: StateCard['tone'], title: string, text: string, links: Partial<Pick<StateCard, 'journal' | 'clients'>> = {}): StateCard =>
     ({ tone, title, text, journal: false, clients: false, ...links })
@@ -95,6 +131,13 @@ export function stateCard(status: ScheduleStatus, now = new Date()): StateCard {
   if (status.clients_on === 0) {
     return card('attention', 'Niciun client nu este pornit',
       'Descărcarea automată nu are ce descărca. Porniți clienții din lista de clienți.', { clients: true })
+  }
+  const ended = endedOn(status, now)
+  if (ended) {
+    const what = ended < daysAgo(ANAF_KEEPS_DAYS, now)
+      ? 'ANAF păstrează facturile doar 60 de zile, așa că din perioada aceasta nu mai are ce aduce. Alegeți mai jos altă perioadă.'
+      : `Descărcarea automată mai aduce doar facturile din perioada aceasta. Pentru cele sosite după ${formatDate(ended)}, alegeți mai jos altă perioadă.`
+    return card('attention', `Perioada aleasă s-a încheiat pe ${formatDate(ended)}`, then(what), { journal: Boolean(run) })
   }
   if (run && NOT_DONE_STATUSES.includes(run.status)) {
     const when = formatFromWhen(run.started_at, now)
@@ -130,9 +173,9 @@ export function stateCard(status: ScheduleStatus, now = new Date()): StateCard {
     : card('done', title, 'Nu a fost făcută încă nicio descărcare automată.')
 }
 
-/** The name of the button that removes a time: the time itself, or its position when the field is empty. */
-export function removeTimeName(time: string, index: number): string {
-  return `Scoate ora ${time || index + 1}`
+/** The name of the button that removes a time. */
+export function removeTimeName(time: string): string {
+  return `Scoate ora ${time}`
 }
 
 /** The journal's address: the whole journal, or one operation's own lines. */
@@ -155,9 +198,10 @@ export function runEnded(before: ScheduleStatus | undefined, now: ScheduleStatus
 }
 
 /** The line under "Descărcare automată" in the menu, only when something needs a look. */
-export function menuNote(status: ScheduleStatus | undefined): { text: string; tone: 'fresh' | 'attention' } | null {
+export function menuNote(status: ScheduleStatus | undefined, now = new Date()): { text: string; tone: 'fresh' | 'attention' } | null {
   if (!status) return null
   if (status.running) return { text: 'Se descarcă acum', tone: 'fresh' }
+  if (endedOn(status, now)) return { text: 'Perioada s-a încheiat', tone: 'attention' }
   if (status.enabled && status.last_run && NOT_DONE_STATUSES.includes(status.last_run.status)) {
     return { text: 'Ultima nu a reușit', tone: 'attention' }
   }

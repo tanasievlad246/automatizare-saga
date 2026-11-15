@@ -5,21 +5,23 @@ import { toast } from 'sonner'
 import { Notice } from '@/components/Notice'
 import { PillTabs } from '@/components/PillTabs'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { api } from '../api'
 import { showError } from '../errorMessages'
-import type { ScheduleStatus } from '../types'
+import type { SchedulePeriod, ScheduleStatus } from '../types'
+import { SchedulePeriodFields } from './SchedulePeriodFields'
 import { DAY_NAMES, formProblem, MOST_TIMES, onSavedChange, ownSaveArrival, removeTimeName, sameSchedule, type ScheduleChoice } from './scheduleTexts'
+import { TimeOfDayField } from './TimeOfDayField'
+import { useNow } from './useNow'
 
 // The hours offered, in this order, when a person adds one.
 const SUGGESTED_TIMES = ['12:00', '16:00', '10:00', '18:00']
 
 const sorted = <T,>(items: T[]) => [...items].sort()
-const choiceOf = ({ enabled, days, times }: ScheduleChoice): ScheduleChoice => ({ enabled, days, times })
+const choiceOf = ({ enabled, days, times, period }: ScheduleChoice): ScheduleChoice => ({ enabled, days, times, period })
 
 /**
- * What to download when: nothing changes until "Salvează" is pressed. The form stays mounted
+ * When to download, and the invoices of which period: nothing changes until "Salvează" is pressed. The form stays mounted
  * (so focus stays where it is) and follows the saved schedule only while it holds no edits.
  */
 export function ScheduleForm({ saved }: { saved: ScheduleStatus }) {
@@ -29,7 +31,9 @@ export function ScheduleForm({ saved }: { saved: ScheduleStatus }) {
   const [draft, setDraft] = useState<ScheduleChoice>(choiceOf(saved))
   // Her own save: its answer, and the schedule the form followed before it, until the page shows the answer.
   const [answered, setAnswered] = useState<{ answer: ScheduleChoice; before: ScheduleChoice } | null>(null)
-  const { enabled, days, times } = draft
+  const { enabled, days, times, period } = draft
+  // Whether ANAF can still be asked for the chosen days depends on today, which the page keeps current.
+  const now = useNow()
   const addTimeButton = useRef<HTMLButtonElement>(null)
   const removedATime = useRef(false)
   // After a removal the button pressed is gone: the focus goes to "Adaugă încă o oră", once it is drawn.
@@ -72,12 +76,13 @@ export function ScheduleForm({ saved }: { saved: ScheduleStatus }) {
     onError: showError,
   })
 
-  const problem = formProblem(enabled, days, times)
+  const problem = formProblem(enabled, days, times, period, now)
   const unchanged = sameSchedule(draft, followed)
   const unavailable = problem !== null || unchanged || save.isPending
   const setEnabled = (value: boolean) => setDraft({ ...draft, enabled: value })
   const setDays = (value: number[]) => setDraft({ ...draft, days: value })
   const setTimes = (value: string[]) => setDraft({ ...draft, times: value })
+  const setPeriod = (value: SchedulePeriod) => setDraft({ ...draft, period: value })
 
   const toggleDay = (index: number) => setDays(days.includes(index) ? days.filter((day) => day !== index) : [...days, index])
   const setTime = (at: number, time: string) => setTimes(times.map((each, index) => (index === at ? time : each)))
@@ -125,19 +130,13 @@ export function ScheduleForm({ saved }: { saved: ScheduleStatus }) {
         <div className="flex flex-col items-start gap-2.5">
           {times.map((time, index) => (
             <div key={index} className="flex items-center gap-2">
-              <Input
-                type="time"
-                aria-label={`Ora ${index + 1}`}
-                className="w-40"
-                value={time}
-                onChange={(event) => setTime(index, event.target.value)}
-              />
+              <TimeOfDayField name={`Ora ${index + 1}`} value={time} onChange={(chosen) => setTime(index, chosen)} />
               {times.length > 1 && (
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
-                  aria-label={removeTimeName(time, index)}
+                  aria-label={removeTimeName(time)}
                   onClick={() => {
                     setTimes(times.filter((_, at) => at !== index))
                     removedATime.current = true
@@ -152,8 +151,10 @@ export function ScheduleForm({ saved }: { saved: ScheduleStatus }) {
             <Button ref={addTimeButton} type="button" variant="link" className="px-0" onClick={addTime}>Adaugă încă o oră</Button>
           )}
         </div>
-        <p className="text-muted-foreground">Cel mult patru ore pe zi.</p>
+        <p className="text-muted-foreground">Cel mult patru ore pe zi. Orele se aleg de la 00 la 23: 14:00 este două după-amiaza.</p>
       </div>
+
+      <SchedulePeriodFields period={period} onChange={setPeriod} />
 
       {notice && (
         <Notice tone="attention" className="flex-wrap items-center">

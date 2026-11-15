@@ -2,8 +2,8 @@
 // is known to write become Romanian sentences; anything else keeps the English line.
 
 import { countOf, formatPercent, formatUsd } from '../format'
-import { describeWhen } from '../schedule/scheduleTexts'
-import type { JournalLine } from '../types'
+import { describePeriod, describeWhen } from '../schedule/scheduleTexts'
+import type { JournalLine, SchedulePeriod } from '../types'
 
 export const LEVEL_NAMES: Record<JournalLine['level'], string> = {
   detail: 'Detaliu', info: 'Informație', warning: 'Atenție', error: 'Eroare',
@@ -65,10 +65,12 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
   'sync.failed': (data) => `Descărcarea pentru ${who(data)} nu a reușit.`,
   'sync.message_failed': () => 'Un mesaj de la ANAF nu a putut fi salvat. Se încearcă din nou la următoarea descărcare.',
 
-  'schedule.saved': (data) =>
-    data.enabled
-      ? `Descărcarea automată a fost pornită: ${describeWhen(data.days as number[], data.times as string[])}.`
-      : 'Descărcarea automată a fost oprită.',
+  'schedule.saved': (data) => {
+    if (!data.enabled) return 'Descărcarea automată a fost oprită.'
+    // Lines written before the period existed do not carry one.
+    const period = data.period ? `, cu ${describePeriod(data.period as SchedulePeriod)}` : ''
+    return `Descărcarea automată a fost pornită: ${describeWhen(data.days as number[], data.times as string[])}${period}.`
+  },
   'sync.auto_started': (data) =>
     `Descărcarea automată a început.${Number(data.attempt) > 1 ? ` Este încercarea ${text(data.attempt)} din 4.` : ''}`,
   'sync.auto_finished': (data) => {

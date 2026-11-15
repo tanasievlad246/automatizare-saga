@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { ApiError } from './api'
 import { errorDetail, errorMessage } from './errorMessages'
 import {
-  countOf, formatAmount, formatDate, formatFromWhen, formatMoney, formatNext, formatPercent, formatPeriod, formatUsd, formatSize, formatWhen,
-  shortPath,
+  countOf, daysAgo, formatAmount, formatDate, formatFromWhen, formatMoney, formatNext, formatPercent, formatPeriod, formatUsd, formatSize, formatWhen,
+  shortPath, today,
 } from './format'
 
 // Intl separates thousands with a narrow no-break space in some places; compare without caring which.
@@ -181,5 +181,19 @@ describe('the next download', () => {
     expect(formatNext('2026-11-15T14:00:00', now)).toBe('azi, la 14:00')
     expect(formatNext('2026-11-16T08:00:00', now)).toBe('mâine, la 08:00')
     expect(formatNext('2026-11-18T08:00:00', now)).toBe('miercuri, 18.11.2026, la 08:00')
+  })
+})
+
+describe('days as the date fields write them', () => {
+  it('writes the day the PC is in, also just after midnight', () => {
+    expect(today(new Date(2026, 10, 16, 0, 5))).toBe('2026-11-16')
+    expect(today(new Date(2026, 10, 16, 23, 55))).toBe('2026-11-16')
+  })
+
+  it('counts days back on the calendar, across months and the change of the clock', () => {
+    expect(daysAgo(60, new Date(2026, 10, 16, 9, 0))).toBe('2026-09-17')
+    expect(daysAgo(1, new Date(2026, 2, 29, 0, 30))).toBe('2026-03-28')
+    expect(daysAgo(1, new Date(2026, 9, 25, 23, 30))).toBe('2026-10-24')
+    expect(daysAgo(0, new Date(2026, 10, 16, 9, 0))).toBe('2026-11-16')
   })
 })

@@ -1,11 +1,10 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { Download } from 'lucide-react'
 import { useState } from 'react'
+import { DateField } from '@/components/DateField'
 import { PillTabs } from '@/components/PillTabs'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { ApiError, api } from '../api'
 import type { SyncPeriod } from '../api'
 import { errorMessage } from '../errorMessages'
@@ -136,15 +135,4 @@ function describe(outcome: Outcome, askedDays: number | null): string {
   if (outcome === 'waiting') return 'așteaptă'
   if (outcome === 'running') return 'se descarcă…'
   return 'error' in outcome ? errorMessage(outcome.error) : describeSyncResult(outcome.result, askedDays)
-}
-
-function DateField({
-  id, label, value, min, max, onChange,
-}: { id: string; label: string; value: string; min?: string; max?: string; onChange: (day: string) => void }) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <Label htmlFor={id}>{label}</Label>
-      <Input id={id} type="date" value={value} min={min} max={max} onChange={(event) => onChange(event.target.value)} className="w-auto" />
-    </div>
-  )
 }

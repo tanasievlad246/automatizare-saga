@@ -277,9 +277,11 @@ export type ScheduleRun = {
   retry_at: string | null
   trace: string | null // the journal's number for this run's own lines
 }
+/** Which invoices an automatic download asks ANAF for: the last days, or the days between two dates (YYYY-MM-DD). */
+export type SchedulePeriod = { days: number } | { start: string; end: string }
 /** The automatic download: what was chosen, when it runs next, and how the last one went. */
 export type ScheduleStatus = {
-  enabled: boolean; days: number[]; times: string[]; next_at: string | null
+  enabled: boolean; days: number[]; times: string[]; period: SchedulePeriod; next_at: string | null
   running: { started_at: string; done: number; total: number } | null
   last_run: ScheduleRun | null
   clients_on: number; clients_off: number
