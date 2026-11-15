@@ -1,7 +1,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef } from 'react'
 import { api } from '../api'
-import { pollEvery } from './scheduleTexts'
+import type { ScheduleStatus } from '../types'
+import { pollEvery, runEnded } from './scheduleTexts'
 
 /** The automatic download: asked often while it runs, rarely while it waits, never while it is off. */
 export function useSchedule() {
@@ -13,17 +14,17 @@ export function useSchedule() {
   })
 }
 
-/** When an automatic download ends, what it brought is read again, on whichever screen is open. */
+/** When an automatic download ends, even one the page did not watch, what it brought is read again. */
 export function useRefreshWhenAutomaticDownloadEnds(): void {
   const queryClient = useQueryClient()
-  const running = Boolean(useSchedule().data?.running)
-  const wasRunning = useRef(false)
+  const status = useSchedule().data
+  const seen = useRef<ScheduleStatus | undefined>(undefined)
   useEffect(() => {
-    if (wasRunning.current && !running) {
+    if (runEnded(seen.current, status)) {
       for (const key of ['clients', 'invoices', 'proposed-rules', 'auth']) {
         void queryClient.invalidateQueries({ queryKey: [key] })
       }
     }
-    wasRunning.current = running
-  }, [running, queryClient])
+    if (status) seen.current = status
+  }, [status, queryClient])
 }

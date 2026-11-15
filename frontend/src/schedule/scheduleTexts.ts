@@ -1,7 +1,7 @@
 // What the "Descărcare automată" screen and the menu say, written from the schedule's status.
 
-import { messageForCode } from '../errorMessages'
-import { countOf, formatNext, formatWhen } from '../format'
+import { knowsCode, messageForCode } from '../errorMessages'
+import { countOf, formatFromWhen, formatNext, formatWhen } from '../format'
 import type { ScheduleRun, ScheduleStatus } from '../types'
 
 export const DAY_NAMES = ['Luni', 'Marți', 'Miercuri', 'Joi', 'Vineri', 'Sâmbătă', 'Duminică']
@@ -84,7 +84,7 @@ export function stateCard(status: ScheduleStatus, now = new Date()): StateCard {
   if (running) {
     return card(
       'fresh',
-      running.total > 0 ? `Se descarcă acum: ${running.done} din ${countOf(running.total, 'un client', 'clienți')}` : 'Se descarcă acum',
+      running.total > 1 ? `Se descarcă acum: ${running.done} din ${countOf(running.total, 'un client', 'clienți')}` : 'Se descarcă acum',
       `A început ${formatWhen(running.started_at, now)}. Pagina se schimbă singură când se termină.`,
     )
   }
@@ -97,33 +97,51 @@ export function stateCard(status: ScheduleStatus, now = new Date()): StateCard {
       'Descărcarea automată nu are ce descărca. Porniți clienții din lista de clienți.', { clients: true })
   }
   if (run && NOT_DONE_STATUSES.includes(run.status)) {
-    const when = formatWhen(run.slot, now)
+    const when = formatFromWhen(run.started_at, now)
     const retry = run.retry_at ? formatNext(run.retry_at, now) : null
     if (run.status === 'failed') {
-      return card('attention', `Descărcarea de ${when} nu a reușit`,
-        then(run.error ? messageForCode(run.error.code) : 'Programul va încerca din nou la următoarea descărcare.'), { journal: true })
+      const why = !run.error
+        ? 'Programul va încerca din nou la următoarea descărcare.'
+        : knowsCode(run.error.code)
+          ? messageForCode(run.error.code)
+          : 'A apărut o problemă în program. Detaliile sunt în jurnal.'
+      return card('attention', `Descărcarea ${when} nu a reușit`, then(why), { journal: true })
     }
     if (run.status === 'unreachable') {
       const tries = run.attempt === 1 ? 'o dată' : `de ${run.attempt} ori`
       const what = retry
         ? `Programul mai încearcă ${retry} (încercarea ${run.attempt + 1} din 4).`
         : then(`Programul a încercat ${tries}.`)
-      return card('attention', `Descărcarea de ${when} nu a ajuns la ANAF`, `Verificați conexiunea la internet. ${what}`, { journal: true })
+      return card('attention', `Descărcarea ${when} nu a ajuns la ANAF`, `Verificați conexiunea la internet. ${what}`, { journal: true })
     }
     const stopped = 'Programul sau calculatorul a fost oprit în timpul ei.'
-    return card('attention', `Descărcarea de ${when} a fost întreruptă`,
+    return card('attention', `Descărcarea ${when} a fost întreruptă`,
       retry ? `${stopped} Programul o reia ${retry}.` : then(stopped), { journal: true })
   }
   if (run?.status === 'partial') {
     const rest = run.failed_clients > 0
-      ? 'Pentru un client descărcarea nu a reușit; se reia la următoarea descărcare.'
+      ? `Pentru ${countOf(run.failed_clients, 'un client', 'clienți')} descărcarea nu a reușit; se reia la următoarea descărcare.`
       : 'Unele facturi nu s-au putut descărca; se reiau la următoarea descărcare.'
-    return card('attention', `Ultima descărcare, ${formatWhen(run.slot, now)}, nu a fost completă`, `${outcome(run)}. ${rest}`, { journal: true })
+    return card('attention', `Ultima descărcare, ${formatWhen(run.started_at, now)}, nu a fost completă`, `${outcome(run)}. ${rest}`, { journal: true })
   }
   const title = next ? `Următoarea descărcare: ${formatNext(status.next_at!, now)}` : 'Descărcarea automată este pornită'
   return run
-    ? card('done', title, `Ultima: ${formatWhen(run.slot, now)} · ${outcome(run)}.`, { journal: true })
+    ? card('done', title, `Ultima: ${formatWhen(run.started_at, now)} · ${outcome(run)}.`, { journal: true })
     : card('done', title, 'Nu a fost făcută încă nicio descărcare automată.')
+}
+
+/** The first line of the notice on the client list while the program downloads by itself. */
+export function runningLine(done: number, total: number): string {
+  return total > 1 ? `Programul descarcă acum facturile, singur: ${done} din ${total} clienți.` : 'Programul descarcă acum facturile, singur.'
+}
+
+/** Between two reads of the status: did an automatic download end that the lists have not seen? */
+export function runEnded(before: ScheduleStatus | undefined, now: ScheduleStatus | undefined): boolean {
+  if (!before || !now) return false
+  if (before.running && !now.running) return true
+  if (now.running) return false
+  const finished = now.last_run?.finished_at
+  return Boolean(finished) && finished !== before.last_run?.finished_at
 }
 
 /** The line under "Descărcare automată" in the menu, only when something needs a look. */

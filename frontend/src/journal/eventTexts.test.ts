@@ -133,6 +133,8 @@ describe('a line of the journal, in Romanian', () => {
       .toBe('Descărcarea automată s-a terminat: o factură nouă. Nu a fost completă; se reia la următoarea descărcare.')
     expect(say('sync.auto_finished', { status: 'failed', error: 'login_needed' }))
       .toBe('Descărcarea automată nu a reușit: trebuie să vă conectați din nou la ANAF.')
+    expect(say('sync.auto_finished', { status: 'failed', error: 'anaf_error' }))
+      .toBe('Descărcarea automată nu a reușit: ANAF a răspuns cu o eroare.')
     expect(say('sync.auto_finished', { status: 'failed', error: 'internal_error' })).toBe('Descărcarea automată nu a reușit.')
     expect(say('sync.auto_finished', { status: 'unreachable', attempt: 1 }))
       .toBe('Descărcarea automată nu a ajuns la ANAF. Programul mai încearcă peste un sfert de oră.')

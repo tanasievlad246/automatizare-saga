@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { messageForCode } from '../errorMessages'
 import type { ScheduleRun, ScheduleStatus } from '../types'
-import { describeWhen, formProblem, menuNote, onSavedChange, ownSaveArrival, pollEvery, sameSchedule, stateCard } from './scheduleTexts'
+import { describeWhen, formProblem, menuNote, onSavedChange, ownSaveArrival, pollEvery, runEnded, runningLine, sameSchedule, stateCard } from './scheduleTexts'
 
 const NOW = new Date(2026, 10, 16, 9, 0)
 
@@ -75,6 +75,7 @@ describe('the state card', () => {
       text: 'A început azi, 08:00. Pagina se schimbă singură când se termină.',
     })
     expect(stateCard(status({ running: { ...running, total: 0 } }), NOW).title).toBe('Se descarcă acum')
+    expect(stateCard(status({ running: { ...running, done: 0, total: 1 } }), NOW).title).toBe('Se descarcă acum')
   })
 
   it('says that no client is on', () => {
@@ -84,10 +85,33 @@ describe('the state card', () => {
     })
   })
 
+  it('says when a run was made, not the moment it was made up for', () => {
+    const old = { slot: '2026-11-13T08:00:00', started_at: '2026-11-13T08:00:10' }
+    const made = (over: Partial<ScheduleRun>) => stateCard(status({ last_run: run({ ...old, ...over }) }), NOW)
+    const login = { code: 'login_needed', message: 'x' }
+    const lateRun = { slot: '2026-11-13T08:00:00', started_at: '2026-11-16T08:40:10' }
+    expect(stateCard(status({ last_run: run(lateRun) }), NOW).text).toBe('Ultima: azi, 08:40 · 3 clienți · 7 facturi noi · 2 de verificat.')
+    expect(stateCard(status({ last_run: run({ ...lateRun, status: 'failed', error: login }) }), NOW).title)
+      .toBe('Descărcarea de azi, 08:40 nu a reușit')
+    expect(made({ status: 'failed', error: login }).title).toBe('Descărcarea din 13.11.2026, 08:00 nu a reușit')
+    expect(made({ status: 'unreachable' }).title).toBe('Descărcarea din 13.11.2026, 08:00 nu a ajuns la ANAF')
+    expect(made({ status: 'interrupted' }).title).toBe('Descărcarea din 13.11.2026, 08:00 a fost întreruptă')
+    expect(made({ status: 'partial', failed_clients: 1 }).title).toBe('Ultima descărcare, 13.11.2026, 08:00, nu a fost completă')
+  })
+
+  it('sends her to the journal when the cause has no sentence of its own', () => {
+    const card = stateCard(status({ last_run: run({ status: 'failed', error: { code: 'internal_error', message: 'x' } }) }), NOW)
+    expect(card.text).toBe(`A apărut o problemă în program. Detaliile sunt în jurnal. ${NEXT}.`)
+    expect(card.journal).toBe(true)
+    expect(stateCard(status({ last_run: run({ status: 'failed', error: { code: 'never_heard_of', message: 'x' } }) }), NOW).text)
+      .toBe(`A apărut o problemă în program. Detaliile sunt în jurnal. ${NEXT}.`)
+  })
+
   it('says why a download failed', () => {
     const failed = stateCard(status({ last_run: run({ status: 'failed', error: { code: 'login_needed', message: 'x' } }) }), NOW)
     expect(failed).toMatchObject({ tone: 'attention', title: 'Descărcarea de azi, 08:00 nu a reușit' })
     expect(failed.text).toBe(`${messageForCode('login_needed')} ${NEXT}.`)
+    expect(failed.journal).toBe(true)
   })
 
   it('says when ANAF could not be reached', () => {
@@ -97,6 +121,7 @@ describe('the state card', () => {
       text: 'Verificați conexiunea la internet. Programul mai încearcă azi, la 08:15 (încercarea 2 din 4).',
     })
     expect(card({ attempt: 4 }).text).toBe(`Verificați conexiunea la internet. Programul a încercat de 4 ori. ${NEXT}.`)
+    expect(card({}).journal).toBe(true)
     expect(card({ attempt: 1 }).text).toBe(`Verificați conexiunea la internet. Programul a încercat o dată. ${NEXT}.`)
   })
 
@@ -107,6 +132,7 @@ describe('the state card', () => {
       text: 'Programul sau calculatorul a fost oprit în timpul ei. Programul o reia azi, la 08:15.',
     })
     expect(card({ attempt: 4 }).text).toBe(`Programul sau calculatorul a fost oprit în timpul ei. ${NEXT}.`)
+    expect(card({}).journal).toBe(true)
   })
 
   it('says that a download was not complete', () => {
@@ -114,6 +140,8 @@ describe('the state card', () => {
       tone: 'attention', title: 'Ultima descărcare, azi, 08:00, nu a fost completă', journal: true,
       text: '3 clienți · 7 facturi noi · 2 de verificat. Pentru un client descărcarea nu a reușit; se reia la următoarea descărcare.',
     })
+    expect(stateCard(status({ last_run: run({ status: 'partial', failed_clients: 3 }) }), NOW).text)
+      .toBe('3 clienți · 7 facturi noi · 2 de verificat. Pentru 3 clienți descărcarea nu a reușit; se reia la următoarea descărcare.')
     expect(stateCard(status({ last_run: run({ status: 'partial', failed_clients: 0 }) }), NOW).text)
       .toBe('3 clienți · 7 facturi noi · 2 de verificat. Unele facturi nu s-au putut descărca; se reiau la următoarea descărcare.')
   })
@@ -164,5 +192,33 @@ describe('after her own save', () => {
     expect(ownSaveArrival(a, a, a)).toBe('arrived')
     expect(ownSaveArrival(a, b, a)).toBe('waiting')
     expect(ownSaveArrival(c, b, a)).toBe('overtaken')
+  })
+})
+
+describe('the first line of the notice on the client list', () => {
+  it('counts the clients only when there is more than one', () => {
+    expect(runningLine(2, 3)).toBe('Programul descarcă acum facturile, singur: 2 din 3 clienți.')
+    expect(runningLine(0, 1)).toBe('Programul descarcă acum facturile, singur.')
+    expect(runningLine(0, 0)).toBe('Programul descarcă acum facturile, singur.')
+  })
+})
+
+describe('whether an automatic download ended that the lists have not seen', () => {
+  const running = { started_at: '2026-11-16T08:00:20', done: 1, total: 3 }
+  const finished = (at: string | null, over: Partial<ScheduleStatus> = {}) =>
+    status({ last_run: run({ finished_at: at }), ...over })
+  it('is false without two reads', () => {
+    expect(runEnded(undefined, status())).toBe(false)
+    expect(runEnded(status(), undefined)).toBe(false)
+  })
+  it('is true when a run in progress is gone, or a run ended since the last read', () => {
+    expect(runEnded(status({ running }), status())).toBe(true)
+    expect(runEnded(finished('2026-11-15T08:01:00'), finished('2026-11-16T08:01:05'))).toBe(true)
+    expect(runEnded(status(), finished('2026-11-16T08:01:05'))).toBe(true)
+  })
+  it('is false when nothing ended or a run is still going', () => {
+    expect(runEnded(finished('2026-11-16T08:01:05'), finished('2026-11-16T08:01:05'))).toBe(false)
+    expect(runEnded(finished('2026-11-15T08:01:00'), finished('2026-11-15T08:01:00', { running }))).toBe(false)
+    expect(runEnded(status(), status())).toBe(false)
   })
 })

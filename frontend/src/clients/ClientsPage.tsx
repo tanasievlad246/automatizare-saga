@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { api } from '../api'
 import { errorMessage } from '../errorMessages'
 import { countOf } from '../format'
+import { runningLine } from '../schedule/scheduleTexts'
 import { useSchedule } from '../schedule/useSchedule'
 import type { Client } from '../types'
 import { AddClientDialog } from './AddClientDialog'
@@ -55,7 +56,7 @@ export function ClientsPage() {
       {running && (
         <Notice tone="fresh" className="-mt-3">
           <p className="text-lg font-semibold">
-            Programul descarcă acum facturile, singur: {running.done} din {countOf(running.total, 'un client', 'clienți')}.
+            {runningLine(running.done, running.total)}
           </p>
           <p>Butoanele de descărcare revin când se termină. Lista se actualizează singură.</p>
         </Notice>

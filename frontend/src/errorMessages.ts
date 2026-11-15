@@ -41,6 +41,11 @@ export function messageForCode(code: string): string {
   return MESSAGES[code] ?? UNKNOWN
 }
 
+/** Whether a failure's code has a sentence of its own here (the general one is not that). */
+export function knowsCode(code: string): boolean {
+  return code in MESSAGES
+}
+
 /** The program's own words about a failure, for whoever helps the person. */
 export function errorDetail(error: unknown): string {
   return error instanceof Error ? error.message : String(error)

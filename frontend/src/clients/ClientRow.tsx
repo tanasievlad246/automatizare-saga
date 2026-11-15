@@ -68,9 +68,12 @@ export function ClientRow({ client, blocked, onSync }: { client: Client; blocked
         <div className="flex items-center gap-2.5">
           <Switch
             checked={client.enabled}
-            disabled={switchClient.isPending}
+            aria-busy={switchClient.isPending}
             aria-label={`${client.name}: facturile ${client.enabled ? 'se descarcă' : 'nu se descarcă'}`}
-            onCheckedChange={(enabled) => switchClient.mutate(enabled)}
+            // Not disabled while the request is on its way: a disabled switch drops the keyboard focus.
+            onCheckedChange={(enabled) => {
+              if (!switchClient.isPending) switchClient.mutate(enabled)
+            }}
           />
           <span className={`w-14 font-semibold ${off ? 'text-muted-foreground' : 'text-done-foreground'}`}>
             {client.enabled ? 'Pornit' : 'Oprit'}

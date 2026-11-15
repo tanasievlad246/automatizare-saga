@@ -45,6 +45,7 @@ const HOW_A_COPY_WAS_MADE: Record<string, string> = {
 const AUTO_FAILURES: Record<string, string> = {
   login_needed: 'trebuie să vă conectați din nou la ANAF',
   anaf_limit_reached: 'ANAF a limitat numărul de cereri pentru azi',
+  anaf_error: 'ANAF a răspuns cu o eroare',
 }
 
 const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
