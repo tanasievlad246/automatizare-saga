@@ -13,6 +13,7 @@ import { AddClientDialog } from './AddClientDialog'
 import { ClientRow } from './ClientRow'
 import { ImportClientsDialog } from './ImportClientsDialog'
 import { SyncDialog } from './SyncDialog'
+import { switchedOffLine, switchedOn } from './switchedOff'
 
 /** The first screen: every client, what is new for each, and the button that downloads. */
 export function ClientsPage() {
@@ -23,6 +24,8 @@ export function ClientsPage() {
   const [importing, setImporting] = useState(false)
   const [adding, setAdding] = useState(false)
 
+  const onClients = switchedOn(clients)
+  const offLine = switchedOffLine(onClients.length, clients.length - onClients.length)
   const waitingForAnAccount = clients.reduce((total, client) => total + client.review_count, 0)
   const firstWaiting = clients.find((client) => client.review_count > 0)
 
@@ -37,8 +40,8 @@ export function ClientsPage() {
         <Button
           size="lg"
           className="h-auto min-h-14 max-w-full py-2 text-left whitespace-normal"
-          disabled={clients.length === 0}
-          onClick={() => setClientsToSync(clients)}
+          disabled={onClients.length === 0}
+          onClick={() => setClientsToSync(onClients)}
         >
           <Download aria-hidden />
           Descarcă facturile pentru toți clienții
@@ -46,6 +49,7 @@ export function ClientsPage() {
         <Button size="lg" variant="outline" onClick={() => setImporting(true)}>Importă clienți din Excel</Button>
         <Button size="lg" variant="outline" onClick={() => setAdding(true)}>Adaugă un client</Button>
       </div>
+      {offLine && <p className="-mt-3 text-lg text-muted-foreground">{offLine}</p>}
 
       {firstWaiting && (
         <Notice tone="attention" className="flex-wrap items-center">
@@ -74,11 +78,11 @@ export function ClientsPage() {
 
       <div className="flex flex-col gap-3">
         {clients.map((client) => (
-          <ClientRow key={client.cui} client={client} onSync={() => setClientsToSync([client])} />
+          <ClientRow key={client.cui} client={client} blocked={false} onSync={() => setClientsToSync([client])} />
         ))}
       </div>
 
-      <SyncDialog clients={clientsToSync} onClose={() => setClientsToSync(null)} />
+      <SyncDialog clients={clientsToSync} someAreOff={onClients.length < clients.length} onClose={() => setClientsToSync(null)} />
       <ImportClientsDialog open={importing} onClose={() => setImporting(false)} />
       <AddClientDialog open={adding} onClose={() => setAdding(false)} />
     </div>

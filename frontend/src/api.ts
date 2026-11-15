@@ -76,6 +76,8 @@ export const api = {
 
   clients: () => call<{ clients: Client[] }>('GET', '/clients'),
   saveClient: (cui: string, name: string) => call('POST', '/clients', { cui, name }),
+  setClientEnabled: (cui: string, enabled: boolean) =>
+    call<{ clients: Client[] }>('PUT', `/clients/${cui}/enabled`, { enabled }),
   removeClient: (cui: string) => call('DELETE', `/clients/${cui}`),
   importClients: (file: File) =>
     call<ImportResult>('POST', `/clients/import${query({ filename: file.name })}`, file),

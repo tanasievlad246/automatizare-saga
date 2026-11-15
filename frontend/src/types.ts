@@ -15,6 +15,7 @@ export type Client = {
   review_count: number
   ready_count: number
   last_sync_at: string | null
+  enabled: boolean
 }
 
 export type ClassificationStatus = 'pending' | 'classified' | 'review' | null

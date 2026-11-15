@@ -23,7 +23,7 @@ const ANAF_KEEPS_DAYS = 60
 type Outcome = { result: SyncResult } | { error: unknown } | 'running' | 'waiting'
 
 /** Downloading invoices from ANAF for one client or for all, for the last days or between two dates. */
-export function SyncDialog({ clients, onClose }: { clients: Client[] | null; onClose: () => void }) {
+export function SyncDialog({ clients, someAreOff, onClose }: { clients: Client[] | null; someAreOff: boolean; onClose: () => void }) {
   const queryClient = useQueryClient()
   const [days, setDays] = useState<number | null>(USUAL_PERIOD)
   const [start, setStart] = useState('')
@@ -68,7 +68,11 @@ export function SyncDialog({ clients, onClose }: { clients: Client[] | null; onC
         <DialogHeader>
           <DialogTitle className="font-heading text-3xl">Descarcă facturile</DialogTitle>
           <DialogDescription className="text-lg">
-            {clients.length === 1 ? `${clients[0].name} · CUI ${clients[0].cui}` : `Pentru toți cei ${countOf(clients.length, 'client', 'clienți')}`}
+            {clients.length === 1
+              ? `${clients[0].name} · CUI ${clients[0].cui}`
+              : someAreOff
+                ? `Pentru cei ${countOf(clients.length, 'un client', 'clienți')} porniți`
+                : `Pentru toți cei ${countOf(clients.length, 'client', 'clienți')}`}
           </DialogDescription>
         </DialogHeader>
 

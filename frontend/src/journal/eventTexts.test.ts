@@ -26,6 +26,13 @@ describe('a line of the journal, in Romanian', () => {
       .toBe('Factura MC 5521 este de verificat: trebuie să îi alegeți contul.')
   })
 
+  it('tells when a client was switched off or on', () => {
+    expect(describeEvent(line('client.switched', { client: 'Alfa SRL', cui: '12345674', enabled: false })))
+      .toBe('Clientul Alfa SRL a fost oprit: facturile lui nu se mai descarcă.')
+    expect(describeEvent(line('client.switched', { client: 'Alfa SRL', cui: '12345674', enabled: true })))
+      .toBe('Clientul Alfa SRL a fost pornit: facturile lui se descarcă din nou.')
+  })
+
   it('tells what a trial invoice got', () => {
     expect(describeEvent(line('rule.tested', { decided_by: 'jev', cont: '302', asked_jev: true, cost_usd: 0.00002 })))
       .toBe('A fost încercată o factură de probă: contul 302, ales de Jev.')

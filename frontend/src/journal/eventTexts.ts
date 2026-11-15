@@ -91,6 +91,10 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
   'account.removed': (data) => `Contul ${text(data.cont)} a fost scos din lista lui Jev.`,
 
   'client.saved': (data) => `Clientul ${who(data)} a fost adăugat sau redenumit.`,
+  'client.switched': (data) =>
+    data.enabled
+      ? `Clientul ${who(data)} a fost pornit: facturile lui se descarcă din nou.`
+      : `Clientul ${who(data)} a fost oprit: facturile lui nu se mai descarcă.`,
   'client.removed': (data) => `Clientul cu CUI ${text(data.cui)} a fost scos din listă.`,
   'clients.imported': (data) =>
     `Clienți importați din ${text(data.file)}: adăugați: ${text(data.added)}, modificați: ${text(data.updated)}, respinși: ${text(data.rejected)}.`,

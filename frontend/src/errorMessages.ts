@@ -16,6 +16,7 @@ const MESSAGES: Record<string, string> = {
   anaf_error: 'ANAF a răspuns cu o eroare. Încercați din nou puțin mai târziu.',
   network_error: 'Nu am putut ajunge la ANAF. Verificați conexiunea la internet.',
   not_found: 'Nu am găsit ce ați cerut. Poate a fost șters între timp.',
+  client_off: 'Clientul este oprit. Porniți-l din lista de clienți ca să îi descărcați facturile.',
   busy: 'Se descarcă deja facturi. Așteptați să se termine, apoi încercați din nou.',
   config_error: 'Lipsește o setare. Verificați pagina „Chei și parole”.',
   not_classifiable: 'Contul nu se poate schimba cât timp factura este bifată ca importată în SAGA. Debifați „Am importat factura în SAGA”.',

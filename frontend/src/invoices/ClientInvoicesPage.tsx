@@ -80,7 +80,8 @@ export function ClientInvoicesPage() {
       <ImportedInSagaCard ready={ready} />
 
       <SyncDialog
-        clients={syncing ? [client ?? { cui, name: `CUI ${cui}`, invoices: 0, new_count: 0, review_count: 0, ready_count: 0, last_sync_at: null }] : null}
+        clients={syncing ? [client ?? { cui, name: `CUI ${cui}`, invoices: 0, new_count: 0, review_count: 0, ready_count: 0, last_sync_at: null, enabled: true }] : null}
+        someAreOff={false}
         onClose={() => setSyncing(false)}
       />
     </div>
