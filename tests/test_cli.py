@@ -428,3 +428,46 @@ def test_sync_all_downloads_for_every_client_that_is_on(run, anaf, logged_in, co
     assert answer["status"] == "ok"
     assert answer["clients"] == 1
     assert answer["new"] == 1
+
+
+def test_the_schedule_is_looked_at_until_the_program_stops(monkeypatch):
+    import threading
+
+    from efactura import cli, schedule
+
+    stopped, looks = threading.Event(), []
+
+    def look(cfg):
+        looks.append(cfg)
+        if len(looks) == 3:
+            stopped.set()
+
+    monkeypatch.setattr(schedule, "run_if_due", look)
+    monkeypatch.setattr(cli, "FIRST_SCHEDULE_LOOK", 0.01)
+    monkeypatch.setattr(cli, "SCHEDULE_LOOK_EVERY", 0.01)
+
+    cli._download_on_schedule_until("cfg", stopped)
+
+    assert looks == ["cfg"] * 3
+
+
+def test_one_bad_look_at_the_schedule_is_not_the_last(monkeypatch):
+    import threading
+
+    from efactura import cli, schedule
+
+    stopped, looks = threading.Event(), []
+
+    def look(cfg):
+        looks.append(len(looks))
+        if len(looks) == 1:
+            raise RuntimeError("something nobody expected")
+        stopped.set()
+
+    monkeypatch.setattr(schedule, "run_if_due", look)
+    monkeypatch.setattr(cli, "FIRST_SCHEDULE_LOOK", 0)
+    monkeypatch.setattr(cli, "SCHEDULE_LOOK_EVERY", 0)
+
+    cli._download_on_schedule_until(None, stopped)
+
+    assert looks == [0, 1]

@@ -198,6 +198,12 @@ class ClientSwitchRequest(BaseModel):
     enabled: bool
 
 
+class ScheduleRequest(BaseModel):
+    enabled: bool
+    days: list[int]
+    times: list[str]
+
+
 class SagaFolderRequest(BaseModel):
     saga_folder: str
 
@@ -234,11 +240,15 @@ def _from_own_page(request: Request, own_hosts: set[str]) -> bool:
     )
 
 
-def _worth_a_line(path: str) -> bool:
+def _worth_a_line(path: str, method: str) -> bool:
     """Should this request be written in the journal? Not the journal's own requests
-    (reading it would write to it), nor the page's files, nor "are you there"."""
+    (reading it would write to it), nor the page's files, nor "are you there", nor the page
+    reading the schedule (it does so every few seconds while a run is shown)."""
     plain = path.removeprefix(PAGE_API_PREFIX)
-    return not (path in OPEN_PATHS or path.startswith(PAGE_PREFIX) or plain.startswith("/events") or plain == "/health")
+    return not (
+        path in OPEN_PATHS or path.startswith(PAGE_PREFIX) or plain.startswith("/events") or plain == "/health"
+        or (plain == "/sync/schedule" and method == "GET")
+    )
 
 
 def _own_hosts(port: int) -> set[str]:
@@ -305,7 +315,7 @@ def create_app(
                     # would name no trace.
                     log.exception("Unexpected failure in %s %s", request.method, path)
                     response = _failure(EfacturaError(INTERNAL_ERROR, f"{type(exc).__name__}: {exc}"))
-            if _worth_a_line(path):
+            if _worth_a_line(path, request.method):
                 # The method, the path and how it ended. Never the body: it may hold a key.
                 # Written from a worker thread: the line may wait for a busy database, and
                 # every other request would wait behind it here.
@@ -383,6 +393,14 @@ def create_app(
                 cover_gap=body.cover_gap,
             )
         )
+
+    @router.get("/sync/schedule", dependencies=documented_key, summary="When the program downloads by itself")
+    def sync_schedule():
+        return call(lambda s: s.schedule())
+
+    @router.put("/sync/schedule", dependencies=documented_key, summary="Choose when the program downloads by itself")
+    def set_sync_schedule(body: ScheduleRequest):
+        return call(lambda s: s.set_schedule(body.enabled, body.days, body.times))
 
     @router.get("/invoices", dependencies=documented_key, summary="Saved messages")
     def invoices(

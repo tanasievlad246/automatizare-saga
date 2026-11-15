@@ -23,7 +23,7 @@ from typing import Callable
 
 import httpx
 
-from . import __version__, auth, certificate_login, jev, journal, saga
+from . import __version__, auth, certificate_login, jev, journal, saga, schedule
 from .anaf import TYPE_PREFIXES, AnafService, normalize_cui, parse_created_at, type_slug
 from .classify import decide_by_rules, deciding_line, jev_request, read_jev_answer, subject_of
 from .clients_file import read_client_rows
@@ -59,6 +59,8 @@ from .store import JEV_INSTRUCTIONS, RULE_TEST, Store
 from .suggestions import propose, ticked_words, words_of
 
 log = logging.getLogger(__name__)
+
+DAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
 # sync_all: how long and how often a client waits for a download made by hand
 BUSY_PAUSE = 5.0
@@ -716,6 +718,30 @@ class Service:
         finally:
             store.close()
         return self.clients()
+
+    def schedule(self) -> dict:
+        """When the program downloads by itself, and how the last run went."""
+        return schedule.status(self.cfg, self._now())
+
+    def set_schedule(self, enabled, days, times) -> dict:
+        """Save when the program downloads by itself. A schedule that makes no sense is
+        refused (invalid_input) and the one stored stays."""
+        wanted = schedule.checked(enabled, days, times)
+        store = self._open_store()
+        try:
+            saved = schedule.save(store, wanted, schedule.local_clock(self._now()))
+            if saved.enabled:
+                names = ", ".join(DAY_NAMES[day] for day in saved.days)
+                message = f"Automatic download switched on: days {names}, at {', '.join(saved.times)}."
+            else:
+                message = "Automatic download switched off."
+            journal.record(
+                "settings", "schedule.saved", message,
+                enabled=saved.enabled, days=list(saved.days), times=list(saved.times),
+            )
+        finally:
+            store.close()
+        return self.schedule()
 
     def remove_client(self, cui: str) -> dict:
         """Take a client off the list. Its saved invoices stay."""

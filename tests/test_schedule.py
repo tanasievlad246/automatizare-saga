@@ -182,3 +182,11 @@ def test_nothing_is_tried_again_once_the_schedule_is_off():
 
 def test_a_clock_moved_back_does_not_run_a_moment_again():
     assert schedule.due(WEEKDAYS_AT_8, ran(at(1, 8)), at(0, 9)) is None       # Tuesday's is recorded; it is Monday
+
+
+def test_a_stored_saved_at_that_carries_a_zone_counts_as_unreadable(store):
+    store.set_setting(
+        schedule.SETTING,
+        '{"enabled": true, "days": [0], "times": ["08:00"], "saved_at": "2026-11-13T17:00:00+02:00"}',
+    )
+    assert schedule.read(store) == Schedule()

@@ -18,12 +18,20 @@ already past when the schedule was saved never runs.
 from __future__ import annotations
 
 import json
+import logging
 import re
+import threading
+import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from typing import Callable
 
-from .errors import INVALID_INPUT, EfacturaError
+from . import journal
+from .config import Config
+from .errors import INTERNAL_ERROR, INVALID_INPUT, EfacturaError
 from .store import Store
+
+log = logging.getLogger(__name__)
 
 SETTING = "auto_sync"  # in the settings table: when to download by itself
 LAST_RUN = "auto_sync_last_run"  # how the last automatic download went
@@ -75,8 +83,8 @@ def read(store: Store) -> Schedule:
     try:
         stored = json.loads(store.get_setting(SETTING) or "")
         saved_at = stored.get("saved_at")
-        if saved_at is not None:
-            datetime.fromisoformat(saved_at)
+        if saved_at is not None and datetime.fromisoformat(saved_at).tzinfo is not None:
+            return Schedule()  # the clock is kept without a zone; one with a zone cannot be compared
         return replace(checked(stored["enabled"], stored["days"], stored["times"]), saved_at=saved_at)
     except (ValueError, TypeError, KeyError, AttributeError, EfacturaError):
         return Schedule()
@@ -184,3 +192,143 @@ def due(schedule: Schedule, last: dict | None, clock: datetime) -> tuple[datetim
     if again is None or again > clock:
         return None
     return slot, last["attempt"] + 1
+
+
+# --- running it ------------------------------------------------------------------------------
+
+_lock = threading.Lock()
+_running: dict | None = None  # the run in progress in this program: started_at, done, total
+_AUTO_LEVELS = {"ok": "info", "partial": "warning", "failed": "error", "unreachable": "error"}
+
+
+def _text(moment: datetime | None) -> str | None:
+    return None if moment is None else moment.isoformat(timespec="seconds")
+
+
+def _in_progress() -> dict | None:
+    with _lock:
+        return None if _running is None else dict(_running)
+
+
+def _progress(done: int, total: int) -> None:
+    with _lock:
+        if _running is not None:
+            _running["done"], _running["total"] = done, total
+
+
+def _write_record(cfg: Config, record: dict) -> None:
+    store = Store(cfg.db_path)
+    try:
+        record_run(store, record)
+    finally:
+        store.close()
+
+
+def status(cfg: Config, now: datetime | None = None) -> dict:
+    """What the page shows: the schedule, the next moment, the run in progress, the last run."""
+    clock = local_clock(now)
+    store = Store(cfg.db_path)
+    try:
+        current, last = read(store), last_run(store)
+        on, off = store.client_switch_counts()
+    finally:
+        store.close()
+    running = _in_progress()
+    if last is not None:
+        if last.get("status") == "running" and running is None:
+            last = {**last, "status": "interrupted"}  # its program ended before it wrote its end
+        again = None if running is not None else retry_at(current, last, clock)
+        last = {**last, "retry_at": _text(again)}
+    return {
+        "ok": True,
+        "enabled": current.enabled,
+        "days": list(current.days),
+        "times": list(current.times),
+        "next_at": _text(next_slot(current, clock)) if current.enabled else None,
+        "running": running,
+        "last_run": last,
+        "clients_on": on,
+        "clients_off": off,
+    }
+
+
+def run_if_due(
+    cfg: Config, now: datetime | None = None, make_service: Callable[[Config], "Service"] | None = None
+) -> dict | None:
+    """Download for every client that is on when the schedule says a moment has come.
+    Answers the record of the run it made, or None. Never raises: nobody is watching."""
+    global _running
+    try:
+        clock = local_clock(now)
+        store = Store(cfg.db_path)
+        try:
+            found = due(read(store), last_run(store), clock)
+        finally:
+            store.close()
+        if found is None:
+            return None
+        with _lock:
+            if _running is not None:
+                return None
+            _running = {"started_at": _text(clock), "done": 0, "total": 0}
+        try:
+            with journal.trace(fresh=True) as trace:
+                return _run(cfg, now, make_service, clock, found, trace)
+        finally:
+            with _lock:
+                _running = None
+    except Exception:
+        log.exception("The automatic download could not be run")
+        return None
+
+
+def _run(cfg, now, make_service, clock, found, trace) -> dict:
+    from .service import Service  # service.py imports this module
+
+    slot, attempt = found
+    record = {
+        "slot": _text(slot), "attempt": attempt, "started_at": _text(clock), "finished_at": None,
+        "status": "running", "clients": 0, "failed_clients": 0, "new": 0, "review": 0,
+        "error": None, "trace": trace,
+    }
+    journal.configure(cfg.db_path)
+    _write_record(cfg, record)
+    journal.record(
+        "sync", "sync.auto_started", f"Automatic download started for {record['slot']} (attempt {attempt}).",
+        slot=record["slot"], attempt=attempt,
+    )
+    began = time.monotonic()
+    service = None
+    try:
+        service = (make_service or Service)(cfg)
+        answer = service.sync_all(progress=_progress)
+    except Exception as exc:
+        log.exception("The automatic download failed")
+        answer = {"status": "failed", "error": {"code": INTERNAL_ERROR, "message": repr(exc)}}
+    finally:
+        if service is not None:
+            try:
+                service.close()
+            except Exception:
+                log.exception("The service could not be closed after the automatic download")
+    error = answer.get("error")
+    if error is None and answer.get("stopped_by"):
+        error = next(
+            (r["error"] for r in reversed(answer["results"]) if not r["ok"] and r["error"]["code"] == answer["stopped_by"]),
+            {"code": answer["stopped_by"], "message": answer["stopped_by"]},
+        )
+    record.update(
+        finished_at=_text(local_clock(now)), status=answer["status"],
+        clients=answer.get("clients", 0), failed_clients=answer.get("failed_clients", 0),
+        new=answer.get("new", 0), review=answer.get("review", 0), error=error,
+    )
+    _write_record(cfg, record)
+    journal.record(
+        "sync", "sync.auto_finished",
+        f"Automatic download for {record['slot']} ended as {record['status']}.",
+        level=_AUTO_LEVELS.get(record["status"], "error"),
+        slot=record["slot"], attempt=attempt, status=record["status"], clients=record["clients"],
+        failed_clients=record["failed_clients"], new=record["new"], review=record["review"],
+        error=error["code"] if error else None, duration_ms=round((time.monotonic() - began) * 1000),
+    )
+    return record

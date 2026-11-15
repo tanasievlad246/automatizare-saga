@@ -1,0 +1,305 @@
+"""The program runs the schedule: run_if_due, the status the page reads, and the journal."""
+
+import sqlite3
+from datetime import datetime, timedelta, timezone
+
+import httpx
+import pytest
+
+from efactura import auth, journal, schedule
+from efactura.auth import Tokens
+from efactura.config import load_config
+from efactura.errors import INVALID_INPUT, EfacturaError
+from efactura.service import Service
+from efactura.store import Store
+
+from helpers import OTHER_VALID_CUI, VALID_CUI, FakeAnaf
+
+TOKENS_CLOCK = datetime(2026, 11, 11, 9, 30, tzinfo=timezone(timedelta(hours=2)))
+MONDAY_8 = datetime(2026, 11, 16, 8, 0, 20).astimezone()
+
+
+def at(hour, minute, second=0):
+    return datetime(2026, 11, 16, hour, minute, second).astimezone()
+
+
+def make_cfg(tmp_path, logged_in=True):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[anaf]\nclient_id = "c"\nclient_secret = "s"\n'
+        f"token_file = '{tmp_path / 'private' / 'tokens.json'}'\n", encoding="utf-8",
+    )
+    cfg = load_config(path)
+    if logged_in:
+        auth.save_tokens(
+            cfg.token_file,
+            Tokens(
+                "access-secret-1", "refresh-1", MONDAY_8 + timedelta(days=30),
+                MONDAY_8 + timedelta(days=300), TOKENS_CLOCK,
+            ),
+        )
+    return cfg
+
+
+@pytest.fixture
+def cfg(tmp_path):
+    return make_cfg(tmp_path)
+
+
+@pytest.fixture
+def anaf():
+    return FakeAnaf()
+
+
+@pytest.fixture
+def make_service(anaf):
+    return lambda cfg: Service(cfg, http=anaf.client(), now=lambda: MONDAY_8)
+
+
+def switch_on(cfg, days=(0, 1, 2, 3, 4), times=("08:00",)):
+    store = Store(cfg.db_path)
+    try:
+        schedule.save(store, schedule.checked(True, list(days), list(times)), datetime(2026, 11, 13, 17))
+    finally:
+        store.close()
+
+
+def stored_last_run(cfg):
+    store = Store(cfg.db_path)
+    try:
+        return schedule.last_run(store)
+    finally:
+        store.close()
+
+
+def with_clients(cfg, make_service, *clients):
+    service = make_service(cfg)
+    for cui, name in clients:
+        service.save_client(cui, name)
+    return service
+
+
+def test_nothing_runs_while_the_schedule_is_off(cfg, make_service):
+    with_clients(cfg, make_service, (VALID_CUI, "Alfa"))
+
+    assert schedule.run_if_due(cfg, MONDAY_8, make_service) is None
+    assert schedule.status(cfg, MONDAY_8)["last_run"] is None
+
+
+def test_a_moment_that_has_come_downloads_for_every_client_that_is_on(cfg, anaf, make_service):
+    service = with_clients(cfg, make_service, (VALID_CUI, "Alfa"), (OTHER_VALID_CUI, "Beta"))
+    service.set_client_enabled(OTHER_VALID_CUI, False)
+    anaf.add("3001", cui=VALID_CUI)
+    switch_on(cfg)
+
+    record = schedule.run_if_due(cfg, MONDAY_8, make_service)
+
+    assert record["slot"] == "2026-11-16T08:00:00"
+    assert record["attempt"] == 1
+    assert record["status"] == "ok"
+    assert record["clients"] == 1
+    assert record["new"] == 1
+    assert record["error"] is None
+    assert record["started_at"] == record["finished_at"] == "2026-11-16T08:00:20"
+    shown = schedule.status(cfg, MONDAY_8)
+    assert shown["running"] is None
+    assert shown["next_at"] == "2026-11-17T08:00:00"
+    assert shown["last_run"]["status"] == "ok"
+    assert shown["last_run"]["retry_at"] is None
+    assert (shown["clients_on"], shown["clients_off"]) == (1, 1)
+
+
+def test_the_same_moment_is_not_run_twice(cfg, make_service):
+    with_clients(cfg, make_service, (VALID_CUI, "Alfa"))
+    switch_on(cfg)
+
+    first = schedule.run_if_due(cfg, MONDAY_8, make_service)
+    second = schedule.run_if_due(cfg, MONDAY_8, make_service)
+
+    assert first is not None
+    assert second is None
+
+
+def test_without_a_login_the_run_is_recorded_as_failed(tmp_path):
+    cfg = make_cfg(tmp_path, logged_in=False)
+    make_service = lambda cfg: Service(cfg, http=FakeAnaf().client(), now=lambda: MONDAY_8)
+    with_clients(cfg, make_service, (VALID_CUI, "Alfa"))
+    switch_on(cfg)
+
+    record = schedule.run_if_due(cfg, MONDAY_8, make_service)
+
+    assert record["status"] == "failed"
+    assert record["error"]["code"] == "login_needed"
+    assert schedule.status(cfg, MONDAY_8)["last_run"]["retry_at"] is None
+
+
+def test_anaf_out_of_reach_is_tried_again_a_quarter_of_an_hour_later(cfg):
+    def refuse(request):
+        raise httpx.ConnectError("connection reset", request=request)
+
+    make_service = lambda cfg: Service(cfg, http=httpx.Client(transport=httpx.MockTransport(refuse)), now=lambda: MONDAY_8)
+    with_clients(cfg, make_service, (VALID_CUI, "Alfa"))
+    switch_on(cfg)
+
+    first = schedule.run_if_due(cfg, MONDAY_8, make_service)
+
+    assert first["status"] == "unreachable"
+    assert schedule.status(cfg, MONDAY_8)["last_run"]["retry_at"] == "2026-11-16T08:15:20"
+    assert schedule.run_if_due(cfg, at(8, 10), make_service) is None
+    assert schedule.run_if_due(cfg, at(8, 15, 20), make_service)["attempt"] == 2
+
+
+def test_the_page_can_see_a_run_in_progress(cfg):
+    seen = []
+
+    class Slow:
+        def sync_all(self, progress=None):
+            progress(1, 3)
+            seen.append(schedule.status(cfg, MONDAY_8)["running"])
+            return {"ok": True, "status": "ok", "clients": 3, "failed_clients": 0, "new": 0,
+                    "review": 0, "stopped_by": None, "results": []}
+
+        def close(self):
+            pass
+
+    switch_on(cfg)
+
+    schedule.run_if_due(cfg, MONDAY_8, lambda cfg: Slow())
+
+    assert seen == [{"started_at": "2026-11-16T08:00:20", "done": 1, "total": 3}]
+    assert schedule.status(cfg, MONDAY_8)["running"] is None
+
+
+def test_a_service_that_breaks_ends_the_run_as_failed(cfg):
+    closed = []
+
+    class Broken:
+        def sync_all(self, progress=None):
+            progress(0, 2)
+            raise RuntimeError("boom")
+
+        def close(self):
+            closed.append(True)
+
+    switch_on(cfg)
+
+    record = schedule.run_if_due(cfg, MONDAY_8, lambda cfg: Broken())
+
+    assert record["status"] == "failed"
+    assert record["error"]["code"] == "internal_error"
+    assert "boom" in record["error"]["message"]
+    assert closed == [True]
+    assert schedule.status(cfg, MONDAY_8)["running"] is None
+    assert stored_last_run(cfg)["status"] == "failed"
+
+
+def test_a_service_that_cannot_be_made_ends_the_run_as_failed(cfg):
+    def refuse(cfg):
+        raise RuntimeError("no service")
+
+    switch_on(cfg)
+
+    record = schedule.run_if_due(cfg, MONDAY_8, refuse)
+
+    assert (record["status"], record["error"]["code"]) == ("failed", "internal_error")
+    assert schedule.status(cfg, MONDAY_8)["running"] is None
+
+
+def test_a_record_left_running_by_a_dead_program_shows_as_interrupted(cfg, make_service):
+    with_clients(cfg, make_service, (VALID_CUI, "Alfa"))
+    switch_on(cfg)
+    store = Store(cfg.db_path)
+    schedule.record_run(store, {
+        "slot": "2026-11-16T08:00:00", "attempt": 1, "started_at": "2026-11-16T08:00:00",
+        "finished_at": None, "status": "running", "clients": 0, "failed_clients": 0,
+        "new": 0, "review": 0, "error": None, "trace": "abc",
+    })
+    store.close()
+
+    shown = schedule.status(cfg, at(8, 5))["last_run"]
+
+    assert shown["status"] == "interrupted"
+    assert shown["retry_at"] == "2026-11-16T08:15:00"
+    assert schedule.run_if_due(cfg, at(8, 15), make_service)["attempt"] == 2
+
+
+def test_run_if_due_never_raises(tmp_path):
+    cfg = make_cfg(tmp_path)
+    cfg.db_path.mkdir(parents=True)
+
+    assert schedule.run_if_due(cfg, MONDAY_8) is None
+
+
+def test_a_run_is_one_story_in_the_journal(cfg, anaf, make_service):
+    with_clients(cfg, make_service, (VALID_CUI, "Alfa"))
+    anaf.add("3001", cui=VALID_CUI)
+    switch_on(cfg)
+
+    record = schedule.run_if_due(cfg, MONDAY_8, make_service)
+
+    story = journal.events(cfg.db_path, trace=record["trace"], oldest_first=True)["events"]
+    names = [line["event"] for line in story]
+    for wanted in ("sync.auto_started", "sync.started", "sync.finished", "sync.auto_finished"):
+        assert wanted in names
+    assert names[0] == "sync.auto_started" and names[-1] == "sync.auto_finished"
+    finished = story[-1]
+    assert finished["data"]["status"] == "ok"
+    assert finished["data"]["new"] == 1
+    assert finished["level"] == "info"
+    assert finished["data"].get("error") is None  # the journal leaves out empty values
+    assert finished["data"]["slot"] == "2026-11-16T08:00:00"
+
+
+def test_a_run_that_fails_is_written_as_an_error(cfg):
+    class Broken:
+        def sync_all(self, progress=None):
+            raise RuntimeError("boom")
+
+        def close(self):
+            pass
+
+    switch_on(cfg)
+
+    record = schedule.run_if_due(cfg, MONDAY_8, lambda cfg: Broken())
+
+    last = journal.events(cfg.db_path, trace=record["trace"])["events"][0]
+    assert (last["event"], last["level"]) == ("sync.auto_finished", "error")
+    assert last["data"]["error"] == "internal_error"
+
+
+def test_a_run_leaves_no_token_in_the_journal(cfg, anaf, make_service):
+    with_clients(cfg, make_service, (VALID_CUI, "Alfa"))
+    anaf.add("3001", cui=VALID_CUI)
+    switch_on(cfg)
+
+    schedule.run_if_due(cfg, MONDAY_8, make_service)
+
+    with sqlite3.connect(cfg.db_path) as database:
+        text = " ".join(" ".join(str(value) for value in row) for row in database.execute("SELECT * FROM events"))
+    assert "sync.auto_finished" in text
+    assert "access-secret-1" not in text
+
+
+def test_saving_the_schedule_is_written_in_the_journal(cfg, make_service):
+    service = make_service(cfg)
+
+    shown = service.set_schedule(True, [1, 0], ["08:00"])
+
+    assert shown["enabled"] is True
+    assert shown["days"] == [0, 1]
+    assert shown["next_at"] is not None
+    saved = [line for line in journal.events(cfg.db_path, area="settings")["events"] if line["event"] == "schedule.saved"]
+    assert saved[0]["data"] == {"enabled": True, "days": [0, 1], "times": ["08:00"]}
+    assert service.schedule() == shown
+
+
+def test_a_schedule_that_makes_no_sense_is_not_saved(cfg, make_service):
+    service = make_service(cfg)
+    service.set_schedule(True, [2], ["09:30"])
+
+    with pytest.raises(EfacturaError) as raised:
+        service.set_schedule(True, [], ["08:00"])
+
+    assert raised.value.code == INVALID_INPUT
+    shown = service.schedule()
+    assert (shown["enabled"], shown["days"], shown["times"]) == (True, [2], ["09:30"])

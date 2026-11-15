@@ -474,3 +474,46 @@ def test_open_folder_route_takes_an_invoice(api, anaf, cfg, monkeypatch):
     assert reply.status_code == 200
     assert revealed == [cfg.data_dir / "SAGA Import" / VALID_CUI]
     assert api.post("/folders/open", json={"invoice_id": "nope"}).status_code == 404
+
+
+# --- the schedule ------------------------------------------------------------------------
+
+
+def test_the_schedule_is_off_to_begin_with(api):
+    shown = api.get("/sync/schedule").json()
+
+    assert shown["ok"] is True
+    assert shown["enabled"] is False
+    assert shown["days"] == [0, 1, 2, 3, 4]
+    assert shown["times"] == ["08:00"]
+    assert shown["next_at"] is None
+    assert shown["running"] is None
+    assert shown["last_run"] is None
+
+
+def test_the_schedule_is_saved_through_the_api(api):
+    saved = api.put("/sync/schedule", json={"enabled": True, "days": [1, 3], "times": ["07:30", "13:00"]})
+    shown = api.get("/sync/schedule").json()
+
+    assert saved.status_code == 200
+    assert saved.json()["enabled"] is True
+    assert (shown["enabled"], shown["days"], shown["times"]) == (True, [1, 3], ["07:30", "13:00"])
+    assert shown["next_at"] is not None
+
+
+def test_a_bad_schedule_answers_400(api):
+    answer = api.put("/sync/schedule", json={"enabled": True, "days": [0], "times": ["25:00"]})
+
+    assert answer.status_code == 400
+    assert api.get("/sync/schedule").json()["enabled"] is False
+
+
+def test_reading_the_schedule_is_not_written_in_the_journal(api, cfg):
+    from efactura import journal
+
+    api.get("/sync/schedule")
+    api.put("/sync/schedule", json={"enabled": False, "days": [0], "times": ["08:00"]})
+
+    lines = journal.events(cfg.db_path, details=True, text="/sync/schedule")["events"]
+    requests = [line["message"] for line in lines if line["event"] == "page.request"]
+    assert requests == ["PUT /sync/schedule answered 200."]

@@ -14,7 +14,7 @@ import threading
 import webbrowser
 from pathlib import Path, PureWindowsPath
 
-from . import __version__, backup, background, demo, journal, update
+from . import __version__, backup, background, demo, journal, schedule, update
 from .anaf import TYPE_PREFIXES
 from .config import Config, load_config, page_address
 from .errors import (
@@ -95,6 +95,7 @@ def run_server(cfg: Config, port: int) -> None:
     app.state.stop = lambda: setattr(server, "should_exit", True)  # what POST /shutdown calls
     stopped = threading.Event()
     threading.Thread(target=_keep_house_until, args=(cfg, stopped), daemon=True).start()
+    threading.Thread(target=_download_on_schedule_until, args=(cfg, stopped), daemon=True).start()
     try:
         server.run()
     finally:
@@ -115,6 +116,22 @@ def _keep_house_until(cfg: Config, stopped: threading.Event) -> None:
         except Exception:  # this thread has nobody above it: one bad round must not be the last
             log.exception("Housekeeping failed; it is tried again at the next round")
         wait = HOUSEKEEPING_EVERY
+
+
+FIRST_SCHEDULE_LOOK = 30  # seconds after the program starts
+SCHEDULE_LOOK_EVERY = 30
+
+
+def _download_on_schedule_until(cfg: Config, stopped: threading.Event) -> None:
+    """Beside the server: look at the schedule soon after the program starts (a moment may
+    have passed while the PC was off) and every half minute, and download when one is due."""
+    wait = FIRST_SCHEDULE_LOOK
+    while not stopped.wait(wait):
+        try:
+            schedule.run_if_due(cfg)
+        except Exception:  # run_if_due does not raise; this thread has nobody above it all the same
+            log.exception("Looking at the schedule failed; it is looked at again soon")
+        wait = SCHEDULE_LOOK_EVERY
 
 
 def run_dev(cfg: Config, port: int) -> None:

@@ -87,6 +87,18 @@ Only a copy made by `install.ps1` can be updated this way: a folder standing on 
 
 How the last update ended is kept in `data\last-update.json`, and what it printed in `data\update.log`.
 
+## Automatic download
+
+The program can download invoices by itself, for every client that is switched on, on the days and at the times the accountant chooses (up to four times a day). It is a schedule, kept in the database (the setting `auto_sync`), and it is off until it is switched on.
+
+- **The program has to be running.** The running program looks at the schedule half a minute after it starts and then every half minute. A PC that is off, or a program that is stopped, downloads nothing; the moments it missed are not lost, see the next point.
+- **A missed moment is made up once.** When the program finds that a moment has passed without a download, it runs one download for the latest such moment, however many were missed. A moment that was already past when the schedule was saved is never made up.
+- **What a run does:** the same as a download by hand for each client that is on, one after another, then the invoices just saved are given an account and their SAGA files are written. A client that fails does not stop the others. A failure that would be the same for all of them (the login is needed, ANAF's limit is reached, the settings are wrong, ANAF cannot be reached) stops the run, and it is recorded how it ended: `ok`, `partial`, `failed` or `unreachable`.
+- **Three more attempts.** A run that could not reach ANAF, or that the program did not live to finish, is tried again a quarter of an hour later, up to four attempts in all. The next moment of the schedule starts over. A run that failed for another reason (no login, for instance) is not repeated until the next moment.
+- **A download made by hand** at the same time is waited for, one client at a time; the two never write together.
+- **It spends what a download by hand spends:** the calls to ANAF and, for invoices no rule decides, the calls to Jev, which are counted on the costs screen like any other.
+- **Where it shows:** the last run (its moment, attempt, how it ended and the counts), the run in progress and the next moment come from `GET /sync/schedule`. The journal holds `sync.auto_started` and `sync.auto_finished` and, under the same trace number, every line of the run itself.
+
 ## Backups
 
 The database holds everything: clients, invoices, accounts, rules, settings, and the keys typed on screen. The screen "Copii de siguranță" keeps copies of it in a folder the accountant chooses.
@@ -382,6 +394,8 @@ Routes that exist for the screen and have no command:
 |---|---|
 | `GET /clients`, `POST /clients` with `{"cui", "name"}`, `DELETE /clients/{cui}` | The client list |
 | `PUT /clients/{cui}/enabled` with `{"enabled": true}` or `false` | Switch a client on or off |
+| `GET /sync/schedule` | When the program downloads by itself: `enabled`, `days` (0 is Monday), `times`, `next_at`, the run in progress (`running`), the last run with its `retry_at`, and how many clients are on and off. Not written in the journal |
+| `PUT /sync/schedule` with `{"enabled", "days": [0, 1], "times": ["08:00"]}` | Save the schedule (at most four times, `HH:MM`) and answer the same as `GET`. Answers 400 for a schedule that makes no sense |
 | `POST /clients/import?filename=clienti.xlsx` (the file as the body) | Add clients from Excel or CSV |
 | `POST /invoices/uploaded` with `{"ids": [...], "uploaded": true}` | Mark several invoices as uploaded, or not |
 | `GET /invoices/{id}/view` | One invoice: the row, the parsed invoice, both XML texts, Jev's answer, and `rule_suggestion` (the rule proposed from it, or `null`) |
@@ -573,7 +587,7 @@ data/
       F_87654321_FV-1042_09.11.2026.xml    F_<supplier code>_<number>_<date>.xml
 ```
 
-- **Database:** table `messages` (one row per ANAF message: list details, invoice fields read from the XML, the full invoice XML and ANAF's signature XML, `uploaded_to_accounting`, `uploaded_at`, the classification fields), `sync_runs` (one row per run), `jev_calls` (every request to Jev with its reply and cost), `clients`, `accounts`, `rules`, `events` (the [journal](#the-journal)), and `settings` (the confidence level, the question for Jev, and what was changed on screen: the SAGA folder, the backup folder and the keys). Any SQLite tool can read it. A database made by an earlier version gains the new columns when it is first opened; nothing is lost.
+- **Database:** table `messages` (one row per ANAF message: list details, invoice fields read from the XML, the full invoice XML and ANAF's signature XML, `uploaded_to_accounting`, `uploaded_at`, the classification fields), `sync_runs` (one row per run), `jev_calls` (every request to Jev with its reply and cost), `clients`, `accounts`, `rules`, `events` (the [journal](#the-journal)), and `settings` (the confidence level, the question for Jev, the schedule `auto_sync` and the record of the last automatic download `auto_sync_last_run`, and what was changed on screen: the SAGA folder, the backup folder and the keys). Any SQLite tool can read it. A database made by an earlier version gains the new columns when it is first opened; nothing is lost.
 - **Saved login:** `%LOCALAPPDATA%\efactura\tokens.json`, in the Windows user's private folder and outside this project. Treat it like the token and PIN: whoever copies it can read e-Factura data for every company the certificate covers until it expires.
 - **`config.toml`** holds the client secret, the API key and the OpenRouter key. It is ignored by git; do not share it.
 - **Keys changed on screen** are stored in the database as plain text, like those in `config.toml`. Treat `data/efactura.db` as a secret too, and with it every copy in the backup folder.
@@ -634,6 +648,11 @@ For backups and the journal:
 - **Stopping the program for a restore or an update** waits until it no longer answers, not until its process has gone. A request still being served at that moment finishes afterwards. A download is refused beforehand and a file still in use is tried again for a few seconds; anything slower than that makes the restore fail and keep the database it had. On macOS and Linux nothing refuses a file in use, so there a restore should not be started while something else works on the database.
 - **The job that makes the daily copy** runs inside the program started without a window. That start is itself unconfirmed on Windows (see above); if the program runs, the job runs.
 - **The folder dialog** for the backup folder is the same one the SAGA folder uses, with the same caveat.
+
+For the automatic download:
+
+- **The thread** that looks at the schedule runs inside the program started without a window. That start is itself unconfirmed on Windows; if the program runs, the thread runs.
+- **A run made up after sleep:** a PC that wakes from sleep is expected to make up the moment it slept through within half a minute. Not yet seen on Windows.
 
 For the screen:
 
