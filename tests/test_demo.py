@@ -94,6 +94,17 @@ def test_the_demo_has_invoices_a_client_issued(cfg):
     assert all(each["classification_status"] is None and not each["is_new"] for each in issued)
 
 
+def test_the_demo_has_invoices_that_ask_for_another_sum_than_they_are_worth(cfg):
+    desk = demo.service(cfg)
+    listed = {each["invoice_number"]: each for each in desk.invoices(cui="18547290")["invoices"]}
+
+    water, power = listed["CO 1879"], listed["EN 4410"]
+    assert (water["total_with_vat"], water["total_payable"]) == ("345.40", "657.80")  # an earlier balance added
+    assert (power["total_with_vat"], power["total_payable"]) == ("1190.00", "990.00")  # an advance taken off
+    assert desk.invoice_view(water["id"])["document"]["total_prepaid"] == "-312.40"
+    assert desk.invoice_view(power["id"])["document"]["total_prepaid"] == "200.00"
+
+
 def test_every_second_download_also_brings_an_invoice_the_client_issued(cfg):
     first = demo.service(cfg).sync(CLIENT)
     second = demo.service(cfg).sync(CLIENT)

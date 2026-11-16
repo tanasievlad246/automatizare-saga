@@ -48,7 +48,7 @@ export function SavedInvoicePicker({
               className="grid min-h-14 cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-0.5 rounded-lg border-2 border-input bg-card px-4 py-2 text-left hover:bg-muted disabled:cursor-wait disabled:opacity-60"
             >
               <span className="font-bold">{invoice.supplier_name ?? 'Furnizor necunoscut'}</span>
-              <span className="text-right whitespace-nowrap">{formatMoney(invoice.total_payable, invoice.currency)}</span>
+              <span className="text-right whitespace-nowrap">{formatMoney(invoice.total_with_vat, invoice.currency)}</span>
               <span className="text-muted-foreground">{invoice.invoice_number} · {formatDate(invoice.invoice_issue_date)}</span>
             </button>
           ))}

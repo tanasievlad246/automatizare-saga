@@ -94,7 +94,7 @@ function IssuedInvoicesTable({ invoices }: { invoices: Invoice[] }) {
               <TableCell>{invoice.invoice_number}</TableCell>
               <TableCell className="whitespace-nowrap">{formatDate(invoice.invoice_issue_date)}</TableCell>
               <TableCell className="text-right whitespace-nowrap">
-                {formatMoney(invoice.total_payable, invoice.currency)}
+                {formatMoney(invoice.total_with_vat, invoice.currency)}
               </TableCell>
               <TableCell className="text-right">
                 <Button asChild size="sm" variant="outline">

@@ -179,7 +179,7 @@ The page opens at `http://autosaga.localhost:8765/ui/`. `http://127.0.0.1:8765/u
 |---|---|
 | **Clienți** | Import clients from Excel or CSV, add one by hand, download invoices for one client or all (the last 1 to 30 days, or two dates). Shows how many invoices are new and how many wait for an account. A search field narrows the list by name or CUI as it is typed (no matter the case, the diacritics, or whether the CUI is written with `RO`); the download for all clients still covers every client that is on |
 | **A client's invoices** | New, to check, not yet in SAGA, all. Under the list, the client's file for SAGA: its path, when it was written, and one button that names how many invoices it marks as imported. While the folder is not up to date, a notice says so and offers "Încearcă din nou", and the marking button is off. At the foot, "Facturile emise de client": how many invoices the client issued were downloaded, and the switch "Arată facturile emise" that lists them. See [issued invoices](#issued-invoices) |
-| **One invoice** | The invoice as a person reads it, ANAF's XML, its own part of the SAGA XML; its account and who chose it; accept Jev's proposal or pick another; a rule proposed from it when no rule decided it; the file for SAGA it is in, or why it is in none; a warning, and no ticking as imported, while the client's folder is not up to date. An invoice the client issued shows only what it says and ANAF's XML |
+| **One invoice** | The invoice as a person reads it (with an earlier balance, an advance or a rounding shown apart from what the invoice is worth), ANAF's XML, its own part of the SAGA XML; its account and who chose it; accept Jev's proposal or pick another; a rule proposed from it when no rule decided it; the file for SAGA it is in, or why it is in none; a warning, and no ticking as imported, while the client's folder is not up to date. An invoice the client issued shows only what it says and ANAF's XML |
 | **Reguli de clasificare** | Rules proposed from recent decisions, the rules, the accounts Jev chooses from, how sure Jev must be, the question Jev is asked. The button "Testează regulile" opens the rule test, see [Testing the rules](#testing-the-rules) |
 | **Costuri Jev** | Cost between two dates, by day, week, month or year, and every invoice Jev classified |
 | **Descărcare automată** | Switch the automatic download on or off, the days and times (up to four a day, chosen as 00 to 23 hours whatever the PC's regional settings), the period of the invoices (the last 3, 5, 7 or 10 days, or two dates), when the next one is, and how the last one went. See [Automatic download](#automatic-download) |
@@ -203,6 +203,15 @@ ANAF lists the invoices a client issued (`FACTURA TRIMISA`) next to the ones it 
 - **Hidden until asked for.** A client's screen says how many issued invoices were downloaded (`issued_count` in `GET /invoices?cui=...`). The switch "Arată facturile emise" lists them under the received ones, the newest on top: buyer, number, date, total, and "Deschide". The first 200 are listed; "Arată-le pe toate" lists the rest. The switch is one for all clients and stays as it was left; it is kept in the database (`show_issued`) and can be read and set with `/settings`.
 - **Only to look at.** An issued invoice's screen shows the invoice and ANAF's XML. It has no account, no rule and nothing for SAGA, and asking the API to classify it answers `not_classifiable`.
 - **The download window says what came:** "3 facturi noi, 5 facturi emise", or "nicio factură primită, 2 facturi emise" when the period held no received invoice. The journal and the screen of the automatic download count the same way. A client with downloads but no received invoice no longer reads "Nu ați descărcat încă facturi".
+
+### An invoice's value and what is left to pay
+
+Most invoices ask for what they are worth. Some do not: a supplier adds an earlier unpaid balance to the amount due (utilities do this, writing it as a negative paid amount, BT-113 `PrepaidAmount`), or takes off an advance already paid, or rounds the amount due (BT-114).
+
+- **"Total" is the invoice's own value, VAT included**, on every list and in the title of an invoice's screen. It is the value the file for SAGA adds up to. It is worked out as the total without VAT plus the VAT, which the e-Factura rules make equal to the invoice's total with VAT.
+- **The invoice itself shows the rest** when there is any: "Total factură", then "Datorie restantă (sold anterior)" or "Plătit în avans", then "Rotunjire", then "De plată", with a line saying which sum goes to SAGA. An invoice with none of these shows the three rows it always did.
+- **The file for SAGA never held the amount due**, only the lines and their VAT, so an earlier balance is not booked a second time.
+- For other programs: every invoice returned carries `total_with_vat` beside `total_payable`, which still is the amount left to pay. `document` in `GET /invoices/{id}/view` also carries `total_prepaid` and `total_rounding`, as written in the invoice, or `null`.
 
 A client can be switched off. A client that is off keeps its invoices and is left out of every download until it is switched on again; asking to download it answers `client_off`. A CUI that is not in the client list is not affected and is downloaded as before.
 
@@ -337,6 +346,8 @@ Success (from `sync`):
 ```
 
 (Entries carry a few more fields: due date, type code, customer, totals, `first_seen_at`, `uploaded_at`, and the classification fields described [below](#classification-and-saga). The reply also has a `classification` summary and `saga_folder`.)
+
+`total_payable` is what is left to pay. `total_with_vat`, on every entry, is what the invoice itself is worth; the two differ when the supplier added an earlier balance or took off an advance, see [an invoice's value and what is left to pay](#an-invoices-value-and-what-is-left-to-pay).
 
 `new_count` is every message saved. Of those, `received_count` are received invoices and `issued_count` are invoices the client issued; error messages and other messages from ANAF are in neither. `sync-all` answers the same three in total as `new`, `received` and `issued`, and for each client under the names above. The record of an automatic download (`last_run` in `GET /sync/schedule`) carries `new`, `received` and `issued` too; `received` and `issued` are `null` for a run that failed before counting, and missing from a record written by an earlier version.
 
@@ -637,6 +648,7 @@ The first real run on the Windows PC should confirm:
 - a complete login, and the one-minute lifetime of the login code (reported by open-source clients, not by ANAF's own document)
 - the file names inside ANAF's ZIP, and what a buyer-message ZIP contains (it is saved as-is either way)
 - the one-sync-at-a-time lock on Windows (tested on macOS only)
+- that a negative paid amount is always an earlier unpaid balance: this reading comes from one supplier's invoice, where the supplier's own comment says so and the sums agree, not from the standard's text
 - the Power Automate steps above
 
 For the demo and the certificate login:

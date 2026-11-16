@@ -1,9 +1,17 @@
+import { Fragment } from 'react'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { formatAmount, formatDate, formatMoney, formatNumber } from '../format'
+import { formatAmount, formatDate, formatNumber } from '../format'
 import type { InvoiceDocument, Party } from '../types'
+import { totalRows, totalsNote } from './invoiceTotals'
 
-/** The invoice as a person reads it: who, when, what was bought, how much. */
-export function RenderedInvoice({ document }: { document: InvoiceDocument }) {
+const ROW_WEIGHTS = { plain: '', bold: 'font-bold', large: 'text-xl font-bold' }
+
+/**
+ * The invoice as a person reads it: who, when, what was bought, how much. `goesToSaga` is
+ * false for an invoice the client issued, which is only looked at.
+ */
+export function RenderedInvoice({ document, goesToSaga }: { document: InvoiceDocument; goesToSaga: boolean }) {
+  const note = totalsNote(document, goesToSaga)
   // SAGA has no credit notes; they are booked as invoices with negative amounts, so say what this is.
   const kind = document.is_credit_note ? 'Factură de stornare (scade din ce datorează clientul)' : null
   return (
@@ -55,13 +63,14 @@ export function RenderedInvoice({ document }: { document: InvoiceDocument }) {
         </TableBody>
       </Table>
       <dl className="grid grid-cols-[auto_auto] gap-x-7 gap-y-1.5 self-end text-right">
-        <dt className="text-muted-foreground">Fără TVA</dt>
-        <dd>{formatMoney(document.total_without_vat, document.currency)}</dd>
-        <dt className="text-muted-foreground">TVA</dt>
-        <dd>{formatMoney(document.total_vat, document.currency)}</dd>
-        <dt className="text-xl font-bold">Total</dt>
-        <dd className="text-xl font-bold">{formatMoney(document.total_payable, document.currency)}</dd>
+        {totalRows(document).map((row) => (
+          <Fragment key={row.label}>
+            <dt className={row.weight === 'plain' ? 'text-muted-foreground' : ROW_WEIGHTS[row.weight]}>{row.label}</dt>
+            <dd className={ROW_WEIGHTS[row.weight]}>{row.amount}</dd>
+          </Fragment>
+        ))}
       </dl>
+      {note && <p className="rounded-xl bg-fresh px-4 py-3 text-fresh-foreground">{note}</p>}
     </div>
   )
 }

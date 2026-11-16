@@ -54,7 +54,8 @@ CLIENTS = {
 }
 
 # (supplier name, supplier CUI, invoice number, lines) per client, in two downloads:
-# the first is "last week" (old by now), the second is "today" (new).
+# the first is "last week" (old by now), the second is "today" (new). A fifth value is the
+# amount already paid: with a minus, an earlier unpaid balance the supplier adds to what is due.
 EARLIER = {
     "12345674": [
         ("Birotică Expert SRL", "RO30112233", "BE-0412", [line("Hârtie A4 80g", "120.00", quantity="10", price="12.00")]),
@@ -83,6 +84,12 @@ TODAY = {
     ],
     "18547290": [
         ("Papetărie Centrală SRL", "RO60223344", "PC 118", [line("Hârtie copiator A4", "95.00", quantity="5", price="19.00")]),
+        # What is left to pay is not what these two are worth: an earlier balance, and an advance.
+        ("Compania de Apă Exemplu SA", "RO40111222", "CO 1879", [
+            line("Apă potabilă", "177.65", quantity="17", unit="MTQ", price="10.45", percent="9"),
+            line("Canalizare", "139.23", quantity="17", unit="MTQ", price="8.19", percent="9"),
+        ], "-312.40"),
+        ("Energie Exemplu SA", "RO50112233", "EN 4410", [line("Energie electrică", "1000.00")], "200.00"),
     ],
 }
 # What a client issued itself: (buyer name, buyer CUI, invoice number, lines) per client. ANAF
@@ -167,10 +174,11 @@ def build(folder: Path, now: datetime | None = None) -> Config:
     for moment, batch in ((now - timedelta(days=6), EARLIER), (now, TODAY)):
         for cui, invoices in batch.items():
             anaf = FakeAnaf()
-            for supplier, supplier_cui, number, lines in invoices:
+            for supplier, supplier_cui, number, lines, *paid in invoices:
                 message_id += 1
                 anaf.add(str(message_id), xml=rich_invoice_xml(
                     lines=lines, number=number, supplier_cui=supplier_cui, supplier_name=supplier,
+                    prepaid=paid[0] if paid else None,
                 ))
             for buyer, buyer_cui, number, lines in ISSUED.get(cui, []) if batch is TODAY else []:
                 issued_id += 1

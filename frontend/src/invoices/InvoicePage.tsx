@@ -59,7 +59,7 @@ export function InvoicePage() {
           <PageTitle title={`Factura ${invoice.invoice_number ?? ''}`}>
             {issued ? `către ${invoice.customer_name ?? ''}` : `de la ${invoice.supplier_name}`} ·{' '}
             {formatDate(invoice.invoice_issue_date)} ·{' '}
-            {formatMoney(invoice.total_payable, invoice.currency)}
+            {formatMoney(invoice.total_with_vat, invoice.currency)}
           </PageTitle>
         </div>
         <InvoiceStateBadges invoice={invoice} />
@@ -80,7 +80,7 @@ export function InvoicePage() {
           </div>
           {shown === 'factura' &&
             (document ? (
-              <RenderedInvoice document={document} />
+              <RenderedInvoice document={document} goesToSaga={!issued} />
             ) : (
               <p className="px-6 py-6 text-muted-foreground">Acest mesaj de la ANAF nu este o factură.</p>
             ))}

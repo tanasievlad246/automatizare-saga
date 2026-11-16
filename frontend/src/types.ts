@@ -42,7 +42,8 @@ export type Invoice = {
   supplier_name: string | null
   customer_name: string | null
   currency: string | null
-  total_payable: string | null
+  total_with_vat: string | null // what the invoice is worth: this is the "Total" of every list
+  total_payable: string | null // what is left to pay: more with an earlier balance, less with an advance
   uploaded_to_accounting: boolean
   is_new: boolean
   classification_status: ClassificationStatus
@@ -91,6 +92,9 @@ export type InvoiceDocument = {
   adjustments: { is_charge: boolean; reason: string | null; amount: string }[]
   total_without_vat: string | null
   total_vat: string | null
+  total_with_vat: string | null
+  total_prepaid: string | null // paid before; negative when the supplier adds an earlier unpaid balance
+  total_rounding: string | null
   total_payable: string | null
 }
 
