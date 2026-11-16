@@ -200,9 +200,9 @@ The menu on the left has a fixed width and the screen's content takes the rest. 
 
 ANAF lists the invoices a client issued (`FACTURA TRIMISA`) next to the ones it received, and the program saves both. Only received invoices get an account and a file for SAGA, and only they are counted as "new" anywhere: on the client list, in the download window, in the journal and at the automatic download.
 
-- **Hidden until asked for.** A client's screen says how many issued invoices were downloaded. The switch "Arată facturile emise" lists them under the received ones: buyer, number, date, total, and "Deschide". The switch is one for all clients and stays as it was left; it is kept in the database (`show_issued`) and can be read and set with `/settings`.
+- **Hidden until asked for.** A client's screen says how many issued invoices were downloaded (`issued_count` in `GET /invoices?cui=...`). The switch "Arată facturile emise" lists them under the received ones, the newest on top: buyer, number, date, total, and "Deschide". The first 200 are listed; "Arată-le pe toate" lists the rest. The switch is one for all clients and stays as it was left; it is kept in the database (`show_issued`) and can be read and set with `/settings`.
 - **Only to look at.** An issued invoice's screen shows the invoice and ANAF's XML. It has no account, no rule and nothing for SAGA, and asking the API to classify it answers `not_classifiable`.
-- **The download window says what came:** "3 facturi noi, 5 facturi emise", or "nicio factură primită, 2 facturi emise" when the period held no received invoice. A client with downloads but no received invoice no longer reads "Nu ați descărcat încă facturi".
+- **The download window says what came:** "3 facturi noi, 5 facturi emise", or "nicio factură primită, 2 facturi emise" when the period held no received invoice. The journal and the screen of the automatic download count the same way. A client with downloads but no received invoice no longer reads "Nu ați descărcat încă facturi".
 
 A client can be switched off. A client that is off keeps its invoices and is left out of every download until it is switched on again; asking to download it answers `client_off`. A CUI that is not in the client list is not affected and is downloaded as before.
 
@@ -338,7 +338,7 @@ Success (from `sync`):
 
 (Entries carry a few more fields: due date, type code, customer, totals, `first_seen_at`, `uploaded_at`, and the classification fields described [below](#classification-and-saga). The reply also has a `classification` summary and `saga_folder`.)
 
-`new_count` is every message saved. Of those, `received_count` are received invoices and `issued_count` are invoices the client issued; error messages and other messages from ANAF are in neither. `sync-all` answers the same three as `new`, `received` and `issued`, in total and for each client.
+`new_count` is every message saved. Of those, `received_count` are received invoices and `issued_count` are invoices the client issued; error messages and other messages from ANAF are in neither. `sync-all` answers the same three in total as `new`, `received` and `issued`, and for each client under the names above. The record of an automatic download (`last_run` in `GET /sync/schedule`) carries `new`, `received` and `issued` too; `received` and `issued` are `null` for a run that failed before counting, and missing from a record written by an earlier version.
 
 Failure (from any command):
 

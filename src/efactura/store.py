@@ -150,6 +150,7 @@ CREATE TABLE IF NOT EXISTS saga_problems (
 """
 
 RECEIVED_SQL = "message_type LIKE 'FACTURA PRIMITA%'"
+ISSUED_SQL = "message_type LIKE 'FACTURA TRIMISA%'"  # the invoices a client issued itself
 # "New" on screen: a received invoice brought in by that client's latest sync that brought
 # any, and not yet marked as uploaded to accounting. `m` is the messages row being judged;
 # the query must also join LATEST_RUN_JOIN, which works out each client's latest run once
@@ -378,6 +379,12 @@ class Store:
             sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY first_seen_at, id"
         return [_to_dict(row) for row in self._conn.execute(sql, params)]
+
+    def issued_count(self, cui: str) -> int:
+        """How many invoices this client issued itself are saved."""
+        return self._conn.execute(
+            f"SELECT COUNT(*) FROM messages WHERE cui = ? AND {ISSUED_SQL}", (cui,)
+        ).fetchone()[0]
 
     def get_message(self, message_id: str, include_xml: bool = False) -> dict | None:
         columns = SUMMARY_COLUMNS + (XML_COLUMNS if include_xml else ())

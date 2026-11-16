@@ -290,6 +290,9 @@ export type ScheduleRun = {
   slot: string; attempt: number; started_at: string; finished_at: string | null
   status: 'ok' | 'partial' | 'failed' | 'unreachable' | 'interrupted' | 'running'
   clients: number; failed_clients: number; new: number; review: number
+  // Of the new messages, the received invoices and the ones the clients issued. Records
+  // written before they were counted apart do not carry them; a failed run has none.
+  received?: number | null; issued?: number | null
   error: { code: string; message: string } | null
   retry_at: string | null
   trace: string | null // the journal's number for this run's own lines

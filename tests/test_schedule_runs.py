@@ -288,7 +288,7 @@ def test_run_if_due_never_raises(tmp_path):
     assert schedule.run_if_due(cfg, MONDAY_8) is None
 
 
-def test_an_automatic_run_counts_only_received_invoices_as_new(cfg, anaf, make_service):
+def test_an_automatic_run_counts_the_received_and_the_issued_invoices_apart(cfg, anaf, make_service):
     with_clients(cfg, make_service, (VALID_CUI, "Alfa"))
     anaf.add("3001", cui=VALID_CUI)
     anaf.add("3002", cui=VALID_CUI, tip="FACTURA TRIMISA")
@@ -297,7 +297,28 @@ def test_an_automatic_run_counts_only_received_invoices_as_new(cfg, anaf, make_s
 
     record = schedule.run_if_due(cfg, MONDAY_8, make_service)
 
-    assert (record["status"], record["new"]) == ("ok", 1)
+    # `new` stays every message saved, as other programs have read it.
+    assert (record["status"], record["new"], record["received"], record["issued"]) == ("ok", 3, 1, 2)
+    assert schedule.status(cfg, MONDAY_8)["last_run"]["received"] == 1
+    finished = journal.events(cfg.db_path, trace=record["trace"])["events"][0]
+    assert finished["event"] == "sync.auto_finished"
+    assert (finished["data"]["new"], finished["data"]["received"], finished["data"]["issued"]) == (3, 1, 2)
+
+
+def test_a_run_that_failed_before_any_client_has_no_counts_of_invoices(cfg, make_service):
+    with_clients(cfg, make_service, (VALID_CUI, "Alfa"))
+    switch_on(cfg)
+
+    class Broken:
+        def sync_all(self, progress=None, **period):
+            raise RuntimeError("no disk")
+
+        def close(self):
+            pass
+
+    record = schedule.run_if_due(cfg, MONDAY_8, lambda cfg: Broken())
+
+    assert (record["status"], record["new"], record["received"], record["issued"]) == ("failed", 0, None, None)
 
 
 def test_a_run_is_one_story_in_the_journal(cfg, anaf, make_service):

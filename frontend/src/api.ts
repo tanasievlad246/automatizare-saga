@@ -98,8 +98,9 @@ export const api = {
 
   sync: (cui: string, period: SyncPeriod) => call<SyncResult>('POST', '/sync', { cui, ...period }),
 
+  /** A client's received invoices, with how its files for SAGA stand and how many invoices it issued. */
   receivedInvoices: (cui: string) =>
-    call<{ invoices: Invoice[]; saga: SagaState }>('GET', `/invoices${query({ cui, type: 'primita' })}`),
+    call<{ invoices: Invoice[]; saga: SagaState; issued_count: number }>('GET', `/invoices${query({ cui, type: 'primita' })}`),
   /** The invoices the client issued itself. They get no account and no file for SAGA. */
   issuedInvoices: (cui: string) =>
     call<{ invoices: Invoice[] }>('GET', `/invoices${query({ cui, type: 'trimisa' })}`),

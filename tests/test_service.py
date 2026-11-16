@@ -260,6 +260,20 @@ def test_an_issued_invoice_can_be_looked_at_and_has_nothing_for_saga(service, an
     assert (view["saga_xml"], view["rule_suggestion"], view["jev"]) == (None, None, None)
 
 
+def test_one_clients_list_says_how_many_invoices_the_client_issued(service, anaf, logged_in):
+    anaf.add("3001")
+    anaf.add("3002", tip="FACTURA TRIMISA")
+    anaf.add("3003", tip="factura trimisa")
+    anaf.add("3004", tip="ERORI FACTURA")
+    service.sync(VALID_CUI)
+
+    received = service.invoices(cui=VALID_CUI, message_type="primita")
+
+    assert (received["count"], received["issued_count"]) == (1, 2)
+    assert service.invoices(cui=OTHER_VALID_CUI)["issued_count"] == 0
+    assert "issued_count" not in service.invoices()  # it is one client's count
+
+
 def test_no_messages_is_a_successful_empty_run(service, cfg, logged_in):
     result = service.sync(VALID_CUI)
 

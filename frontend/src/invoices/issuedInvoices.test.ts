@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { Invoice } from '../types'
-import { isIssued, issuedSummary, whenNoneReceived } from './issuedInvoices'
+import { MOST_ISSUED_SHOWN, isIssued, issuedSummary, newestFirst, notAllShown, whenNoneReceived } from './issuedInvoices'
 
 const invoice = (message_type: string) => ({ message_type }) as Invoice
+const dated = (id: string, invoice_issue_date: string | null) => ({ id, invoice_issue_date }) as Invoice
 
 describe('an invoice the client issued', () => {
   it('is told from a received one by what ANAF calls the message', () => {
@@ -36,7 +37,23 @@ describe('the list of received invoices, when it is empty', () => {
 
   it('does not say nothing was downloaded after a download that brought no received invoice', () => {
     expect(whenNoneReceived(true)).toBe(
-      'Nicio factură primită în zilele descărcate până acum. Pentru zile mai vechi, apăsați „Descarcă facturile” și alegeți zilele.',
+      'Nicio factură primită în perioada descărcată până acum. Pentru zile mai vechi, apăsați „Descarcă facturile” și alegeți zilele.',
     )
+  })
+})
+
+describe('the list of issued invoices', () => {
+  it('starts with the newest, by the date on the invoice and then by ANAF\'s number', () => {
+    const listed = [dated('3501', '2026-11-06'), dated('10002', '2026-11-12'), dated('9001', '2026-11-12'), dated('3400', null)]
+
+    expect(newestFirst(listed).map((each) => each.id)).toEqual(['10002', '9001', '3501', '3400'])
+    expect(listed.map((each) => each.id)).toEqual(['3501', '10002', '9001', '3400']) // the list given is left as it was
+  })
+
+  it('says when only the newest are on screen', () => {
+    expect(MOST_ISSUED_SHOWN).toBe(200)
+    expect(notAllShown(5003)).toBe('Se văd cele mai noi 200 din 5003 facturi emise.')
+    expect(notAllShown(200)).toBeNull()
+    expect(notAllShown(3)).toBeNull()
   })
 })

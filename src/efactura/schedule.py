@@ -428,6 +428,9 @@ def _run(cfg, now, make_service, clock, found, trace, period: Period) -> dict:
     record = {
         "slot": _text(slot), "attempt": attempt, "started_at": _text(clock), "finished_at": None,
         "status": "running", "clients": 0, "failed_clients": 0, "new": 0, "review": 0,
+        # Of the new messages, the invoices: received ones, which are the "new" of the
+        # screen, and the ones the clients issued. None until the run has counted them.
+        "received": None, "issued": None,
         "error": None, "trace": trace,
     }
     journal.configure(cfg.db_path)
@@ -466,8 +469,8 @@ def _run(cfg, now, make_service, clock, found, trace, period: Period) -> dict:
     record.update(
         finished_at=_text(local_clock(now)), status=answer["status"],
         clients=answer.get("clients", 0), failed_clients=answer.get("failed_clients", 0),
-        # "New" on the screen are the invoices to work on: the received ones.
-        new=answer.get("received", 0), review=answer.get("review", 0), error=error,
+        new=answer.get("new", 0), received=answer.get("received"), issued=answer.get("issued"),
+        review=answer.get("review", 0), error=error,
     )
     try:
         _write_record(cfg, record)
@@ -484,7 +487,8 @@ def _run(cfg, now, make_service, clock, found, trace, period: Period) -> dict:
         f"Automatic download for {record['slot']} ended as {record['status']}.",
         level=_AUTO_LEVELS.get(record["status"], "error"),
         slot=record["slot"], attempt=attempt, status=record["status"], clients=record["clients"],
-        failed_clients=record["failed_clients"], new=record["new"], review=record["review"],
+        failed_clients=record["failed_clients"], new=record["new"], received=record["received"],
+        issued=record["issued"], review=record["review"],
         error=error["code"] if error else None, duration_ms=round((time.monotonic() - began) * 1000),
     )
     return record

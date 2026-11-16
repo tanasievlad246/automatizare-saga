@@ -231,12 +231,15 @@ def test_the_switch_for_issued_invoices_leaves_the_saga_settings_alone(api, anaf
     two_waiting(api, anaf)
     api.put("/settings", json={"saga_file_per": "invoice"})
 
+    removed = cfg.data_dir / "SAGA Import" / VALID_CUI / "F_87654321_A2_09.11.2026.xml"
+    removed.unlink()  # writing the files again would put it back
+
     changed = api.put("/settings", json={"show_issued": True}).json()
 
     assert (changed["saga_file_per"], changed["saga_folder"]) == ("invoice", str(cfg.data_dir / "SAGA Import"))
-    assert saga_files_of(cfg.data_dir / "SAGA Import") == [
-        "F_87654321_A1_09.11.2026.xml", "F_87654321_A2_09.11.2026.xml"
-    ]
+    assert saga_files_of(cfg.data_dir / "SAGA Import") == ["F_87654321_A1_09.11.2026.xml"]
+    api.put("/settings", json={"saga_file_per": "invoice", "show_issued": False})  # a setting for SAGA does write
+    assert removed.exists()
 
 
 def test_the_switch_can_be_turned_together_with_the_saga_settings(api):

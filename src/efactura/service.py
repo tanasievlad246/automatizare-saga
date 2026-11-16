@@ -583,11 +583,15 @@ class Service:
                 classification=classification,
                 only_new=only_new,
             )
-            # One client's list also says how that client's files for SAGA stand.
-            files = {"saga": self._saga_state(store, normalize_cui(cui))} if cui else {}
+            # One client's list also says how that client's files for SAGA stand, and how
+            # many invoices the client issued, which the page does not list unless asked to.
+            of_client = {
+                "saga": self._saga_state(store, normalize_cui(cui)),
+                "issued_count": store.issued_count(normalize_cui(cui)),
+            } if cui else {}
         finally:
             store.close()
-        return {"ok": True, "count": len(rows), "invoices": [self._present(r) for r in rows], **files}
+        return {"ok": True, "count": len(rows), "invoices": [self._present(r) for r in rows], **of_client}
 
     def invoice(self, message_id: str, include_xml: bool = False) -> dict:
         store = self._open_store()

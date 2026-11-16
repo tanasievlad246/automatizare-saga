@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 import { Link } from 'react-router'
 import { Notice } from '@/components/Notice'
 import { Button } from '@/components/ui/button'
@@ -8,31 +9,38 @@ import { api } from '../api'
 import { errorMessage, showError } from '../errorMessages'
 import { formatDate, formatMoney } from '../format'
 import type { Invoice } from '../types'
-import { issuedSummary } from './issuedInvoices'
+import { MOST_ISSUED_SHOWN, issuedSummary, newestFirst, notAllShown } from './issuedInvoices'
 
 /**
- * The invoices a client issued itself: how many there are, and the list once the switch is
- * turned. The switch is one for all clients and stays as it was left.
+ * The invoices a client issued itself: how many there are (`count`, unknown while the page
+ * is still loading), and the list once the switch is turned. The switch is one for all
+ * clients and stays as it was left. The list is asked for only while it is shown.
  */
-export function IssuedInvoicesCard({ cui }: { cui: string }) {
+export function IssuedInvoicesCard({ cui, count }: { cui: string; count: number | undefined }) {
   const queryClient = useQueryClient()
+  const [all, setAll] = useState(false)
   const settings = useQuery({ queryKey: ['saga-folder'], queryFn: api.sagaFolder })
-  const issued = useQuery({ queryKey: ['invoices', cui, 'issued'], queryFn: () => api.issuedInvoices(cui) })
   const turn = useMutation({
     mutationFn: api.showIssued,
     onSuccess: (saved) => queryClient.setQueryData(['saga-folder'], saved),
     onError: showError,
   })
   // While the answer is on its way the switch already stands where it was turned to.
-  const shown = turn.isPending ? turn.variables : settings.data?.show_issued === true
-  const invoices = issued.data?.invoices ?? []
+  const shown = turn.isPending ? turn.variables === true : settings.data?.show_issued === true
+  const issued = useQuery({
+    queryKey: ['invoices', cui, 'issued'],
+    queryFn: () => api.issuedInvoices(cui),
+    enabled: shown,
+  })
+  const invoices = newestFirst(issued.data?.invoices ?? [])
+  const cut = all ? null : notAllShown(invoices.length)
 
   return (
     <section aria-labelledby="issued-invoices" className="flex flex-col gap-3.5 rounded-2xl border bg-card px-5 py-4.5">
       <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
         <div className="min-w-0 flex-[1_1_420px]">
           <h2 id="issued-invoices" className="font-sans text-lg font-bold">Facturile emise de client</h2>
-          {issued.data && <p className="text-muted-foreground">{issuedSummary(invoices.length)}</p>}
+          {count !== undefined && <p className="text-muted-foreground">{issuedSummary(count)}</p>}
         </div>
         <label className="flex min-h-12 items-center gap-3 font-semibold">
           <Switch
@@ -47,8 +55,17 @@ export function IssuedInvoicesCard({ cui }: { cui: string }) {
           Arată facturile emise
         </label>
       </div>
-      {issued.error && <Notice tone="attention">{errorMessage(issued.error)}</Notice>}
-      {shown && invoices.length > 0 && <IssuedInvoicesTable invoices={invoices} />}
+      {shown && issued.error && <Notice tone="attention">{errorMessage(issued.error)}</Notice>}
+      {shown && issued.isPending && <p role="status" className="text-muted-foreground">Se încarcă facturile emise…</p>}
+      {shown && invoices.length > 0 && (
+        <IssuedInvoicesTable invoices={cut ? invoices.slice(0, MOST_ISSUED_SHOWN) : invoices} />
+      )}
+      {shown && cut && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
+          <p className="text-muted-foreground">{cut}</p>
+          <Button variant="outline" size="sm" onClick={() => setAll(true)}>Arată-le pe toate</Button>
+        </div>
+      )}
     </section>
   )
 }

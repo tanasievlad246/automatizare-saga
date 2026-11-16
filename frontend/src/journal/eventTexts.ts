@@ -61,8 +61,10 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
   'sync.finished': (data) => {
     // Lines written before the issued invoices were counted apart carry only `new`.
     const received = Number(data.received ?? data.new)
-    const fresh = received ? countOf(received, 'o factură nouă', 'facturi noi') : 'nicio factură nouă'
     const issued = Number(data.issued) ? `, ${countOf(Number(data.issued), 'o factură emisă', 'facturi emise')}` : ''
+    const fresh = received
+      ? countOf(received, 'o factură nouă', 'facturi noi')
+      : issued ? 'nicio factură primită' : 'nicio factură nouă'
     const failed = Number(data.failed) ? countOf(Number(data.failed), 'una nereușită', 'nereușite') : 'niciuna nereușită'
     return `Descărcarea pentru ${who(data)} s-a terminat: ${fresh}${issued}, ${failed}.`
   },
@@ -78,9 +80,12 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
   'sync.auto_started': (data) =>
     `Descărcarea automată a început.${Number(data.attempt) > 1 ? ` Este încercarea ${text(data.attempt)} din 4.` : ''}`,
   'sync.auto_finished': (data) => {
+    // Lines written before the issued invoices were counted apart carry only `new`.
+    const received = Number(data.received ?? data.new)
     const found = [
-      Number(data.new) > 0 && countOf(Number(data.new), 'o factură nouă', 'facturi noi'),
+      received > 0 && countOf(received, 'o factură nouă', 'facturi noi'),
       Number(data.review) > 0 && `${text(data.review)} de verificat`,
+      Number(data.issued) > 0 && countOf(Number(data.issued), 'o factură emisă', 'facturi emise'),
     ].filter(Boolean) as string[]
     switch (data.status) {
       case 'ok':
