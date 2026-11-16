@@ -67,7 +67,8 @@ EARLIER = {
 }
 TODAY = {
     "12345674": [
-        ("Stația Carburant SRL", "RO20334455", "FV-1042", [line("Motorină Euro 5", "450.00", quantity="60", unit="LTR", price="7.50"), line("Spălare auto", "50.00")]),
+        # Two accounts on one invoice, and a discount that takes the account of the largest line.
+        ("Stația Carburant SRL", "RO20334455", "FV-1042", [line("Motorină Euro 5", "450.00", quantity="60", unit="LTR", price="7.50"), line("Spălare auto", "50.00"), line("Discount card flotă", "-15.00")]),
         ("Telefonie Mobilă SA", "RO10556677", "TM 88213", [line("Abonament telefonie mobilă", "200.00")]),
         ("Materiale Construcții SRL", "RO23456789", "MC 5521", [line("Ciment 40 kg", "840.00", quantity="30", price="28.00"), line("Transport marfă", "60.00")]),
         # Paper again, and a repair: Jev decides both, so rules are proposed from them.

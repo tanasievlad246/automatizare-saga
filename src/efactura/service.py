@@ -1590,16 +1590,23 @@ class Service:
             raise EfacturaError(NOT_CLASSIFIABLE, "The saved XML cannot be read as an invoice.")
 
         rulebook = _rulebook_for(store, row["cui"])
+        per_line = store.client_per_line(row["cui"]) and bool(invoice.lines)
         earlier = _same_invoice_saved_before(store, row)
         if earlier:
             # Booking it automatically would enter the invoice in SAGA a second time.
-            return self._to_review(
-                store, row,
+            why = (
                 f"The same invoice (supplier, number and date) is already saved as message "
-                f"{earlier}. Decide whether it has to be booked again.",
+                f"{earlier}. Decide whether it has to be booked again."
             )
+            if per_line:  # every line waits for the person, as it would have been decided
+                open_lines = [
+                    _line_entry(item.number, None, FOLLOWS if follows_largest(invoice, item) else None, why)
+                    for item in invoice.lines
+                ]
+                return self._record_lines(store, row, invoice, open_lines, why=why)
+            return self._to_review(store, row, why)
 
-        if store.client_per_line(row["cui"]):
+        if per_line:
             return self._classify_lines(store, row, invoice, rulebook, tally, jev_allowed)
 
         decision = decide_by_rules(invoice, rulebook)
@@ -1644,9 +1651,7 @@ class Service:
         """Decide each line on its own: the rules first; a discount or a line worth nothing
         takes the account of the largest line; Jev for the rest, one question per distinct
         line; a person for whatever is left. Nothing is recorded while OpenRouter is failing
-        as a whole: the invoice then waits, whole, for the next run."""
-        if not invoice.lines:
-            return self._to_review(store, row, "The invoice has no lines to decide from.")
+        as a whole: the invoice then waits, whole, for the next run. The invoice has lines."""
         largest = deciding_line(invoice).number
         entries = {
             number: _line_entry(number, rule.cont, "rules", f'Rule "{rule.name}" matched line {number}.', rule=rule.name)
@@ -1687,10 +1692,13 @@ class Service:
                 entries[item.number] = _line_entry(item.number, cont, "jev" if cont else None, reason, **jev_said)
         return self._record_lines(store, row, invoice, [entries[item.number] for item in invoice.lines])
 
-    def _record_lines(self, store: Store, row: dict, invoice: Invoice, entries: list[dict]) -> str:
+    def _record_lines(
+        self, store: Store, row: dict, invoice: Invoice, entries: list[dict], why: str | None = None,
+    ) -> str:
         """Record each line's account. The invoice is ready for SAGA once every line has one;
-        until then it waits for a person. Its own `cont` and the fields beside it are those of
-        its largest line, so whatever reads one account per invoice keeps working."""
+        until then it waits for a person, for `why` when it is given. Its own `cont` and the
+        fields beside it are those of its largest line, so whatever reads one account per
+        invoice keeps working."""
         largest = deciding_line(invoice).number
         head = next(entry for entry in entries if entry["line"] == largest)
         for entry in entries:
@@ -1709,7 +1717,7 @@ class Service:
         details = {"id": row["id"], "cui": row["cui"], "invoice_number": row.get("invoice_number"),
                    "supplier": row.get("supplier_name"), "lines": len(entries)}
         if left:
-            reason = _lines_left(left)
+            reason = why or _lines_left(left)
             store.set_classification(
                 row["id"], classification_status=REVIEW, cont=None, classification_method=None,
                 classification_reason=reason, classified_at=None, **common,

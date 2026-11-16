@@ -1435,6 +1435,24 @@ def test_a_line_chosen_by_a_person_reaches_the_file_for_saga(per_line, anaf, ope
     assert conts_in(saga_file(cfg)) == ["6022", "626"]
 
 
+def test_a_duplicate_of_a_client_decided_line_by_line_waits_with_every_line_open(per_line, anaf, openrouter, cfg):
+    same = rich_invoice_xml(lines=[line("Motorina Euro 5", "450.00"), line("Discount", "-10.00")], number="FV-7")
+    anaf.add("3001", xml=same)
+    anaf.add("3002", xml=same)  # the supplier sent it a second time
+
+    per_line.sync(VALID_CUI)
+
+    second = saved(cfg, "3002")
+    assert second["classification_status"] == "review"
+    assert second["classification_reason"].startswith("The same invoice (supplier, number and date) is already saved")
+    assert [(entry["cont"], entry["method"]) for entry in line_accounts(per_line, "3002")] == [(None, None), (None, "follows")]
+
+    per_line.set_cont("3002", cont="6022", line=1)
+
+    assert [entry["cont"] for entry in line_accounts(per_line, "3002")] == ["6022", "6022"]
+    assert saved(cfg, "3002")["classification_status"] == "classified"
+
+
 # --- line by line: a person's choice -------------------------------------------------------
 
 

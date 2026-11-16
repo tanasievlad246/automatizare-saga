@@ -115,7 +115,23 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
   'account.by_jev': (data) =>
     `${invoice(data)} a primit contul ${text(data.cont)}, ales de Jev (sigur ${formatPercent(Number(data.confidence))}).`,
   'account.by_person': (data) => `${invoice(data)} a primit contul ${text(data.cont)}, ales de dumneavoastră.`,
-  'account.to_review': (data) => `${invoice(data)} este de verificat: trebuie să îi alegeți contul.`,
+  'account.to_review': (data) =>
+    data.lines_left
+      ? `${invoice(data)} este de verificat: ${countOf(Number(data.lines_left), 'o linie nu are', 'linii nu au')} încă un cont.`
+      : `${invoice(data)} este de verificat: trebuie să îi alegeți contul.`,
+  'account.by_lines': (data) => {
+    const parts = [
+      [data.by_rules, 'o linie după o regulă', 'linii după reguli'],
+      [data.by_jev, 'o linie de la Jev', 'linii de la Jev'],
+      [data.by_person, 'o linie aleasă de dumneavoastră', 'linii alese de dumneavoastră'],
+      [data.following, 'o linie cu contul liniei celei mai mari', 'linii cu contul liniei celei mai mari'],
+    ]
+      .filter(([count]) => Number(count) > 0)
+      .map(([count, one, many]) => countOf(Number(count), String(one), String(many)))
+    const accounts = Array.isArray(data.accounts) ? data.accounts.map(String) : []
+    const named = accounts.length === 1 ? `Contul: ${accounts[0]}.` : `Conturile: ${accounts.join(', ')}.`
+    return `${invoice(data)} are un cont pe fiecare linie: ${parts.join(', ')}. ${named}`
+  },
   'invoices.marked_imported': (data) =>
     `${countOf(Number(data.invoices), 'O factură a fost bifată ca importată', 'facturi au fost bifate ca importate')} în SAGA.`,
   'invoices.unmarked': (data) =>
@@ -124,7 +140,7 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
   // A cost the program did not write is unknown. Turned into a number, a missing one would
   // read "NaN $" and an empty one "0,00 $".
   'jev.answered': (data, line) =>
-    `Jev a răspuns${line.duration_ms === null ? '' : ` în ${formatDuration(line.duration_ms)}`}. Cost: ${typeof data.cost_usd === 'number' ? formatUsd(data.cost_usd) : 'necunoscut'}.`,
+    `Jev a răspuns${typeof data.line === 'number' ? ` pentru linia ${data.line}` : ''}${line.duration_ms === null ? '' : ` în ${formatDuration(line.duration_ms)}`}. Cost: ${typeof data.cost_usd === 'number' ? formatUsd(data.cost_usd) : 'necunoscut'}.`,
   'jev.failed': () => 'Jev nu a dat un răspuns care să poată fi folosit.',
 
   'rule.tested': (data) =>
@@ -143,6 +159,10 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
     data.enabled
       ? `Clientul ${who(data)} a fost pornit: facturile lui se descarcă din nou.`
       : `Clientul ${who(data)} a fost oprit: facturile lui nu se mai descarcă.`,
+  'client.per_line': (data) =>
+    data.per_line
+      ? `Clientul ${who(data)}: fiecare linie a unei facturi primește contul ei.`
+      : `Clientul ${who(data)}: un singur cont pentru toată factura, după linia cea mai mare.`,
   'client.removed': (data) => `Clientul cu CUI ${text(data.cui)} a fost scos din listă.`,
   'clients.imported': (data) =>
     `Clienți importați din ${text(data.file)}: adăugați: ${text(data.added)}, modificați: ${text(data.updated)}, respinși: ${text(data.rejected)}.`,
@@ -162,6 +182,7 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
   'saga.files_written': (data) => `Fișierele pentru SAGA ale clientului ${who(data)} sunt din nou la zi.`,
   'settings.confidence': (data) => `Cât de sigur trebuie să fie Jev: acum ${formatPercent(Number(data.level_set))}.`,
   'settings.jev_question': () => 'A fost schimbată întrebarea pusă lui Jev.',
+  'settings.jev_line_question': () => 'A fost schimbată întrebarea pusă lui Jev despre o linie.',
 
   'backup.made': (data) => `A fost făcută o copie de siguranță, ${HOW_A_COPY_WAS_MADE[text(data.kind)] ?? 'automat'}.`,
   // Only a folder known to be missing is named as the cause; anything else is in the technical details.

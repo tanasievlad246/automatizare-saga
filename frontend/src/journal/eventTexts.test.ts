@@ -35,6 +35,35 @@ describe('a line of the journal, in Romanian', () => {
       .toBe('Factura MC 5521 este de verificat: trebuie să îi alegeți contul.')
   })
 
+  it('tells how an invoice decided line by line got its accounts, in one line', () => {
+    expect(describeEvent(line('account.by_lines', {
+      invoice_number: 'CO 1879', lines: 3, by_rules: 2, by_jev: 1, by_person: 0, following: 0, accounts: ['605', '6581'],
+    }))).toBe('Factura CO 1879 are un cont pe fiecare linie: 2 linii după reguli, o linie de la Jev. Conturile: 605, 6581.')
+    expect(describeEvent(line('account.by_lines', {
+      invoice_number: 'PS 7', lines: 23, by_rules: 0, by_jev: 0, by_person: 22, following: 1, accounts: ['6024'],
+    }))).toBe('Factura PS 7 are un cont pe fiecare linie: 22 de linii alese de dumneavoastră, o linie cu contul liniei celei mai mari. Contul: 6024.')
+  })
+
+  it('says how many lines are left when an invoice decided line by line is to check', () => {
+    expect(describeEvent(line('account.to_review', { invoice_number: 'CO 1879', lines: 3, lines_left: 1 })))
+      .toBe('Factura CO 1879 este de verificat: o linie nu are încă un cont.')
+    expect(describeEvent(line('account.to_review', { invoice_number: 'CO 1879', lines: 3, lines_left: 2 })))
+      .toBe('Factura CO 1879 este de verificat: 2 linii nu au încă un cont.')
+  })
+
+  it('tells how the invoices of a client are decided, line by line or whole', () => {
+    expect(describeEvent(line('client.per_line', { client: 'Alfa SRL', cui: '12345674', per_line: true })))
+      .toBe('Clientul Alfa SRL: fiecare linie a unei facturi primește contul ei.')
+    expect(describeEvent(line('client.per_line', { client: 'Alfa SRL', cui: '12345674', per_line: false })))
+      .toBe('Clientul Alfa SRL: un singur cont pentru toată factura, după linia cea mai mare.')
+    expect(describeEvent(line('settings.jev_line_question', {}))).toBe('A fost schimbată întrebarea pusă lui Jev despre o linie.')
+  })
+
+  it('tells which line Jev answered about', () => {
+    expect(describeEvent(line('jev.answered', { cost_usd: 0.42, line: 2 }, { duration_ms: 820 })).replace(/\s/g, ' '))
+      .toBe('Jev a răspuns pentru linia 2 în 0,8 s. Cost: 0,42 $.')
+  })
+
   it('tells when a client was switched off or on', () => {
     expect(describeEvent(line('client.switched', { client: 'Alfa SRL', cui: '12345674', enabled: false })))
       .toBe('Clientul Alfa SRL a fost oprit: facturile lui nu se mai descarcă.')
