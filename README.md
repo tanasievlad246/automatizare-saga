@@ -261,7 +261,7 @@ Run them from this folder. Use `--config PATH` before the command if `config.tom
 | `uv run efactura classify <id> [--force]` | Classifies one saved invoice. |
 | `uv run efactura review [--cui CUI]` | Invoices a person must decide, with Jev's suggestion. |
 | `uv run efactura set-cont <id> --accept` | Accepts Jev's suggestion. |
-| `uv run efactura set-cont <id> --cont 628` | Sets the account a person chose. |
+| `uv run efactura set-cont <id> --cont 628` | Sets the account a person chose. On an invoice decided line by line, `--line N` sets it for that line only; without it, every line. |
 | `uv run efactura confidence [VALUE]` | Shows, or sets, the confidence level (0 to 1). |
 | `uv run efactura costs [--since DATE] [--until DATE] [--group day\|week\|month\|year] [--cui CUI]` | What the Jev calls have cost, in total and per period. |
 | `uv run efactura serve [--port N] [--open]` | Starts the screen and the local API; `--open` also opens the browser. |
@@ -410,7 +410,7 @@ The screen uses the same routes under `/api/...` and needs no key. That is safe 
 | `DELETE /invoices/{id}/uploaded` | `mark-uploaded --undo` |
 | `POST /invoices/{id}/classify` with optional `{"force": true}` | `classify` |
 | `GET /review?cui=...` | `review` |
-| `POST /invoices/{id}/cont` with `{"accept": true}` or `{"cont": "628"}` (optional `"force": true`) | `set-cont` |
+| `POST /invoices/{id}/cont` with `{"accept": true}` or `{"cont": "628"}` (optional `"force": true`, and `"line": 2` for one line of an invoice decided line by line) | `set-cont` |
 | `GET /classification/settings` | `confidence` |
 | `PUT /classification/settings` with `{"min_confidence": 0.8}` | `confidence 0.8` |
 | `GET /classification/costs?since=...&until=...&group=...&cui=...` | `costs` |
@@ -432,7 +432,8 @@ Routes that exist for the screen and have no command:
 | `POST /rules/test` with `{"lines": [{"description", "quantity", "unit_price", ...}], "supplier_name", "supplier_cui", "client_cui", "currency", "credit_note", "ask": "rules_then_jev" or "jev_only"}` (only `lines` is required, and in a line only `description`; a line may also carry `seller_code`, `barcode`, `commodity_codes`, `unit`, `vat_percent` and `value`, its value without VAT, which is quantity × price when missing) | Put a made-up invoice through the same path as a received one: the rules, then Jev. Answers who decided (`rule`, `jev` or `nobody`), the account, why nobody did, what Jev said (`jev`: its choice, confidence, the level, the other accounts it weighed, cost, duration, error, and `http_status`, OpenRouter's answer, `null` when it was not reached), and the rule worth creating. Saves nothing but the cost of asking Jev, which counts in the costs but not as an invoice |
 | `POST /rules/suggestions/dismiss` with `{"invoice_ids": [...]}` | "Nu acum": stop proposing a rule for these invoices |
 | `PUT /accounts/{cont}` with `{"description"}`, `DELETE /accounts/{cont}` | The accounts Jev chooses from |
-| `PUT /classification/settings` with `{"min_confidence", "jev_instructions"}` | The confidence level and the question for Jev |
+| `PUT /classification/settings` with `{"min_confidence", "jev_instructions", "jev_line_instructions"}` | The confidence level, the question for Jev about a whole invoice, and the one about a line |
+| `PUT /clients/{cui}/per-line` with `{"enabled": true}` or `false` | An account for each line of this client's invoices, or one for the whole invoice |
 | `GET /classification/calls?since=...&until=...&cui=...&limit=...` | What Jev was asked, newest first |
 | `GET /settings`, `PUT /settings` with `{"saga_folder", "saga_file_per", "show_issued"}` | The folder for SAGA, whether it gets one file per `"client"` or one per `"invoice"`, and whether a client's screen lists its [issued invoices](#issued-invoices) (`true` or `false`). Any field may be left out and then stays as it is; nothing is saved unless all of it is valid. When a setting for SAGA is given, what waits for SAGA is written again. The reply to `PUT` adds `problems`: the clients whose files could not be, an empty list when nothing was written |
 | `POST /saga-files/write` with `{"cui"}` or `{}` | Bring the files for SAGA up to date, for one client or for all. Answers `{"clients", "problems": [{"cui", "message", "at"}]}` |
@@ -476,16 +477,21 @@ The answer says who decided (a rule, Jev, or nobody could be asked), the account
 
 SAGA C does not read ANAF's XML. Its import ("Import date din fișiere XML") reads SAGA's own layout, which has an account (`<Cont>`) on every line. So each received invoice is given an account and rewritten in that layout.
 
-**How the account is decided**
+**An account for each line, or one for the whole invoice.** Each client in the list has the switch "Clasificare pe fiecare linie", on to begin with (also for the clients of an earlier version). With it on, every line of an invoice gets its own account. With it off, the line with the largest value decides one account for the whole invoice, as before. A company that is not in the client list is decided the old way. The switch holds for invoices decided from then on; an invoice that already has its account keeps it until it is classified again (`POST /invoices/{id}/classify` with `force`).
 
-1. **Rules.** Each line is checked against the rules written on the "Reguli de clasificare" screen. The line with the largest value decides for the whole invoice. A rule belongs to every client unless it names one; a client's own rules are checked first.
-2. **Jev.** If that line matches no rule, the invoice is sent to the Jev decision model on OpenRouter, which picks one of the accounts listed on the same screen.
-3. **Review.** The invoice waits for a person when:
-   - Jev's confidence is below the confidence level (0.80 until you change it);
-   - Jev finds that no account fits, or gives no usable answer for that invoice;
-   - the same invoice (supplier, number and date) is already saved under another ANAF id, so booking it automatically would enter it twice.
+**How the account of a line is decided** (switch on)
 
-Every line of an invoice gets the same account.
+1. **Rules.** Each line is checked against the rules written on the "Reguli de clasificare" screen, on its own. A rule belongs to every client unless it names one; a client's own rules are checked first. A rule on a supplier gives every line of that supplier its account.
+2. **The largest line.** A discount (a line whose value has the other sign than the largest line's) and a line worth nothing take the account of the invoice's largest line, unless a rule matches them. Jev cannot judge "Discount" on its own.
+3. **Jev.** Each line left is sent to the Jev decision model on OpenRouter, on its own, with the question about one line set on the rules screen. Lines with the same words, codes and unit are one question. Jev is sent the supplier and that line, never the other lines or the buyer.
+4. **Review.** A line waits for a person when Jev's confidence is below the confidence level (0.80 until you change it), when Jev finds that no account fits or gives no usable answer, or when no OpenRouter key is set. Only that line waits; the others keep their accounts. The invoice is "de verificat" until every line has an account, and only then goes into the file for SAGA. When the same invoice (supplier, number and date) is already saved under another ANAF id, every line waits.
+5. **When OpenRouter fails as a whole** (no connection, key refused, no credit), nothing half-decided is kept: the invoice waits, whole, for the next download.
+
+**One account for the whole invoice** (switch off): the rules read the largest line; if none matches, the invoice is sent to Jev with the question about a whole invoice; it waits for a person on the same grounds as above.
+
+**Cost.** With the switch on, Jev is asked once per distinct line no rule decides, where before it was asked once per invoice. Rules are what keeps that down; "Costuri Jev" shows each call.
+
+**What other programs see.** Every invoice returned carries `line_accounts`: `null` for an invoice on one account, otherwise one entry per line with `line` (its number on the invoice), `cont` (or `null` while it waits), `method` (`rules`, `jev`, `jev_accepted`, `human`, or `follows` for a line that takes the largest line's account), `rule`, `reason`, and what Jev said (`suggested_cont`, `confidence`, `confidence_threshold`). `cont` and `classification_method` of the invoice are those of its largest line, and `cont` is set only once every line has an account. `POST /invoices/{id}/cont` and `set-cont` take `line`; without it every line gets the account, or, with `accept`, every line left gets Jev's proposal for it.
 
 **A new database starts with examples.** Three example accounts and two example rules are put in once, so there is something to look at. Replace them on the "Reguli de clasificare" screen with the accountant's real ones; deleted examples do not come back. The accounts must exist in the company's chart of accounts in SAGA.
 
@@ -701,7 +707,7 @@ For the screen:
 - **The page was checked against a made-up database** (see [The screen](#the-screen)), not against real ANAF data.
 - **Other Windows accounts on the same PC** could open the page while the program is running.
 
-Not covered: an account per line (every line gets the invoice's account), partial VAT deduction (`TipDeducere`), stock articles, sent invoices, encrypting the stored keys.
+Not covered: partial VAT deduction (`TipDeducere`), stock articles, sent invoices, encrypting the stored keys.
 
 ## Development
 

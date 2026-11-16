@@ -173,4 +173,15 @@ Nothing is pushed without your word. Each phase gets its own branch, review and 
 
 - 2026-11-16: the board is redrawn on the canvas ("Plan: cont pe fiecare linie și facturile emise în lucru"). The owner has not yet said it is right.
 - 2026-11-16: the three checks for the real programs are in `scripts/trials/` (`saga_trial.py`, `jev_trial.py`, `id_check.sql`). None has been run yet.
-- 2026-11-16: A1 is built: the client's switch (`clients.per_line`, on by default, `PUT /clients/{cui}/per-line`). Nothing reads it yet.
+- 2026-11-16: A1 is built: the client's switch (`clients.per_line`, on by default, `PUT /clients/{cui}/per-line`).
+- 2026-11-16: A2 to A5 are built, with the journal sentences: each line decided by the rules, the largest line or Jev; a person's choice per line; each line's account in the file for SAGA; `line_accounts` and `line` over the API and `--line` on the command line. The page (A6) waits for the owner's view of the board.
+
+Calls made while building, beyond the plan (each can be changed):
+
+- **A company not in the client list keeps one account per invoice.** The README already promised such a company is downloaded "as before"; it has no switch to turn. It also keeps every earlier test on the old path, which is the plan's proof that a client switched off works as before.
+- **The field is `line_accounts`, not `lines`**, so it cannot be mistaken for the invoice's own lines (`document.lines` in the invoice's view).
+- **`cont` of the invoice is set only once every line has an account**, as it was set only for a classified invoice before. While a line waits, `line_accounts` says which accounts the others have.
+- **Jev is asked one line per request.** Whether it answers several questions at once is not known until `scripts/trials/jev_trial.py` is run; one at a time works either way. The request carries the supplier and that line only.
+- **A line worth nothing follows the largest line**, like a discount, unless a rule matches it.
+- **A duplicate of a client decided line by line waits with every line open**, so each line can get its own account.
+- **While OpenRouter fails as a whole, nothing half-decided is kept**; the invoice waits, whole, for the next run, and its lines are asked about again then.
