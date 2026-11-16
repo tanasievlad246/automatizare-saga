@@ -245,6 +245,56 @@ def test_set_cont_on_an_old_invoice_needs_force(run, api, old_invoice):
     assert (code, out["invoice"]["cont"]) == (0, "628")
 
 
+# --- an account on each line -------------------------------------------------------------
+
+
+@pytest.fixture
+def line_left(anaf, openrouter, cfg, make_service):
+    """3001 of a client decided line by line: line 1 by a rule, line 2 left with Jev's 628 at 0.41."""
+    service = make_service(cfg)
+    service.save_client(VALID_CUI, "Alfa")
+    anaf.add("3001", xml=rich_invoice_xml(lines=[line("Motorina", "450.00"), line("Piese de schimb", "300.00")]))
+    openrouter.answer_for("piese", "628", confidence=0.41)
+    service.sync(VALID_CUI)
+
+
+def test_one_line_gets_its_account_by_command(run, line_left):
+    code, out = run("set-cont", "3001", "--cont", "371.01", "--line", "2")
+
+    assert code == 0
+    assert [(entry["line"], entry["cont"]) for entry in out["invoice"]["line_accounts"]] == [(1, "6022"), (2, "371.01")]
+    assert out["invoice"]["classification_status"] == "classified"
+
+
+def test_one_line_takes_jevs_proposal_by_command(run, line_left):
+    code, out = run("set-cont", "3001", "--accept", "--line", "2")
+
+    assert (code, out["invoice"]["line_accounts"][1]["method"]) == (0, "jev_accepted")
+
+
+def test_one_line_gets_its_account_by_route(api, line_left):
+    reply = api.post("/invoices/3001/cont", headers=KEY, json={"cont": 6024, "line": 2})
+
+    assert reply.status_code == 200
+    assert [entry["cont"] for entry in reply.json()["invoice"]["line_accounts"]] == ["6022", "6024"]
+
+
+def test_a_line_that_is_not_a_whole_number_or_not_on_the_invoice_is_refused(api, line_left):
+    as_text = api.post("/invoices/3001/cont", headers=KEY, json={"cont": "628", "line": "2"})
+    missing = api.post("/invoices/3001/cont", headers=KEY, json={"cont": "628", "line": 9})
+
+    assert as_text.status_code == 400
+    assert (missing.status_code, missing.json()["error"]["code"]) == (400, "invalid_input")
+
+
+def test_lists_carry_the_account_of_each_line(api, line_left):
+    listed = api.get("/invoices", headers=KEY, params={"cui": VALID_CUI}).json()["invoices"][0]
+    to_check = api.get("/review", headers=KEY).json()["invoices"][0]
+
+    assert [entry["cont"] for entry in listed["line_accounts"]] == ["6022", None]
+    assert to_check["line_accounts"][1]["suggested_cont"] == "628"
+
+
 # --- the confidence level ----------------------------------------------------------------
 
 

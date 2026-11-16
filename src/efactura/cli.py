@@ -237,6 +237,9 @@ def _parser() -> argparse.ArgumentParser:
     decision.add_argument("--accept", action="store_true", help="accept Jev's suggestion")
     decision.add_argument("--cont", help="the account to book the invoice on, e.g. 628 or 371.01")
     set_cont.add_argument("--force", action="store_true", help="also an invoice saved outside classification")
+    set_cont.add_argument(
+        "--line", type=int, help="only this line, on an invoice decided line by line (default: every line)"
+    )
 
     confidence = commands.add_parser(
         "confidence", help="show, or set, the confidence below which Jev's answer goes to review"
@@ -426,7 +429,9 @@ def _dispatch(args: argparse.Namespace, cfg: Config, config_path: Path) -> dict 
             case "review":
                 return service.review(args.cui)
             case "set-cont":
-                return service.set_cont(args.id, cont=args.cont, accept=args.accept, force=args.force)
+                return service.set_cont(
+                    args.id, cont=args.cont, accept=args.accept, force=args.force, line=args.line
+                )
             case "confidence":
                 if args.value is None:
                     return service.classification_settings()

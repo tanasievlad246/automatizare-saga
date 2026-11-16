@@ -121,11 +121,13 @@ class SetContRequest(BaseModel):
     accept: bool = False
     cont: Union[str, int, None] = None
     force: bool = False
+    line: StrictInt | None = None  # one line of an invoice decided line by line; left out: every line
 
 
 class SettingsRequest(BaseModel):
     min_confidence: float | None = None
     jev_instructions: str | None = None
+    jev_line_instructions: str | None = None  # the question about one line
 
 
 class AccountRequest(BaseModel):
@@ -467,7 +469,9 @@ def create_app(
     )
     def set_cont(message_id: str, body: SetContRequest):
         cont = str(body.cont) if body.cont is not None else None
-        return call(lambda s: s.set_cont(message_id, cont=cont, accept=body.accept, force=body.force))
+        return call(
+            lambda s: s.set_cont(message_id, cont=cont, accept=body.accept, force=body.force, line=body.line)
+        )
 
     @router.get(
         "/classification/settings", dependencies=documented_key,
@@ -480,14 +484,18 @@ def create_app(
         "/classification/settings", dependencies=documented_key, summary="Change the confidence level"
     )
     def change_classification_settings(body: SettingsRequest):
-        if body.min_confidence is None and body.jev_instructions is None:
-            raise EfacturaError(INVALID_INPUT, "Give min_confidence, jev_instructions, or both.")
+        if body.min_confidence is None and body.jev_instructions is None and body.jev_line_instructions is None:
+            raise EfacturaError(
+                INVALID_INPUT, "Give min_confidence, jev_instructions, jev_line_instructions, or several."
+            )
 
         def change(service: Service) -> dict:
             if body.min_confidence is not None:
                 service.set_min_confidence(body.min_confidence)
             if body.jev_instructions is not None:
                 service.set_jev_instructions(body.jev_instructions)
+            if body.jev_line_instructions is not None:
+                service.set_jev_line_instructions(body.jev_line_instructions)
             return service.classification_settings()
 
         return call(change)

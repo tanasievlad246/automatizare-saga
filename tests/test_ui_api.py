@@ -118,6 +118,8 @@ def test_a_rule_without_a_condition_or_an_unknown_rule_is_refused_over_the_api(a
 
 
 def test_the_question_for_jev_can_be_changed_with_or_without_the_level(api):
+    only_line = api.put("/classification/settings", json={"jev_line_instructions": "Ce cont are linia?"})
+    assert (only_line.status_code, only_line.json()["jev_line_instructions"]) == (200, "Ce cont are linia?")
     only_question = api.put("/classification/settings", json={"jev_instructions": "Ce cont?"})
     both = api.put("/classification/settings", json={"min_confidence": 0.7, "jev_instructions": "Care cont?"})
     nothing = api.put("/classification/settings", json={})
