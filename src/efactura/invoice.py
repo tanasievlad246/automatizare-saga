@@ -202,6 +202,33 @@ class Invoice:
     total_without_vat: Decimal | None
     total_vat: Decimal | None
     total_payable: Decimal | None
+    # What was paid before (BT-113) and a rounding of what is due (BT-114), as written. Some
+    # suppliers carry an earlier unpaid balance in the paid amount, with a minus.
+    total_prepaid: Decimal | None = None
+    total_rounding: Decimal | None = None
+
+    @property
+    def total_with_vat(self) -> Decimal | None:
+        return total_with_vat(self.total_without_vat, self.total_vat, self.total_payable)
+
+
+def total_with_vat(
+    without_vat: Decimal | None, vat: Decimal | None, payable: Decimal | None
+) -> Decimal | None:
+    """What an invoice itself is worth, VAT included: BT-109 + BT-110, which EN 16931 makes
+    equal to BT-112. It is not what is left to pay (BT-115): that also counts what was paid
+    before and, at some suppliers, what is still owed from earlier invoices. An invoice
+    without a readable net total has only the amount to pay to go by."""
+    if without_vat is None:
+        return payable
+    return without_vat + (vat or 0)
+
+
+def total_with_vat_of(stored: dict) -> Decimal | None:
+    """The same, from an invoice's totals as they are stored: as text."""
+    return total_with_vat(
+        *(_amount(stored.get(name)) for name in ("total_without_vat", "total_vat", "total_payable"))
+    )
 
 
 def parse_invoice(xml: bytes | str) -> Invoice | None:
@@ -218,6 +245,10 @@ def parse_invoice(xml: bytes | str) -> Invoice | None:
         ("CreditNoteLine", "CreditedQuantity") if is_credit_note else ("InvoiceLine", "InvoicedQuantity")
     )
     fields = parse_invoice_fields(data)
+    totals = root.find(f"{CAC}LegalMonetaryTotal")
+
+    def total(tag: str) -> Decimal | None:
+        return _amount(_text(totals, f"{CBC}{tag}")) if totals is not None else None
 
     return Invoice(
         number=fields["invoice_number"],
@@ -240,6 +271,8 @@ def parse_invoice(xml: bytes | str) -> Invoice | None:
         total_without_vat=_amount(fields["total_without_vat"]),
         total_vat=_amount(fields["total_vat"]),
         total_payable=_amount(fields["total_payable"]),
+        total_prepaid=total("PrepaidAmount"),
+        total_rounding=total("PayableRoundingAmount"),
     )
 
 

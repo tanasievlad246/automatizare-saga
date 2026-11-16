@@ -133,7 +133,7 @@ def test_undecodable_bytes_do_not_raise():
 
 from decimal import Decimal
 
-from efactura.invoice import parse_invoice
+from efactura.invoice import parse_invoice, total_with_vat, total_with_vat_of
 
 from helpers import adjustment, line, rich_invoice_xml
 
@@ -190,6 +190,52 @@ def test_reads_both_parties_with_address_and_ids():
     assert (supplier.phone, supplier.email) == ("0211234567", "office@furnizor.example")
     assert (supplier.iban, supplier.bank) == ("RO49AAAA1B31007593840000", "Banca Exemplu")
     assert (customer.name, customer.cui, customer.county) == ("Client SRL", "12345674", "CJ")
+
+
+def test_an_earlier_balance_added_to_what_is_due_is_kept_apart_from_what_the_invoice_is_worth():
+    # Some suppliers carry an unpaid earlier balance in the paid amount, with a minus.
+    invoice = parse_invoice(rich_invoice_xml(lines=[line("Apă potabilă", "300.00", percent="9")], prepaid="-3123.88"))
+
+    assert (invoice.total_without_vat, invoice.total_vat) == (Decimal("300.00"), Decimal("27.00"))
+    assert invoice.total_with_vat == Decimal("327.00")
+    assert (invoice.total_prepaid, invoice.total_rounding) == (Decimal("-3123.88"), None)
+    assert invoice.total_payable == Decimal("3450.88")
+
+
+def test_reads_an_advance_already_paid_and_a_rounding():
+    invoice = parse_invoice(rich_invoice_xml(lines=[line("Servicii", "1000.00")], prepaid="200.00", rounding="0.01"))
+
+    assert (invoice.total_with_vat, invoice.total_prepaid, invoice.total_rounding, invoice.total_payable) == (
+        Decimal("1190.00"), Decimal("200.00"), Decimal("0.01"), Decimal("990.01")
+    )
+
+
+def test_an_invoice_with_nothing_paid_before_has_no_paid_amount_and_is_worth_its_net_plus_vat():
+    xml = rich_invoice_xml(lines=[line("Servicii", "1000.00")])
+    invoice = parse_invoice(xml)
+
+    assert b"TaxInclusiveAmount" not in xml  # the invoice does not have to name it
+    assert (invoice.total_with_vat, invoice.total_prepaid, invoice.total_rounding) == (Decimal("1190.00"), None, None)
+
+
+def test_a_paid_amount_that_cannot_be_read_counts_as_missing():
+    xml = rich_invoice_xml(prepaid="200.00").replace(b">200.00</cbc:PrepaidAmount>", b">abc</cbc:PrepaidAmount>")
+
+    assert parse_invoice(xml).total_prepaid is None
+
+
+def test_what_an_invoice_is_worth_from_its_totals():
+    assert total_with_vat(Decimal("334.05"), Decimal("34.86"), Decimal("3492.79")) == Decimal("368.91")
+    assert total_with_vat(Decimal("100.00"), None, Decimal("100.00")) == Decimal("100.00")  # no VAT written
+    # Without a net total there is only the amount to pay to go by.
+    assert total_with_vat(None, Decimal("19.00"), Decimal("119.00")) == Decimal("119.00")
+    assert total_with_vat(None, None, None) is None
+
+
+def test_what_an_invoice_is_worth_from_its_totals_as_they_are_stored():
+    assert total_with_vat_of({"total_without_vat": "334.05", "total_vat": "34.86", "total_payable": "3492.79"}) == Decimal("368.91")
+    assert total_with_vat_of({"total_without_vat": "abc", "total_vat": None, "total_payable": "12.50"}) == Decimal("12.50")
+    assert total_with_vat_of({}) is None
 
 
 def test_reads_header_fields_and_totals():

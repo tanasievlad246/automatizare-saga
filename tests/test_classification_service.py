@@ -1078,6 +1078,39 @@ def test_invoice_view_gathers_everything_the_screen_shows(service, anaf, cfg, in
     assert view["jev"]["cost_usd"] == 0.00002
 
 
+def test_an_invoice_with_an_earlier_balance_is_listed_at_what_it_is_worth(service, anaf, cfg):
+    anaf.add("3001", xml=rich_invoice_xml(lines=FUEL, prepaid="-3123.88"))
+    service.sync(VALID_CUI)
+
+    (listed,) = service.invoices(cui=VALID_CUI)["invoices"]
+    view = service.invoice_view("3001")
+
+    assert (listed["total_with_vat"], listed["total_payable"]) == ("535.50", "3659.38")
+    assert view["invoice"]["total_with_vat"] == "535.50"
+    document = view["document"]
+    assert (document["total_with_vat"], document["total_prepaid"], document["total_rounding"]) == (
+        "535.50", "-3123.88", None
+    )
+    assert document["total_payable"] == "3659.38"  # still what is left to pay, as other programs read it
+
+
+def test_an_earlier_balance_never_reaches_the_file_for_saga(service, anaf, cfg):
+    anaf.add("3001", xml=rich_invoice_xml(lines=FUEL, prepaid="-3123.88"))
+    service.sync(VALID_CUI)
+
+    written = service.invoice_view("3001")["saga_xml"]
+
+    assert "<Valoare>450.00</Valoare>" in written and "<TVA>85.50</TVA>" in written
+    assert "3123.88" not in written and "3659.38" not in written
+
+
+def test_a_message_that_is_no_invoice_is_worth_nothing(service, anaf, cfg):
+    anaf.add("3001", tip="ERORI FACTURA", xml=b"<header><Error errorMessage='x'/></header>")
+    service.sync(VALID_CUI)
+
+    assert service.invoice("3001")["invoice"]["total_with_vat"] is None
+
+
 def test_invoice_view_includes_the_saga_file_once_it_exists(service, anaf, cfg):
     anaf.add("3001", xml=rich_invoice_xml(lines=FUEL))
     service.sync(VALID_CUI)

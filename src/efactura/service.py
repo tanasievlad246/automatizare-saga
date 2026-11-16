@@ -51,6 +51,7 @@ from .invoice import (
     decode_xml,
     extract_zip,
     normalise_company_id,
+    total_with_vat_of,
     parse_invoice,
     parse_invoice_fields,
 )
@@ -1823,11 +1824,13 @@ class Service:
         return _FileLock(self.cfg.lock_path)
 
     def _present(self, row: dict) -> dict:
-        """A stored row as the commands return it: the file path made absolute."""
+        """A stored row as the commands return it: the file paths made absolute, and what
+        the invoice is worth with VAT, which is not always what is left to pay."""
         shown = dict(row)
         for key in ("xml_path", "saga_xml_path"):
             if shown.get(key):
                 shown[key] = str(self.cfg.data_dir / shown[key])
+        shown["total_with_vat"] = _plain(total_with_vat_of(shown))
         return shown
 
     def _anaf_service(self, lock_held: bool) -> AnafService:
@@ -2281,6 +2284,7 @@ def _as_json(invoice: Invoice) -> dict:
     """The parsed invoice for the screen: amounts as text (no rounding), each line with
     the unit as SAGA will show it."""
     document = _plain(asdict(invoice))
+    document["total_with_vat"] = _plain(invoice.total_with_vat)
     for described in document["lines"]:
         described["unit_name"] = saga.UNITS.get((described["unit"] or "").upper(), described["unit"])
     return document

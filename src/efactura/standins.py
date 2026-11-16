@@ -276,7 +276,7 @@ _RICH_INVOICE = """<?xml version="1.0" encoding="UTF-8"?>
     <cbc:TaxAmount currencyID="{currency}">{vat_total}</cbc:TaxAmount>
   </cac:TaxTotal>
   <cac:LegalMonetaryTotal>
-    <cbc:TaxExclusiveAmount currencyID="{currency}">{net_total}</cbc:TaxExclusiveAmount>
+    <cbc:TaxExclusiveAmount currencyID="{currency}">{net_total}</cbc:TaxExclusiveAmount>{more_totals}
     <cbc:PayableAmount currencyID="{currency}">{payable}</cbc:PayableAmount>
   </cac:LegalMonetaryTotal>
   {lines}
@@ -311,8 +311,12 @@ def rich_invoice_xml(lines=None, number="FV-1042", supplier_cui="RO87654321",
                      supplier_name="Furnizor SRL", currency="RON", adjustments=(),
                      vat_total=None, credit_note=False, vat_on_collection=False,
                      issue_date="2026-11-09", due_date="2026-12-09", customer_cui=VALID_CUI,
-                     customer_name="Client SRL") -> bytes:
-    """A UBL invoice (or credit note) with addresses, a bank account and lines."""
+                     customer_name="Client SRL", prepaid=None, rounding=None) -> bytes:
+    """A UBL invoice (or credit note) with addresses, a bank account and lines.
+
+    `prepaid` is the amount already paid (BT-113); some suppliers write an earlier unpaid
+    balance there, with a minus. `rounding` is BT-114. With either, the invoice also names
+    its total with VAT, and what is left to pay follows from them."""
     lines = [line("Servicii diverse", "1000.00")] if lines is None else lines
     root = "CreditNote" if credit_note else "Invoice"
     quantity_tag = "CreditedQuantity" if credit_note else "InvoicedQuantity"
@@ -371,7 +375,16 @@ def rich_invoice_xml(lines=None, number="FV-1042", supplier_cui="RO87654321",
         period=("<cac:InvoicePeriod><cbc:DescriptionCode>432</cbc:DescriptionCode></cac:InvoicePeriod>"
                 if vat_on_collection else ""),
         adjustments="".join(adjustment_parts), lines="".join(line_parts),
-        vat_total=f"{vat:.2f}", net_total=f"{net:.2f}", payable=f"{net + vat:.2f}",
+        vat_total=f"{vat:.2f}", net_total=f"{net:.2f}",
+        more_totals="".join(
+            f'\n    <cbc:{tag} currencyID="{currency}">{value}</cbc:{tag}>'
+            for tag, value in (
+                ("TaxInclusiveAmount", f"{net + vat:.2f}"), ("PrepaidAmount", prepaid),
+                ("PayableRoundingAmount", rounding),
+            )
+            if value is not None and (prepaid is not None or rounding is not None)
+        ),
+        payable=f"{net + vat - _Decimal(prepaid or 0) + _Decimal(rounding or 0):.2f}",
     ).encode("utf-8")
 
 
