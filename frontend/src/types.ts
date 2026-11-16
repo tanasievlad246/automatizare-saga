@@ -23,7 +23,8 @@ export type ClassificationStatus = 'pending' | 'classified' | 'review' | null
 /** How the invoices waiting for SAGA are put in files: one file per client, or one per invoice. */
 export type SagaFilePer = 'client' | 'invoice'
 
-export type AppSettings = { saga_folder: string; saga_file_per: SagaFilePer; demo?: boolean }
+/** `show_issued`: whether a client's screen also lists the invoices the client issued. */
+export type AppSettings = { saga_folder: string; saga_file_per: SagaFilePer; show_issued: boolean; demo?: boolean }
 
 /** How one client's files for SAGA stand. `problem` is set while they could not be brought up to date. */
 export type SagaState = {
@@ -39,6 +40,7 @@ export type Invoice = {
   invoice_number: string | null
   invoice_issue_date: string | null
   supplier_name: string | null
+  customer_name: string | null
   currency: string | null
   total_payable: string | null
   uploaded_to_accounting: boolean
@@ -115,7 +117,9 @@ export type RuleSuggestion = {
 
 export type SyncResult = {
   window_days: number
-  new_count: number
+  new_count: number // every message saved; of them, the invoices are counted in the next two
+  received_count: number
+  issued_count: number
   failed_count: number
   classification: { classified: number; review: number; pending: number } | null
 }

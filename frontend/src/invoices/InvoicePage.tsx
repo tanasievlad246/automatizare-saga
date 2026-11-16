@@ -11,6 +11,7 @@ import { formatDate, formatMoney } from '../format'
 import { ProposedRuleCard } from '../rules/ProposedRuleCard'
 import { AccountCard } from './AccountCard'
 import { InvoiceStateBadges } from './InvoiceStateBadges'
+import { ISSUED_INVOICE, isIssued } from './issuedInvoices'
 import { RenderedInvoice } from './RenderedInvoice'
 import { SagaFileCard } from './SagaFileCard'
 import { XmlViewer } from './XmlViewer'
@@ -22,7 +23,10 @@ const WAYS_TO_SEE_IT: { value: Shown; label: string }[] = [
   { value: 'saga', label: 'XML pentru SAGA' },
 ]
 
-/** One invoice: what it says, the two files behind it, its account and its file for SAGA. */
+/**
+ * One invoice: what it says, the two files behind it, its account and its file for SAGA.
+ * An invoice the client issued has no account and nothing for SAGA: only what it says.
+ */
 export function InvoicePage() {
   const { cui = '', id = '' } = useParams()
   const [shown, setShown] = useState<Shown>('factura')
@@ -46,13 +50,15 @@ export function InvoicePage() {
   }
 
   const { invoice, document } = view
+  const issued = isIssued(invoice)
   return (
     <div className="flex flex-col gap-5">
       {back}
       <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
         <div className="min-w-0 flex-[1_1_320px]">
           <PageTitle title={`Factura ${invoice.invoice_number ?? ''}`}>
-            de la {invoice.supplier_name} · {formatDate(invoice.invoice_issue_date)} ·{' '}
+            {issued ? `către ${invoice.customer_name ?? ''}` : `de la ${invoice.supplier_name}`} ·{' '}
+            {formatDate(invoice.invoice_issue_date)} ·{' '}
             {formatMoney(invoice.total_payable, invoice.currency)}
           </PageTitle>
         </div>
@@ -65,7 +71,12 @@ export function InvoicePage() {
       <div className="grid items-start gap-5 @[58rem]:grid-cols-[minmax(0,1fr)_23rem]">
         <section aria-label="Factura" className="min-w-0 rounded-2xl border bg-card @max-[58rem]:order-last">
           <div className="border-b px-4 py-3.5">
-            <PillTabs label="Cum se vede factura" options={WAYS_TO_SEE_IT} value={shown} onChange={setShown} />
+            <PillTabs
+              label="Cum se vede factura"
+              options={issued ? WAYS_TO_SEE_IT.filter((way) => way.value !== 'saga') : WAYS_TO_SEE_IT}
+              value={shown}
+              onChange={setShown}
+            />
           </div>
           {shown === 'factura' &&
             (document ? (
@@ -88,18 +99,25 @@ export function InvoicePage() {
             />
           )}
         </section>
-        <div className="flex min-w-0 flex-col gap-5">
-          <AccountCard invoice={invoice} jev={view.jev} accounts={accounts} />
-          {view.rule_suggestion && (
-            // Another invoice, or another account for this one, is a different proposal: start it afresh.
-            <ProposedRuleCard
-              key={`${invoice.id} ${view.rule_suggestion.cont}`}
-              invoice={invoice}
-              suggestion={view.rule_suggestion}
-            />
-          )}
-          <SagaFileCard invoice={invoice} saga={view.saga} />
-        </div>
+        {issued ? (
+          <section aria-label={ISSUED_INVOICE.title} className="flex min-w-0 flex-col gap-2 rounded-2xl border bg-card px-5 pt-4.5 pb-5.5">
+            <h2 className="font-sans text-xl font-bold">{ISSUED_INVOICE.title}</h2>
+            <p className="text-muted-foreground">{ISSUED_INVOICE.text}</p>
+          </section>
+        ) : (
+          <div className="flex min-w-0 flex-col gap-5">
+            <AccountCard invoice={invoice} jev={view.jev} accounts={accounts} />
+            {view.rule_suggestion && (
+              // Another invoice, or another account for this one, is a different proposal: start it afresh.
+              <ProposedRuleCard
+                key={`${invoice.id} ${view.rule_suggestion.cont}`}
+                invoice={invoice}
+                suggestion={view.rule_suggestion}
+              />
+            )}
+            <SagaFileCard invoice={invoice} saga={view.saga} />
+          </div>
+        )}
       </div>
       </div>
     </div>

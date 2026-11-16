@@ -95,27 +95,45 @@ describe('a date the supplier wrote oddly', () => {
 })
 
 describe('what a download brought', () => {
-  const result = { window_days: 5, new_count: 3, failed_count: 0, classification: { classified: 2, review: 1, pending: 0 } }
+  const result = {
+    window_days: 5, new_count: 3, received_count: 3, issued_count: 0, failed_count: 0,
+    classification: { classified: 2, review: 1, pending: 0 },
+  }
+  const nothing = { ...result, new_count: 0, received_count: 0, classification: null }
 
   it('counts the new invoices and those to check', () => {
     expect(describeSyncResult(result, 5)).toBe('3 facturi noi, 1 de verificat')
-    expect(describeSyncResult({ ...result, new_count: 0, classification: null }, 5)).toBe('nimic nou')
+    expect(describeSyncResult(nothing, 5)).toBe('nimic nou')
   })
 
   it('never hides invoices that could not be downloaded', () => {
-    expect(describeSyncResult({ ...result, new_count: 1, failed_count: 6, classification: null }, 5)).toBe(
+    expect(describeSyncResult({ ...nothing, new_count: 1, received_count: 1, failed_count: 6 }, 5)).toBe(
       'o factură nouă, 6 nu s-au putut descărca (încercați din nou mai târziu)',
     )
-    expect(describeSyncResult({ ...result, new_count: 0, failed_count: 1, classification: null }, 5)).toContain(
-      'una nu s-a putut descărca',
-    )
+    expect(describeSyncResult({ ...nothing, failed_count: 1 }, 5)).toContain('una nu s-a putut descărca')
   })
 
   it('says when more days were searched than were asked for', () => {
-    expect(describeSyncResult({ ...result, window_days: 21, new_count: 0, classification: null }, 5)).toBe(
+    expect(describeSyncResult({ ...nothing, window_days: 21 }, 5)).toBe(
       'nimic nou, am căutat în ultimele 21 de zile, de la ultima descărcare',
     )
     expect(describeSyncResult({ ...result, window_days: 3 }, null)).not.toContain('am căutat')
+  })
+
+  it('does not call an invoice the client issued a new invoice', () => {
+    expect(describeSyncResult({ ...result, new_count: 8, issued_count: 5 }, 5)).toBe(
+      '3 facturi noi, 1 de verificat, 5 facturi emise',
+    )
+    expect(describeSyncResult({ ...nothing, new_count: 2, issued_count: 2 }, 5)).toBe(
+      'nicio factură primită, 2 facturi emise',
+    )
+    expect(describeSyncResult({ ...nothing, new_count: 1, issued_count: 1 }, 5)).toBe(
+      'nicio factură primită, o factură emisă',
+    )
+  })
+
+  it('says nothing new when only a message that is no invoice arrived', () => {
+    expect(describeSyncResult({ ...nothing, new_count: 1 }, 5)).toBe('nimic nou')
   })
 })
 

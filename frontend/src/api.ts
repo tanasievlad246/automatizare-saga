@@ -74,6 +74,8 @@ export const api = {
    */
   setSagaOutput: (changes: { saga_folder?: string; saga_file_per?: SagaFilePer }) =>
     call<AppSettings & { problems: { cui: string }[] }>('PUT', '/settings', changes),
+  /** Shows or hides the invoices the clients issued, for every client. */
+  showIssued: (shown: boolean) => call<AppSettings>('PUT', '/settings', { show_issued: shown }),
   /** Brings one client's files for SAGA up to date, after they could not be. */
   writeSagaFiles: (cui: string) => call<{ problems: { cui: string }[] }>('POST', '/saga-files/write', { cui }),
   /** `purpose` says which folder is being picked, so the dialog is titled for it and opens where that folder is. */
@@ -98,6 +100,9 @@ export const api = {
 
   receivedInvoices: (cui: string) =>
     call<{ invoices: Invoice[]; saga: SagaState }>('GET', `/invoices${query({ cui, type: 'primita' })}`),
+  /** The invoices the client issued itself. They get no account and no file for SAGA. */
+  issuedInvoices: (cui: string) =>
+    call<{ invoices: Invoice[] }>('GET', `/invoices${query({ cui, type: 'trimisa' })}`),
   invoiceView: (id: string) => call<InvoiceView>('GET', `/invoices/${id}/view`),
   classify: (id: string, force = false) => call('POST', `/invoices/${id}/classify`, { force }),
   acceptSuggestion: (id: string) => call('POST', `/invoices/${id}/cont`, { accept: true }),

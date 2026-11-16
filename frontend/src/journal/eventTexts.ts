@@ -59,9 +59,12 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
     return `A început descărcarea pentru ${who(data)}, pentru ${days === 1 ? 'ultima zi' : `ultimele ${countOf(days, 'o zi', 'zile')}`}.`
   },
   'sync.finished': (data) => {
-    const fresh = Number(data.new) ? countOf(Number(data.new), 'o factură nouă', 'facturi noi') : 'nicio factură nouă'
+    // Lines written before the issued invoices were counted apart carry only `new`.
+    const received = Number(data.received ?? data.new)
+    const fresh = received ? countOf(received, 'o factură nouă', 'facturi noi') : 'nicio factură nouă'
+    const issued = Number(data.issued) ? `, ${countOf(Number(data.issued), 'o factură emisă', 'facturi emise')}` : ''
     const failed = Number(data.failed) ? countOf(Number(data.failed), 'una nereușită', 'nereușite') : 'niciuna nereușită'
-    return `Descărcarea pentru ${who(data)} s-a terminat: ${fresh}, ${failed}.`
+    return `Descărcarea pentru ${who(data)} s-a terminat: ${fresh}${issued}, ${failed}.`
   },
   'sync.failed': (data) => `Descărcarea pentru ${who(data)} nu a reușit.`,
   'sync.message_failed': () => 'Un mesaj de la ANAF nu a putut fi salvat. Se încearcă din nou la următoarea descărcare.',
@@ -145,6 +148,10 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
     data.per === 'invoice'
       ? 'De acum, fiecare factură gata de import are fișierul ei pentru SAGA.'
       : 'De acum, facturile gata de import ale fiecărui client se scriu într-un singur fișier pentru SAGA.',
+  'settings.show_issued': (data) =>
+    data.shown
+      ? 'De acum, facturile emise de clienți se văd pe ecranul fiecărui client.'
+      : 'De acum, facturile emise de clienți nu se mai văd pe ecran.',
   'saga.files_failed': (data) =>
     `Fișierele pentru SAGA ale clientului ${who(data)} nu au putut fi scrise. Programul încearcă din nou la următoarea schimbare.`,
   'saga.files_written': (data) => `Fișierele pentru SAGA ale clientului ${who(data)} sunt din nou la zi.`,

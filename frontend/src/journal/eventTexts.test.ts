@@ -17,6 +17,15 @@ describe('a line of the journal, in Romanian', () => {
       .toBe('Descărcarea pentru CUI 12345674 s-a terminat: o factură nouă, una nereușită.')
   })
 
+  it('tells the received invoices of a download from the ones the client issued', () => {
+    expect(describeEvent(line('sync.finished', { cui: '12345674', new: 8, received: 3, issued: 5, failed: 0 })))
+      .toBe('Descărcarea pentru CUI 12345674 s-a terminat: 3 facturi noi, 5 facturi emise, niciuna nereușită.')
+    expect(describeEvent(line('sync.finished', { cui: '12345674', new: 1, received: 0, issued: 1, failed: 0 })))
+      .toBe('Descărcarea pentru CUI 12345674 s-a terminat: nicio factură nouă, o factură emisă, niciuna nereușită.')
+    expect(describeEvent(line('sync.finished', { cui: '12345674', new: 2, received: 2, issued: 0, failed: 0 })))
+      .toBe('Descărcarea pentru CUI 12345674 s-a terminat: 2 facturi noi, niciuna nereușită.')
+  })
+
   it('tells who chose an account', () => {
     expect(describeEvent(line('account.by_rule', { invoice_number: 'FV-1042', cont: '6022' })))
       .toBe('Factura FV-1042 a primit contul 6022, după o regulă a dumneavoastră.')
@@ -153,6 +162,11 @@ describe('a line of the journal, in Romanian', () => {
 describe('the files for SAGA in the journal', () => {
   const line = (event: string, data: Record<string, unknown>) =>
     describeEvent({ event, data, message: '' } as unknown as JournalLine)
+
+  it('says whether the issued invoices are shown', () => {
+    expect(line('settings.show_issued', { shown: true })).toBe('De acum, facturile emise de clienți se văd pe ecranul fiecărui client.')
+    expect(line('settings.show_issued', { shown: false })).toBe('De acum, facturile emise de clienți nu se mai văd pe ecran.')
+  })
 
   it('says which way was chosen', () => {
     expect(line('settings.saga_file_per', { per: 'client' })).toBe('De acum, facturile gata de import ale fiecărui client se scriu într-un singur fișier pentru SAGA.')

@@ -14,7 +14,9 @@ import { useSchedule } from '../schedule/useSchedule'
 import type { Invoice } from '../types'
 import { ImportedInSagaCard } from './ImportedInSagaCard'
 import { InvoicesTable } from './InvoicesTable'
+import { IssuedInvoicesCard } from './IssuedInvoicesCard'
 import { needsAnAccount } from './invoiceState'
+import { whenNoneReceived } from './issuedInvoices'
 
 // The four ways to look at a client's invoices. The first one that has anything is shown.
 const VIEWS = [
@@ -24,7 +26,10 @@ const VIEWS = [
   { value: 'toate', label: 'Toate', includes: () => true },
 ]
 
-/** One client's received invoices: what is new, what needs an account, what waits for SAGA. */
+/**
+ * One client's received invoices: what is new, what needs an account, what waits for SAGA.
+ * Under them, the invoices the client issued, when the person asks to see them.
+ */
 export function ClientInvoicesPage() {
   const { cui = '' } = useParams()
   const [search, setSearch] = useSearchParams()
@@ -83,12 +88,13 @@ export function ClientInvoicesPage() {
           loading={isPending}
           whenEmpty={
             invoices.length === 0
-              ? 'Nu ați descărcat încă facturi pentru acest client. Apăsați „Descarcă facturile”.'
+              ? whenNoneReceived(Boolean(client?.last_sync_at))
               : 'Nicio factură în această listă. Alegeți altă listă de mai sus.'
           }
         />
       )}
       <ImportedInSagaCard cui={cui} ready={ready} saga={data?.saga} />
+      <IssuedInvoicesCard cui={cui} />
 
       <SyncDialog
         clients={syncing ? [client ?? { cui, name: `CUI ${cui}`, invoices: 0, new_count: 0, review_count: 0, ready_count: 0, last_sync_at: null, enabled: true }] : null}
