@@ -195,15 +195,111 @@ def test_the_saga_folder_can_be_changed_and_new_files_go_there(api, anaf, tmp_pa
     assert api.get("/settings").json()["saga_folder"] == str(elsewhere)
 
 
-def test_files_already_written_stay_where_they_are_when_the_folder_changes(api, anaf, cfg, tmp_path):
+def test_what_is_waiting_for_saga_moves_when_the_folder_changes(api, anaf, cfg, tmp_path):
     anaf.add("3001", xml=rich_invoice_xml(lines=FUEL))
     api.post("/sync", json={"cui": VALID_CUI})
 
     api.put("/settings", json={"saga_folder": str(tmp_path / "nou")})
 
     before = cfg.data_dir / "SAGA Import" / VALID_CUI / "F_87654321_FV-1042_09.11.2026.xml"
-    assert before.exists()
-    assert api.get("/invoices/3001").json()["invoice"]["saga_xml_path"] == str(before)
+    after = tmp_path / "nou" / VALID_CUI / "F_87654321_FV-1042_09.11.2026.xml"
+    assert not before.exists() and after.exists()
+    assert api.get("/invoices/3001").json()["invoice"]["saga_xml_path"] == str(after)
+
+
+def saga_files_of(folder):
+    return sorted(path.name for path in (folder / VALID_CUI).glob("*"))
+
+
+def two_waiting(api, anaf):
+    anaf.add("3001", xml=rich_invoice_xml(lines=FUEL, number="A1"))
+    anaf.add("3002", xml=rich_invoice_xml(lines=FUEL, number="A2"))
+    api.post("/sync", json={"cui": VALID_CUI})
+
+
+def test_settings_say_one_file_per_client_until_another_way_is_chosen(api):
+    assert api.get("/settings").json()["saga_file_per"] == "client"
+
+
+def test_the_way_the_saga_files_are_written_can_be_changed_on_its_own(api, anaf, cfg):
+    two_waiting(api, anaf)
+
+    changed = api.put("/settings", json={"saga_file_per": "invoice"})
+
+    assert (changed.status_code, changed.json()["saga_file_per"]) == (200, "invoice")
+    assert changed.json()["saga_folder"] == str(cfg.data_dir / "SAGA Import")
+    assert saga_files_of(cfg.data_dir / "SAGA Import") == [
+        "F_87654321_A1_09.11.2026.xml", "F_87654321_A2_09.11.2026.xml"
+    ]
+
+
+def test_the_folder_and_the_way_can_be_changed_together(api, anaf, cfg, tmp_path):
+    api.put("/settings", json={"saga_file_per": "invoice"})
+    two_waiting(api, anaf)
+
+    changed = api.put("/settings", json={"saga_folder": str(tmp_path / "nou"), "saga_file_per": "client"})
+
+    assert (changed.json()["saga_folder"], changed.json()["saga_file_per"]) == (str(tmp_path / "nou"), "client")
+    assert saga_files_of(tmp_path / "nou") == ["F_87654321_A1_09.11.2026.xml"]
+    assert saga_files_of(cfg.data_dir / "SAGA Import") == []
+
+
+@pytest.mark.parametrize("body", [{}, {"saga_file_per": "both"}, {"saga_file_per": True}, {"saga_file_per": ""}])
+def test_settings_that_name_neither_a_folder_nor_one_of_the_two_ways_are_refused(api, body):
+    refused = api.put("/settings", json=body)
+
+    assert (refused.status_code, refused.json()["error"]["code"]) == (400, "invalid_input")
+    assert api.get("/settings").json()["saga_file_per"] == "client"
+
+
+def test_a_way_that_does_not_exist_leaves_the_folder_as_it_was_too(api, cfg, tmp_path):
+    refused = api.put("/settings", json={"saga_folder": str(tmp_path / "nou"), "saga_file_per": "both"})
+
+    assert refused.status_code == 400
+    assert api.get("/settings").json()["saga_folder"] == str(cfg.data_dir / "SAGA Import")
+    assert not (tmp_path / "nou").exists()
+
+
+def test_changing_the_settings_says_whose_files_could_not_be_written(api, anaf, monkeypatch):
+    two_waiting(api, anaf)
+    fine = api.put("/settings", json={"saga_file_per": "invoice"})
+    real_write = service_module._write_file
+
+    def refuse_saga(path, content):
+        if "SAGA Import" in str(path):
+            raise PermissionError("the file is open in another program")
+        real_write(path, content)
+
+    monkeypatch.setattr(service_module, "_write_file", refuse_saga)
+
+    changed = api.put("/settings", json={"saga_file_per": "client"})
+
+    assert fine.json()["problems"] == []
+    assert (changed.status_code, changed.json()["saga_file_per"]) == (200, "client")
+    assert [problem["cui"] for problem in changed.json()["problems"]] == [VALID_CUI]
+    assert "problems" not in api.get("/settings").json()
+
+
+def test_a_clients_invoice_list_carries_how_its_saga_files_stand(api, anaf, cfg):
+    two_waiting(api, anaf)
+
+    state = api.get("/invoices", params={"cui": VALID_CUI}).json()["saga"]
+
+    assert state == {"file_per": "client", "written_at": NOW.isoformat(), "problem": None}
+
+
+def test_the_saga_files_can_be_written_again_when_asked(api, anaf, cfg):
+    two_waiting(api, anaf)
+    (cfg.data_dir / "SAGA Import" / VALID_CUI / "F_87654321_A1_09.11.2026.xml").unlink()  # by hand
+
+    one = api.post("/saga-files/write", json={"cui": VALID_CUI})
+    everyone = api.post("/saga-files/write", json={})
+    bad = api.post("/saga-files/write", json={"cui": "../../etc"})
+
+    assert (one.status_code, one.json()) == (200, {"ok": True, "clients": 1, "problems": []})
+    assert everyone.json()["clients"] == 1
+    assert saga_files_of(cfg.data_dir / "SAGA Import") == ["F_87654321_A1_09.11.2026.xml"]
+    assert bad.status_code == 400
 
 
 @pytest.mark.parametrize("folder", ["", "   ", "relativ/fara/litera"])

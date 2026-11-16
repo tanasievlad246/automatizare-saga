@@ -9,7 +9,7 @@ Fetches ANAF e-Factura messages for a company CUI and keeps them locally:
 
 Only messages not saved before are downloaded. It never uploads or changes anything at ANAF.
 
-Each newly received invoice is then given an account (`cont`) and rewritten as a file the SAGA C accounting program can import (`data/SAGA Import/<CUI>/`). See [Classification and SAGA](#classification-and-saga).
+Each newly received invoice is then given an account (`cont`) and written, together with the client's other invoices that wait for import, into a file the SAGA C accounting program can import (`data/SAGA Import/<CUI>/`). See [Classification and SAGA](#classification-and-saga).
 
 There are three ways to use it, all on the same data:
 
@@ -121,7 +121,7 @@ The database holds everything: clients, invoices, accounts, rules, settings, and
 4. The chosen copy replaces the database. The backup folder setting is carried over, so copies go on to the same folder. A file that Windows says is still in use is tried again for a few seconds.
 5. The program is started again, whatever happened at steps 3 and 4.
 
-Everything saved after the chosen copy is gone from the program: downloaded invoices, chosen accounts, the "imported in SAGA" ticks, rules, clients, settings and keys changed since, and the journal's lines since then. Files already written for SAGA stay on disk. If the copy cannot be put in place, the database that was there is kept and the screen says the restore failed. How the last restore ended is kept in `data\last-restore.json`, and what it printed in `data\restore.log`.
+Everything saved after the chosen copy is gone from the program: downloaded invoices, chosen accounts, the "imported in SAGA" ticks, rules, clients, settings and keys changed since, and the journal's lines since then. The files for SAGA are written again from the copy as the program starts; a file written after the copy was made is no longer known to the program and stays in its client's folder, so look through the SAGA folder after a restore and delete what should not be imported again. If the copy cannot be put in place, the database that was there is kept and the screen says the restore failed. How the last restore ended is kept in `data\last-restore.json`, and what it printed in `data\restore.log`.
 
 **When the database itself is damaged.** This is what the copies are for, and it is done from the terminal, because a program that cannot read its database does not start:
 
@@ -178,8 +178,8 @@ The page opens at `http://autosaga.localhost:8765/ui/`. `http://127.0.0.1:8765/u
 | Screen | What it is for |
 |---|---|
 | **Clienți** | Import clients from Excel or CSV, add one by hand, download invoices for one client or all (the last 1 to 30 days, or two dates). Shows how many invoices are new and how many wait for an account. A search field narrows the list by name or CUI as it is typed (no matter the case, the diacritics, or whether the CUI is written with `RO`); the download for all clients still covers every client that is on |
-| **A client's invoices** | New, to check, not yet in SAGA, all. One button marks the ready ones as imported in SAGA |
-| **One invoice** | The invoice as a person reads it, ANAF's XML, the SAGA XML; its account and who chose it; accept Jev's proposal or pick another; a rule proposed from it when no rule decided it; the path of the SAGA file |
+| **A client's invoices** | New, to check, not yet in SAGA, all. Under the list, the client's file for SAGA: its path, when it was written, and one button that names how many invoices it marks as imported. While the folder is not up to date, a notice says so and offers "Încearcă din nou", and the marking button is off |
+| **One invoice** | The invoice as a person reads it, ANAF's XML, its own part of the SAGA XML; its account and who chose it; accept Jev's proposal or pick another; a rule proposed from it when no rule decided it; the file for SAGA it is in, or why it is in none; a warning, and no ticking as imported, while the client's folder is not up to date |
 | **Reguli de clasificare** | Rules proposed from recent decisions, the rules, the accounts Jev chooses from, how sure Jev must be, the question Jev is asked. The button "Testează regulile" opens the rule test, see [Testing the rules](#testing-the-rules) |
 | **Costuri Jev** | Cost between two dates, by day, week, month or year, and every invoice Jev classified |
 | **Descărcare automată** | Switch the automatic download on or off, the days and times (up to four a day, chosen as 00 to 23 hours whatever the PC's regional settings), the period of the invoices (the last 3, 5, 7 or 10 days, or two dates), when the next one is, and how the last one went. See [Automatic download](#automatic-download) |
@@ -191,7 +191,7 @@ On every screen, a notice appears on top when a newer release of the program exi
 
 On every screen, the top bar holds the name, the **folder for SAGA** and the **ANAF connection**:
 
-- "Folder SAGA" shows the end of the path; "Schimbă" opens a small window where the folder is typed, or "Alege folderul" opens Windows' own folder dialog.
+- "Folder SAGA" shows the end of the path; "Schimbă" opens a small window, "Fișierele pentru SAGA". There the folder is typed, or "Alege folderul" opens Windows' own folder dialog, and one of two ways is chosen: one file per client ("Un singur fișier pentru fiecare client") or one file per invoice ("Câte un fișier pentru fiecare factură"). See [the SAGA files](#classification-and-saga).
 - The ANAF chip says one of: connected, with the days left; expiring, from 30 days before the end; not connected. Clicking it opens the login steps. While the program does not answer it says that instead, and does not ask for a login.
 
 The menu on the left has a fixed width and the screen's content takes the rest. In a window narrower than about 1020 px the menu moves above the content.
@@ -411,7 +411,8 @@ Routes that exist for the screen and have no command:
 | `PUT /accounts/{cont}` with `{"description"}`, `DELETE /accounts/{cont}` | The accounts Jev chooses from |
 | `PUT /classification/settings` with `{"min_confidence", "jev_instructions"}` | The confidence level and the question for Jev |
 | `GET /classification/calls?since=...&until=...&cui=...&limit=...` | What Jev was asked, newest first |
-| `GET /settings`, `PUT /settings` with `{"saga_folder"}` | The folder for SAGA |
+| `GET /settings`, `PUT /settings` with `{"saga_folder", "saga_file_per"}` | The folder for SAGA, and whether it gets one file per `"client"` or one per `"invoice"`. Either field may be left out and then stays as it is; nothing is saved unless all of it is valid. What waits for SAGA is then written again, and the reply to `PUT` adds `problems`: the clients whose files could not be |
+| `POST /saga-files/write` with `{"cui"}` or `{}` | Bring the files for SAGA up to date, for one client or for all. Answers `{"clients", "problems": [{"cui", "message", "at"}]}` |
 | `POST /settings/choose-folder?purpose=saga` (or `backups`), `POST /folders/open` with `{"invoice_id"}` or `{"cui"}` | Open the computer's folder dialog, titled for the SAGA folder or the backup folder and starting there; show in Explorer the folder an invoice's SAGA file is in, or a client's folder |
 | `GET /secrets`, `PUT /secrets/{key}` with `{"value"}` | The keys, in full |
 | `POST /shutdown` | Stops the program (what `efactura stop` calls). With the key only; the page cannot reach it |
@@ -482,11 +483,11 @@ A rule matches a line when any of its conditions holds: a keyword in the descrip
 | State | Meaning |
 |---|---|
 | `null` | Outside classification: saved before it existed or with `--no-classify`, or not a received invoice |
-| `pending` | Waiting. OpenRouter as a whole was failing (no connection, key, credit, rate limit), or the file could not be written; the next `sync` tries again. After such a failure the rest of that run is not sent to Jev either |
-| `classified` | Account decided and SAGA file written. `classification_method` says how: `rules`, `jev`, `jev_accepted` (a person accepted Jev's suggestion) or `human` |
+| `pending` | Waiting. OpenRouter as a whole was failing (no connection, key, credit, rate limit); the next `sync` tries again. After such a failure the rest of that run is not sent to Jev either |
+| `classified` | Account decided. The invoice is in a file for SAGA until it is marked as imported. `classification_method` says how: `rules`, `jev`, `jev_accepted` (a person accepted Jev's suggestion) or `human` |
 | `review` | A person must decide |
 
-Each invoice also carries `cont`, `classification_reason`, `suggested_cont` and `confidence` (Jev's pick and how sure it was), `confidence_threshold` (the level at the time), `saga_xml_path` and `classification_error`.
+Each invoice also carries `cont`, `classification_reason`, `suggested_cont` and `confidence` (Jev's pick and how sure it was), `confidence_threshold` (the level at the time), `saga_xml_path` (the file for SAGA the invoice is in while it waits for import, else `null`) and `classification_error`.
 
 **Review**
 
@@ -530,14 +531,23 @@ gives calls, tokens and cost in total and per month (`--group` changes that to d
 
 **The SAGA files**
 
-- One file per invoice: `data/SAGA Import/<CUI>/F_<supplier code>_<number>_<date>.xml`. Characters a file name cannot hold are replaced by `-`. If two invoices would get the same name (`AB 12` and `AB/12`, or names differing only in letter case), the later one has its ANAF message id added to the number.
+- **What a client's folder holds:** exactly the invoices SAGA has not got yet, which are those with an account that are not marked as imported. Nothing else the program wrote stays there, so SAGA's import screen lists only what is new.
+- **One file per client** is the usual way: `data/SAGA Import/<CUI>/F_<supplier code>_<number>_<date>.xml` holds all of the client's waiting invoices, one `<Factura>` after another, the one that has waited longest first. SAGA's manual allows it (several invoices are imported at once by repeating `<Factura>`). The file carries the name of its first invoice, because that is the one shape of name SAGA has been seen to take for a file of many: the owner imported 100 invoices of one client that way on 2026-11-16. So the name changes when the first invoice leaves the file.
+- **One file per invoice** is the other way, chosen in the "Folder SAGA" window or with `PUT /settings` and `{"saga_file_per": "invoice"}`. Each waiting invoice then has a file named after it. Characters a file name cannot hold are replaced by `-`. If two invoices would get the same name (`AB 12` and `AB/12`, or names differing only in letter case), the later one has its ANAF message id added to the number. Exactly one of the two ways is in force; choosing the other writes again what is waiting, for every client.
+- **When the files are written:** after anything that changes what is waiting. That is a download's classification, an account chosen or changed, an invoice sent back to checking, the "imported" mark put on or taken off, a change of folder or of way, and once at every start of the program, which also covers an update and a backup put back. A file that already says the same is left alone.
+- **Marking as imported takes the invoice out of its file.** When all are marked, the folder is empty until new invoices arrive. Taking the mark off puts the invoice back.
+- **When the folder cannot be brought up to date** (a file is open in SAGA, the stick is unplugged, anything else goes wrong): the account stays as decided, the journal gets a line, and the client's screen says the folder is not up to date and offers "Încearcă din nou". Until it is, nothing is marked as imported from the client's list or from an invoice's screen, so that no invoice SAGA never got is marked; `mark-uploaded` and the API still do as they are told. The program tries again by itself at the next change and at the next start.
+- **A folder that cannot be reached** (the stick is out) is not taken for an empty one: the files written there stay on record, and are removed once the folder is back. Only a folder that was left behind, by choosing another one while it could not be reached, is let go with what is in it.
+- **Only its own files.** The program keeps a list of the files it wrote (table `saga_files`) and removes only those. A file put in the folder by hand is never touched.
+- **Coming from 0.6.1 or earlier:** at the first start, each client's waiting invoices are written the new way and the single-invoice files of the earlier version are removed, those of imported invoices too. Nothing is lost with them: an invoice's screen still shows its part for SAGA, made from the database.
 - One folder per company on purpose. SAGA files an invoice under purchases whenever the supplier is not the open company, so a file imported into the wrong company would become a purchase there. Point SAGA's import screen at the folder of the company that is open.
 - In SAGA, open the "Import date" screen and choose the folder. Synchronising on "Nr.+data" skips invoices already imported. Imported invoices are not validated; the accountant checks and validates them, and can still change the account there.
 - Lines are imported on the type "Nedefinit" with the account. The supplier's article codes are left out so that SAGA does not match a stock article and take the account from it.
 - VAT per line is calculated (ANAF's file has none). Where rounding line by line drifts from the invoice's VAT total, the gap is closed one cent per line, largest lines first, so the lines add up to the invoice and none moves by more than a cent. Invoice-level discounts and charges become extra lines. Credit notes are written with negative amounts.
 - Quantity × price always gives the line value. ANAF's value already includes a discount on the line while its price does not, so in that case the price is written as value ÷ quantity. A line without a quantity is written as one unit at its value.
 - SAGA's own e-Factura screen also lists the same invoices from SPV. Import each invoice one way only.
-- To list the files waiting for SAGA: `uv run efactura invoices --classification classified --pending`. After importing, `mark-uploaded <id>`.
+- To list the invoices waiting for SAGA: `uv run efactura invoices --classification classified --pending`. Each carries `saga_xml_path`, the file it is in; with one file per client they share it. After importing, `mark-uploaded <id>`.
+- `GET /invoices?cui=...` and `GET /invoices/{id}/view` also answer `saga`, how that client's files stand: `{"file_per", "written_at", "problem"}`, where `problem` is `null` or `{"message", "at"}`.
 
 ## Using it from Power Automate Desktop
 
@@ -547,10 +557,10 @@ These steps have not been tried in Power Automate from the machine this was buil
 
 1. *Run DOS command*: command `uv run efactura sync 12345674`, working folder = this folder. It produces `CommandOutput` (the JSON), `CommandErrorOutput` and `CommandExitCode`.
 2. Branch on `CommandExitCode`: `0` continue, `3` ask someone to log in, anything else stop and report.
-3. *Convert JSON to custom object* on `CommandOutput`, then loop over `new` (for example `%JsonAsCustomObject['new']%`). Each item has `xml_path` (ANAF's file) and, once classified, `saga_xml_path` (the file for SAGA).
+3. *Convert JSON to custom object* on `CommandOutput`, then loop over `new` (for example `%JsonAsCustomObject['new']%`). Each item has `xml_path` (ANAF's file) and, once classified, `saga_xml_path` (the file for SAGA it is in; with one file per client, the same file for all of that client's waiting invoices).
 4. Invoices classified by a later run or by a person are not in `new`. To get everything waiting for SAGA, run `uv run efactura invoices --classification classified --pending`.
 5. If `classification.review` is above zero, tell someone: `uv run efactura review` lists what to decide.
-6. After SAGA has imported an invoice, run `uv run efactura mark-uploaded <id>`.
+6. After SAGA has imported an invoice, run `uv run efactura mark-uploaded <id>`. The invoice then leaves its file.
 
 **As a web request**
 
@@ -588,15 +598,15 @@ data/
       12345674_primita_3001234567.xml      <CUI>_<type>_<message id>.xml
   SAGA Import/         (or the folder chosen on screen)
     12345674/          one folder per company
-      F_87654321_FV-1042_09.11.2026.xml    F_<supplier code>_<number>_<date>.xml
+      F_87654321_FV-1042_09.11.2026.xml    the invoices waiting for SAGA, named after the first
 ```
 
-- **Database:** table `messages` (one row per ANAF message: list details, invoice fields read from the XML, the full invoice XML and ANAF's signature XML, `uploaded_to_accounting`, `uploaded_at`, the classification fields), `sync_runs` (one row per run), `jev_calls` (every request to Jev with its reply and cost), `clients`, `accounts`, `rules`, `events` (the [journal](#the-journal)), and `settings` (the confidence level, the question for Jev, the schedule `auto_sync` and the record of the last automatic download `auto_sync_last_run`, and what was changed on screen: the SAGA folder, the backup folder and the keys). Any SQLite tool can read it. A database made by an earlier version gains the new columns when it is first opened; nothing is lost.
+- **Database:** table `messages` (one row per ANAF message: list details, invoice fields read from the XML, the full invoice XML and ANAF's signature XML, `uploaded_to_accounting`, `uploaded_at`, the classification fields), `sync_runs` (one row per run), `jev_calls` (every request to Jev with its reply and cost), `clients`, `accounts`, `rules`, `events` (the [journal](#the-journal)), `saga_files` (the files written for SAGA that are still there) and `saga_problems` (why a client's files could not be brought up to date, until they are), and `settings` (the confidence level, the question for Jev, the schedule `auto_sync` and the record of the last automatic download `auto_sync_last_run`, and what was changed on screen: the SAGA folder, one file per client or per invoice `saga_file_per`, the backup folder and the keys). Any SQLite tool can read it. A database made by an earlier version gains the new columns when it is first opened; nothing is lost.
 - **Saved login:** `%LOCALAPPDATA%\efactura\tokens.json`, in the Windows user's private folder and outside this project. Treat it like the token and PIN: whoever copies it can read e-Factura data for every company the certificate covers until it expires.
 - **`config.toml`** holds the client secret, the API key and the OpenRouter key. It is ignored by git; do not share it.
 - **Keys changed on screen** are stored in the database as plain text, like those in `config.toml`. Treat `data/efactura.db` as a secret too, and with it every copy in the backup folder.
 - **The backups** are in the folder chosen on the "Copii de siguranță" screen, outside this project: `autosaga-<date>-<time>-<auto|manual|before-restore>.zip`, 25 at most.
-- **Changing the SAGA folder** affects new files only. Files already written stay where they are; each invoice remembers its own path, and the screen names every folder that still holds files waiting for SAGA.
+- **Changing the SAGA folder** moves what is waiting for SAGA: the files are written in the new folder, and the program's own files are removed from the old one.
 - The folder name format can be changed in `config.toml` (`DD-MM-YYYY` or `YYYY-MM-DD`, which sorts by date in Explorer).
 
 ## Limits to know about
@@ -628,10 +638,11 @@ For the demo and the certificate login:
 
   Still open: the script file as it is now (the owner's run used the same steps, typed by hand), the program starting it by itself without a console window, where Windows puts the certificate and PIN windows then, and the one refusal nobody could explain.
 
-For classification, nothing has yet run against the real OpenRouter or the real SAGA:
+For classification, not everything has run against the real OpenRouter and the real SAGA:
 
 - **Jev.** The request and reply shapes follow OpenRouter's published reference for `POST /api/alpha/decisions`, read on 2026-11-13. The endpoint is marked alpha. If its shape changes, Jev calls fail, invoices wait as `pending`, and the rules keep working. The first real call (`classify <id>`, then `costs`) confirms the shape and the price.
-- **SAGA's formats.** The tags and their order are from SAGA's manual. The manual does not state the date format (`dd.mm.yyyy` is assumed, as elsewhere in SAGA), the decimal format (a point), the text encoding (UTF-8), whether the fiscal code carries `RO` (written as on the invoice), or how the file name's parts are used. They are constants at the top of [src/efactura/saga.py](src/efactura/saga.py). To check them, print an outgoing invoice in SAGA with "Formular PDF": SAGA puts its own XML next to the PDF in `TEMP\Facturi`. Compare that file with one from `SAGA Import`.
+- **SAGA's formats.** The tags and their order are from SAGA's manual. The manual does not state the date format (`dd.mm.yyyy` is assumed, as elsewhere in SAGA), the decimal format (a point), the text encoding (UTF-8), whether the fiscal code carries `RO` (written as on the invoice), or how the file name's parts are used. Confirmed by the owner on 2026-11-16: the real SAGA imported one file holding 100 invoices of one client, named after one of them. They are constants at the top of [src/efactura/saga.py](src/efactura/saga.py). To check them, print an outgoing invoice in SAGA with "Formular PDF": SAGA puts its own XML next to the PDF in `TEMP\Facturi`. Compare that file with one from `SAGA Import`.
+- **The files for SAGA on Windows.** The one file per client, and the tidying of the folder, have run only on a Mac. Not yet seen on Windows: replacing a file while SAGA's import window has it open (it is expected to fail and to be shown as "not up to date"), two parts of the program writing at once (the second waits for the first, with the same kind of lock a download uses), a SAGA folder on a network share, and the removal of an earlier version's files at the first start.
 - **`<Cont>` on import.** The manual lists the tag but does not say that the account lands on the "Nedefinit" line. Import one file into a test company or a backup first.
 - **Foreign-currency invoices** are written with their currency; SAGA books those in a separate screen and the import is untried.
 - **Jev's accuracy** on Romanian invoices is unknown until its suggestions are compared with the accountant's choices.

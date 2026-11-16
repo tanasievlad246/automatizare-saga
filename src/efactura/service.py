@@ -117,6 +117,11 @@ SAVED_SETTINGS = {  # name in the database -> field of Config
     "anaf_client_secret": "client_secret",
 }
 EDITABLE_SECRETS = ("openrouter_api_key", "anaf_client_id", "anaf_client_secret")
+# The setting that says how the invoices waiting for SAGA are put in files: one file per
+# client (saga.PER_CLIENT, unless another way is saved) or one per invoice.
+SAGA_FILE_PER = "saga_file_per"
+# Bringing a client's files up to date takes a moment; a second writer waits this long for it.
+SAGA_LOCK_WAIT = 30.0
 
 
 class _JevCouldNotDecide(Exception):
@@ -567,9 +572,11 @@ class Service:
                 classification=classification,
                 only_new=only_new,
             )
+            # One client's list also says how that client's files for SAGA stand.
+            files = {"saga": self._saga_state(store, normalize_cui(cui))} if cui else {}
         finally:
             store.close()
-        return {"ok": True, "count": len(rows), "invoices": [self._present(r) for r in rows]}
+        return {"ok": True, "count": len(rows), "invoices": [self._present(r) for r in rows], **files}
 
     def invoice(self, message_id: str, include_xml: bool = False) -> dict:
         store = self._open_store()
@@ -593,6 +600,8 @@ class Service:
                 "accounts", "invoices.unmarked" if undo else "invoices.marked_imported",
                 f"{len(ids)} invoice(s) {'no longer marked' if undo else 'marked'} as imported in SAGA.", invoices=len(ids),
             )
+            for cui in store.cuis_of(ids):
+                self._write_saga_files(store, cui)
         finally:
             store.close()
         return {
@@ -613,8 +622,11 @@ class Service:
         with self._lock():
             store = self._open_store()
             try:
-                self._classifiable(store, message_id, force, classified_ok=force)
-                self._classify_one(store, message_id, _new_tally())
+                row, _ = self._classifiable(store, message_id, force, classified_ok=force)
+                try:
+                    self._classify_one(store, message_id, _new_tally())
+                finally:
+                    self._write_saga_files(store, row["cui"])
                 return {"ok": True, "invoice": self._present(store.get_message(message_id))}
             finally:
                 store.close()
@@ -667,6 +679,7 @@ class Service:
                 else:
                     method, reason = "human", "Set by a person."
                 self._finish(store, row, invoice, cont, method, reason)
+                self._write_saga_files(store, row["cui"])
                 return {"ok": True, "invoice": self._present(store.get_message(message_id))}
             finally:
                 store.close()
@@ -817,23 +830,55 @@ class Service:
     # --- settings and keys changed on screen ----------------------------------
 
     def app_settings(self) -> dict:
-        return {"ok": True, "saga_folder": str(self.cfg.saga_dir), "demo": self.cfg.demo}
-
-    def set_saga_folder(self, folder: str) -> dict:
-        """Where the files for SAGA are written from now on. Files already written stay
-        where they are; each invoice remembers its own path."""
-        text = str(folder or "").strip()
-        path = Path(text).expanduser()
-        if not text or not path.is_absolute():
-            raise EfacturaError(
-                INVALID_INPUT, "Give the folder's full path, for example C:\\SAGA Import."
-            )
+        store = self._open_store()
         try:
-            path.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            raise EfacturaError(INVALID_INPUT, f"The folder cannot be created: {exc}") from None
-        self._save_setting("saga_dir", str(path))
-        return self.app_settings()
+            folder, per = self._saga_dir(store), _saga_file_per(store)
+        finally:
+            store.close()
+        return {"ok": True, "saga_folder": str(folder), "saga_file_per": per, "demo": self.cfg.demo}
+
+    def set_saga_output(self, folder: str | None = None, per: str | None = None) -> dict:
+        """Change the folder for SAGA, whether it gets one file per client or one per
+        invoice, or both. Nothing is saved unless all of it can be; then what is waiting
+        for SAGA is written again, in the folder and the way now in force, and the files
+        written before are removed. The reply names the clients whose files could not be."""
+        if folder is None and per is None:
+            raise EfacturaError(INVALID_INPUT, "Give saga_folder, saga_file_per, or both.")
+        if per is not None and per not in saga.WAYS:
+            raise EfacturaError(INVALID_INPUT, f"saga_file_per must be one of: {', '.join(saga.WAYS)}.")
+        path = _checked_folder(folder) if folder is not None else None
+        if path is not None:
+            self._save_setting("saga_dir", str(path))
+        if per is not None:
+            store = self._open_store()
+            try:
+                if per != _saga_file_per(store):
+                    store.set_setting(SAGA_FILE_PER, per)
+                    journal.record(
+                        "settings", "settings.saga_file_per",
+                        f"The folder for SAGA now gets one file per {per}.", per=per,
+                    )
+            finally:
+                store.close()
+        written = self.write_saga_files()
+        return {**self.app_settings(), "problems": written["problems"]}
+
+    def write_saga_files(self, cui: str | None = None) -> dict:
+        """Bring the files for SAGA up to date, for one client or for all of them. The
+        program does this by itself at every change; this is for its start, for a change of
+        folder or of way, and for trying again after a file could not be written."""
+        store = self._open_store()
+        try:
+            clients = [normalize_cui(cui)] if cui else store.clients_with_saga_files()
+            problems = []
+            for client in clients:
+                self._write_saga_files(store, client)
+                problem = store.saga_problem(client)
+                if problem:
+                    problems.append({"cui": client, **problem})
+        finally:
+            store.close()
+        return {"ok": True, "clients": len(clients), "problems": problems}
 
     def choose_folder(self, purpose: str = "saga") -> dict:
         """Let the person pick a folder in the computer's own dialog; None if they cancel.
@@ -1334,6 +1379,7 @@ class Service:
             last_call = store.last_jev_call(message_id)
             client_name = store.client_name(row["cui"])
             rule_suggestion = self._rule_suggestion(store, row)
+            saga_state = self._saga_state(store, row["cui"])
         finally:
             store.close()
         shown = self._present(row)
@@ -1346,7 +1392,8 @@ class Service:
             "client_name": client_name,
             "document": _as_json(invoice) if invoice else None,
             "xml": xml,
-            "saga_xml": _read_text(shown["saga_xml_path"]),
+            "saga_xml": _own_saga_xml(invoice, row),
+            "saga": saga_state,
             "jev": last_call and {
                 "called_at": last_call["called_at"],
                 "model": last_call["model"],
@@ -1381,6 +1428,7 @@ class Service:
                 _note_error(store, message_id, f"{type(exc).__name__}: {exc}")
             counts[status] += 1
 
+        self._write_saga_files(store, cui)
         result["new"] = [self._present(store.get_message(entry["id"])) for entry in result["new"]]
         result["classification"] = {
             **counts,
@@ -1558,45 +1606,25 @@ class Service:
         self, store: Store, row: dict, invoice: Invoice, cont: str, method: str, reason: str,
         **jev_said,
     ) -> str:
-        """Write the SAGA file with `cont` on every line and record the decision."""
-        folder = self.cfg.saga_dir / row["cui"]
-        path = folder / saga.file_name(invoice)
-        if store.saga_path_owner(self._stored_path(path), excluding=row["id"]):
-            # Another invoice already has that file name (numbers that differ only in
-            # punctuation or letter case, or the same invoice sent twice). One file, one invoice.
-            path = folder / saga.file_name(invoice, distinct=row["id"])
-        stored = self._stored_path(path)
+        """Record the decision: `cont` on every line. The files for SAGA follow from what is
+        recorded (_write_saga_files), so SAGA never finds a decision that was not."""
         subject = subject_of(invoice)
         # "Not now" was said about a rule for the account the invoice had; a new account is
         # a new proposal.
         forgotten = {"suggestion_dismissed_for": None} if cont != row.get("cont") else {}
-        before = path.read_bytes() if path.exists() else None
-        folder.mkdir(parents=True, exist_ok=True)
-        _write_file(path, saga.build_xml(invoice, cont, row["id_solicitare"], row["id"]))
-        try:
-            store.set_classification(
-                row["id"],
-                classification_status=CLASSIFIED,
-                cont=cont,
-                classification_method=method,
-                classification_reason=reason,
-                classified_at=self._now().isoformat(),
-                saga_xml_path=stored,
-                classification_error=None,
-                # Kept so rules can be tried on this invoice later without its XML.
-                rule_subject=subject.to_json() if subject else None,
-                **forgotten,
-                **jev_said,
-            )
-        except Exception:
-            # SAGA must never find a file for a decision that was not recorded.
-            if before is None:
-                path.unlink(missing_ok=True)
-            else:
-                _write_file(path, before)
-            raise
-        if row.get("saga_xml_path") and row["saga_xml_path"] != stored:
-            self._drop_saga_file(store, row)  # it had another name before
+        store.set_classification(
+            row["id"],
+            classification_status=CLASSIFIED,
+            cont=cont,
+            classification_method=method,
+            classification_reason=reason,
+            classified_at=self._now().isoformat(),
+            classification_error=None,
+            # Kept so rules can be tried on this invoice later without its XML.
+            rule_subject=subject.to_json() if subject else None,
+            **forgotten,
+            **jev_said,
+        )
         journal.record(
             "accounts", {"rules": "account.by_rule", "jev": "account.by_jev"}.get(method, "account.by_person"),
             f"Message {row['id']} booked on {cont} ({method}).",
@@ -1614,12 +1642,9 @@ class Service:
             classification_method=None,
             classification_reason=reason,
             classified_at=None,
-            saga_xml_path=None,
             classification_error=None,
             **jev_said,
         )
-        # Only once the row no longer points at it: if the update fails, the file stays.
-        self._drop_saga_file(store, row)
         journal.record(
             "accounts", "account.to_review", f"Message {row['id']} needs a person: {reason}", level="warning",
             id=row["id"], cui=row["cui"], invoice_number=row.get("invoice_number"),
@@ -1628,12 +1653,118 @@ class Service:
         )
         return REVIEW
 
-    def _drop_saga_file(self, store: Store, row: dict) -> None:
-        """An invoice that is no longer classified must not leave a file for SAGA behind.
-        `row` is the invoice as it was; the file goes unless another invoice's row has it."""
-        stored = row.get("saga_xml_path")
-        if stored and not store.saga_path_owner(stored, excluding=row["id"]):
-            (self.cfg.data_dir / stored).unlink(missing_ok=True)
+    # --- the files for SAGA ---------------------------------------------------------
+
+    def _write_saga_files(self, store: Store, cui: str) -> None:
+        """Make this client's folder hold exactly the invoices SAGA has not got yet: those
+        with an account that are not marked as imported, in one file or in a file each.
+
+        Called after anything that changes that set. It never fails the action that led
+        here: the decision is recorded already. Whatever goes wrong (a file open in SAGA,
+        the stick unplugged, the database busy) is noted for the screen and the journal,
+        and tried again at the next change, at the next start, or when a person asks.
+        """
+        when = self._now().isoformat()
+        try:
+            # One writer at a time, also across processes. What is waiting is read inside,
+            # so the writer that comes last writes what is true last.
+            with _FileLock(
+                self.cfg.saga_lock_path, wait=SAGA_LOCK_WAIT,
+                busy="The files for SAGA are being written by another part of the program.",
+            ):
+                try:
+                    self._place_saga_files(store, cui, when)
+                    failure = None
+                except Exception as exc:
+                    failure = exc
+                self._note_saga_outcome(store, cui, failure, when)
+        except Exception as exc:  # the lock was not had, or the outcome could not be noted
+            self._note_saga_outcome(store, cui, exc, when)
+
+    def _note_saga_outcome(self, store: Store, cui: str, failure: Exception | None, when: str) -> None:
+        """Keep, or clear, the reason this client's files are not up to date. Never raises."""
+        try:
+            if failure is None:
+                if store.saga_problem(cui):
+                    store.set_saga_problem(cui, None, when)
+                    journal.record(
+                        "accounts", "saga.files_written", f"The files for SAGA of {cui} are up to date again.",
+                        cui=cui, client=store.client_name(cui),
+                    )
+                return
+            reason = (
+                failure.message if isinstance(failure, EfacturaError) else f"{type(failure).__name__}: {failure}"
+            )
+            if not isinstance(failure, (OSError, EfacturaError)):
+                log.error("Bringing the files for SAGA of %s up to date failed", cui, exc_info=failure)
+            store.set_saga_problem(cui, reason, when)
+            journal.record(
+                "accounts", "saga.files_failed",
+                f"The files for SAGA of {cui} could not be brought up to date: {reason}",
+                level="warning", cui=cui, client=store.client_name(cui), error=reason,
+            )
+        except Exception:
+            log.exception("Could not note how bringing the files for SAGA of %s up to date ended", cui)
+
+    def _place_saga_files(self, store: Store, cui: str, when: str) -> None:
+        waiting = []
+        for row in store.waiting_for_saga(cui):
+            invoice = parse_invoice(row["invoice_xml"] or "")
+            if invoice is None:  # it was read when it was given its account
+                log.warning("Message %s has an account but its invoice cannot be read", row["id"])
+                continue
+            waiting.append(saga.Entry(invoice, row["cont"], row["id_solicitare"], row["id"]))
+        saga_dir = self._saga_dir(store)
+        folder = saga_dir / cui
+        known = store.saga_ledger(cui)
+        wanted: dict[str, Path] = {}
+        placed: dict[str, str] = {}
+        for file in saga.files_for(waiting, _saga_file_per(store)):
+            path = folder / file.name
+            stored = self._stored_path(path)
+            wanted[stored] = path
+            placed.update(dict.fromkeys(file.ids, stored))
+            if _holds(path, file.content):
+                continue  # as it should be already: SAGA may have it open, so it is left alone
+            # On record before it exists, so the folder never holds a file nobody knows of.
+            store.note_saga_file(stored, cui, known.get(stored) or when)
+            folder.mkdir(parents=True, exist_ok=True)
+            _write_file(path, file.content)
+            store.note_saga_file(stored, cui, when)
+        store.place_in_saga_files(cui, placed, when)
+        # Only now the files that are no longer wanted: the new ones are in place.
+        failure = None
+        for stored in known:
+            if stored in wanted:
+                continue
+            old = self.cfg.data_dir / stored
+            try:
+                if not any(_same_file(old, new) for new in wanted.values()):
+                    if _is_inside(old, saga_dir) and not saga_dir.is_dir():
+                        # Gone, or only away (a stick, a share)? Not forgotten until it is known.
+                        raise FileNotFoundError(f"The folder for SAGA cannot be reached: {saga_dir}")
+                    old.unlink(missing_ok=True)
+            except OSError as exc:
+                failure = failure or exc  # it stays on record and is tried again
+                continue
+            store.forget_saga_file(stored)
+        if failure:
+            raise failure
+
+    def _saga_dir(self, store: Store) -> Path:
+        """The folder for SAGA as it is set now. Another part of the program may have
+        changed it since this Service was made (a download can run for minutes)."""
+        saved = store.get_setting("saga_dir")
+        return Path(saved) if saved else self._file_cfg.saga_dir
+
+    def _saga_state(self, store: Store, cui: str) -> dict:
+        """How this client's files for SAGA stand, for the screen."""
+        written = [when for when in store.saga_ledger(cui).values() if when]
+        return {
+            "file_per": _saga_file_per(store),
+            "written_at": max(written, default=None),
+            "problem": store.saga_problem(cui),
+        }
 
     def _stored_path(self, path: Path) -> str:
         """Relative to the data folder when inside it, so the folder can be moved."""
@@ -2124,12 +2255,55 @@ def _plain(value):
     return value
 
 
-def _read_text(path: str | None) -> str | None:
-    """A file's text, or None when there is no file (never written, or deleted by hand)."""
-    try:
-        return Path(path).read_text(encoding="utf-8") if path else None
-    except OSError:
+def _own_saga_xml(invoice: Invoice | None, row: dict) -> str | None:
+    """One invoice as SAGA is given it, whichever file it is in, and also once it has been
+    imported and is in none. None until it has an account."""
+    if invoice is None or row["classification_status"] != CLASSIFIED or not row["cont"]:
         return None
+    return saga.build_xml(invoice, row["cont"], row["id_solicitare"], row["id"]).decode(saga.ENCODING)
+
+
+def _checked_folder(folder: str) -> Path:
+    """The folder for SAGA as a full path, made if it is not there yet."""
+    text = str(folder or "").strip()
+    path = Path(text).expanduser()
+    if not text or not path.is_absolute():
+        raise EfacturaError(
+            INVALID_INPUT, "Give the folder's full path, for example C:\\SAGA Import."
+        )
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise EfacturaError(INVALID_INPUT, f"The folder cannot be created: {exc}") from None
+    return path
+
+
+def _saga_file_per(store: Store) -> str:
+    saved = store.get_setting(SAGA_FILE_PER)
+    return saved if saved in saga.WAYS else saga.PER_CLIENT
+
+
+def _is_inside(path: Path, folder: Path) -> bool:
+    try:
+        path.relative_to(folder)
+    except ValueError:
+        return False
+    return True
+
+
+def _holds(path: Path, content: bytes) -> bool:
+    try:
+        return path.read_bytes() == content
+    except OSError:
+        return False
+
+
+def _same_file(one: Path, other: Path) -> bool:
+    """Windows does not tell file names apart by letter case: two names may be one file."""
+    try:
+        return one.samefile(other)
+    except OSError:
+        return False
 
 
 def _same_invoice_saved_before(store: Store, row: dict) -> str | None:
@@ -2182,25 +2356,38 @@ def _write_file(path: Path, content: bytes) -> None:
 
 
 class _FileLock:
-    """Allows one sync or login renewal at a time, across processes.
+    """Lets one in at a time, across processes: one sync or login renewal, or (a lock of
+    its own) one writer of the files for SAGA.
 
-    The operating system drops the lock if the process dies, so it cannot go stale.
+    Without `wait` a second comer is refused at once; with it, it waits that many seconds
+    for the first to finish. The operating system drops the lock if the process dies, so
+    it cannot go stale.
     """
 
-    def __init__(self, path: Path):
+    POLL = 0.05  # seconds between two tries while waiting
+
+    def __init__(
+        self, path: Path, wait: float = 0,
+        busy: str = "Another sync or login renewal is running. Try again when it has finished.",
+    ):
         self._path = Path(path)
+        self._wait = wait
+        self._busy = busy
         self._handle = None
 
     def __enter__(self) -> "_FileLock":
         self._path.parent.mkdir(parents=True, exist_ok=True)
         handle = open(self._path, "a+b")
-        try:
-            _lock_handle(handle)
-        except OSError:
-            handle.close()
-            raise EfacturaError(
-                BUSY, "Another sync or login renewal is running. Try again when it has finished."
-            ) from None
+        give_up_at = time.monotonic() + self._wait
+        while True:
+            try:
+                _lock_handle(handle)
+                break
+            except OSError:
+                if time.monotonic() >= give_up_at:
+                    handle.close()
+                    raise EfacturaError(BUSY, self._busy) from None
+                time.sleep(self.POLL)
         self._handle = handle
         return self
 

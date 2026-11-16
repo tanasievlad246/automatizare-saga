@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from efactura import auth, certificate_login
+from efactura import auth, certificate_login, service as service_module
 from efactura.auth import Tokens
 from efactura.config import load_config
 from efactura.errors import EfacturaError
@@ -468,6 +468,32 @@ def test_original_error_is_reported_when_the_failed_run_cannot_be_recorded(
     assert "database is locked" in logged
 
 
+def test_a_lock_that_waits_gets_in_once_the_other_lets_go(tmp_path):
+    import threading
+
+    first = service_module._FileLock(tmp_path / "x.lock")
+    first.__enter__()
+    threading.Timer(0.1, first.__exit__, (None, None, None)).start()
+
+    with service_module._FileLock(tmp_path / "x.lock", wait=5):
+        got_in = True
+
+    assert got_in
+
+
+def test_a_lock_that_waits_gives_up_when_its_time_is_over(tmp_path):
+    import time
+
+    with service_module._FileLock(tmp_path / "x.lock"):
+        began = time.monotonic()
+        with pytest.raises(EfacturaError) as refused:
+            with service_module._FileLock(tmp_path / "x.lock", wait=0.2, busy="Somebody else is writing."):
+                pass
+
+    assert (refused.value.code, refused.value.message) == ("busy", "Somebody else is writing.")
+    assert time.monotonic() - began >= 0.2
+
+
 def test_a_second_sync_while_one_is_running_is_told_busy(service, anaf, cfg, logged_in):
     anaf.add("3001")
     other = Service(cfg, http=anaf.client(), now=lambda: NOW)
@@ -592,7 +618,9 @@ def test_badly_formed_since_date_is_invalid_input(service, synced):
 
 
 def test_invoices_for_another_company_is_empty(service, synced):
-    assert service.invoices(cui=OTHER_VALID_CUI) == {"ok": True, "count": 0, "invoices": []}
+    listed = service.invoices(cui=OTHER_VALID_CUI)
+
+    assert (listed["ok"], listed["count"], listed["invoices"]) == (True, 0, [])
 
 
 def test_single_invoice_with_and_without_xml(service, synced):

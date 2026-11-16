@@ -132,6 +132,21 @@ CREATE TABLE IF NOT EXISTS clients (
     added_at TEXT NOT NULL,
     enabled  INTEGER NOT NULL DEFAULT 1
 );
+
+-- Every file the program has written for SAGA and not removed since. Only these are ever
+-- deleted from the SAGA folder; a file put there by hand is none of the program's business.
+CREATE TABLE IF NOT EXISTS saga_files (
+    path       TEXT PRIMARY KEY,   -- as in messages.saga_xml_path
+    cui        TEXT NOT NULL,
+    written_at TEXT NOT NULL
+);
+
+-- Why a client's files for SAGA could not be brought up to date, until they are.
+CREATE TABLE IF NOT EXISTS saga_problems (
+    cui     TEXT PRIMARY KEY,
+    message TEXT NOT NULL,
+    at      TEXT NOT NULL
+);
 """
 
 RECEIVED_SQL = "message_type LIKE 'FACTURA PRIMITA%'"
@@ -396,14 +411,106 @@ class Store:
         )
         return [row["id"] for row in rows]
 
-    def saga_path_owner(self, saga_xml_path: str, excluding: str) -> str | None:
-        """Another message whose SAGA file is this one, if any. Windows does not tell
-        file names apart by letter case, so neither does this."""
+    # --- the files for SAGA -------------------------------------------------
+
+    def waiting_for_saga(self, cui: str) -> list[dict]:
+        """This company's invoices that have an account and are not yet marked as imported,
+        the one that has waited longest first. Each comes with its XML."""
+        rows = self._conn.execute(
+            "SELECT id, id_solicitare, cont, invoice_xml FROM messages "
+            "WHERE cui = ? AND classification_status = 'classified' AND cont IS NOT NULL "
+            "AND uploaded_to_accounting = 0 ORDER BY first_seen_at, id",
+            (cui,),
+        )
+        return [dict(row) for row in rows]
+
+    def clients_with_saga_files(self) -> list[str]:
+        """Every company with an invoice waiting for SAGA, with a file still on record, or
+        whose files could not be brought up to date the last time."""
+        rows = self._conn.execute(
+            "SELECT cui FROM messages WHERE saga_xml_path IS NOT NULL "
+            "OR (classification_status = 'classified' AND uploaded_to_accounting = 0) "
+            "UNION SELECT cui FROM saga_files UNION SELECT cui FROM saga_problems ORDER BY cui"
+        )
+        return [row["cui"] for row in rows]
+
+    def saga_ledger(self, cui: str) -> dict[str, str | None]:
+        """Every file the program has for this company, with when it was last written.
+        A file written by a version that kept no such record has no time."""
+        ledger: dict[str, str | None] = {
+            row["saga_xml_path"]: None
+            for row in self._conn.execute(
+                "SELECT DISTINCT saga_xml_path FROM messages "
+                "WHERE cui = ? AND saga_xml_path IS NOT NULL",
+                (cui,),
+            )
+        }
+        for row in self._conn.execute(
+            "SELECT path, written_at FROM saga_files WHERE cui = ?", (cui,)
+        ):
+            ledger[row["path"]] = row["written_at"]
+        return ledger
+
+    def note_saga_file(self, path: str, cui: str, when: str) -> None:
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO saga_files (path, cui, written_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(path) DO UPDATE SET cui = excluded.cui, written_at = excluded.written_at",
+                (path, cui, when),
+            )
+
+    def forget_saga_file(self, path: str) -> None:
+        with self._conn:
+            self._conn.execute("DELETE FROM saga_files WHERE path = ?", (path,))
+
+    def place_in_saga_files(self, cui: str, placed: dict[str, str], when: str) -> None:
+        """Which file each of this company's invoices is in: `placed` by message id, and no
+        file for all its other invoices. All or nothing.
+
+        A path that only an invoice remembered (an earlier version kept no other record)
+        goes on record first, so its file is still known once the invoice has forgotten it.
+        """
+        with self._conn:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO saga_files (path, cui, written_at) "
+                "SELECT DISTINCT saga_xml_path, cui, ? FROM messages "
+                "WHERE cui = ? AND saga_xml_path IS NOT NULL",
+                (when, cui),
+            )
+            self._conn.execute("UPDATE messages SET saga_xml_path = NULL WHERE cui = ?", (cui,))
+            self._conn.executemany(
+                "UPDATE messages SET saga_xml_path = ? WHERE id = ? AND cui = ?",
+                [(path, message_id, cui) for message_id, path in placed.items()],
+            )
+
+    def saga_problem(self, cui: str) -> dict | None:
         row = self._conn.execute(
-            "SELECT id FROM messages WHERE lower(saga_xml_path) = lower(?) AND id != ? LIMIT 1",
-            (saga_xml_path, excluding),
+            "SELECT message, at FROM saga_problems WHERE cui = ?", (cui,)
         ).fetchone()
-        return row["id"] if row else None
+        return dict(row) if row else None
+
+    def set_saga_problem(self, cui: str, message: str | None, when: str) -> None:
+        """Note why this company's files are not up to date; None when they are again."""
+        with self._conn:
+            if message is None:
+                self._conn.execute("DELETE FROM saga_problems WHERE cui = ?", (cui,))
+            else:
+                self._conn.execute(
+                    "INSERT INTO saga_problems (cui, message, at) VALUES (?, ?, ?) "
+                    "ON CONFLICT(cui) DO UPDATE SET message = excluded.message, at = excluded.at",
+                    (cui, message, when),
+                )
+
+    def cuis_of(self, ids: Iterable[str]) -> list[str]:
+        """The companies these messages belong to."""
+        wanted = list(dict.fromkeys(ids))
+        found: set[str] = set()
+        for start in range(0, len(wanted), _CHUNK):
+            chunk = wanted[start : start + _CHUNK]
+            marks = ",".join("?" * len(chunk))
+            rows = self._conn.execute(f"SELECT DISTINCT cui FROM messages WHERE id IN ({marks})", chunk)
+            found.update(row["cui"] for row in rows)
+        return sorted(found)
 
     def set_classification(self, message_id: str, **fields) -> None:
         unknown = set(fields) - set(CLASSIFICATION_COLUMNS) - set(SUGGESTION_COLUMNS)

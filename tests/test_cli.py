@@ -473,7 +473,7 @@ def test_one_bad_look_at_the_schedule_is_not_the_last(monkeypatch):
     assert looks == [0, 1]
 
 
-def test_the_running_program_starts_both_background_threads(config_path, monkeypatch):
+def test_the_running_program_starts_its_background_threads(config_path, monkeypatch):
     import threading
 
     import uvicorn
@@ -492,4 +492,36 @@ def test_the_running_program_starts_both_background_threads(config_path, monkeyp
 
     cli.run_server(load_config(config_path), 9001)
 
-    assert started == [cli._keep_house_until, cli._download_on_schedule_until]
+    assert started == [
+        cli._bring_saga_files_up_to_date, cli._keep_house_until, cli._download_on_schedule_until
+    ]
+
+
+def test_at_its_start_the_program_brings_the_files_for_saga_up_to_date(config_path, monkeypatch):
+    asked = []
+
+    class Recorder:
+        def __init__(self, cfg):
+            asked.append(cfg)
+
+        def write_saga_files(self):
+            asked.append("written")
+
+    monkeypatch.setattr(cli, "Service", Recorder)
+    cfg = load_config(config_path)
+
+    cli._bring_saga_files_up_to_date(cfg)
+
+    assert asked == [cfg, "written"]
+
+
+def test_a_failure_while_bringing_the_files_up_to_date_does_not_stop_the_start(config_path, monkeypatch, caplog):
+    class Broken:
+        def __init__(self, cfg):
+            raise RuntimeError("the database is locked")
+
+    monkeypatch.setattr(cli, "Service", Broken)
+
+    cli._bring_saga_files_up_to_date(load_config(config_path))  # does not raise
+
+    assert "files for SAGA" in caplog.text

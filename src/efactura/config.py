@@ -69,6 +69,11 @@ class Config:
         return self.data_dir / "efactura.lock"
 
     @property
+    def saga_lock_path(self) -> Path:
+        """Held while a client's files for SAGA are brought up to date, one at a time."""
+        return self.data_dir / "saga-files.lock"
+
+    @property
     def api_base(self) -> str:
         return f"https://api.anaf.ro/{self.environment}/FCTEL/rest"
 

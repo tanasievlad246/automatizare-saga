@@ -211,8 +211,13 @@ class ScheduleRequest(BaseModel):
     period: PeriodRequest | None = None  # which invoices each run asks for; left out, it stays as stored
 
 
-class SagaFolderRequest(BaseModel):
-    saga_folder: str
+class SagaSettingsRequest(BaseModel):
+    saga_folder: str | None = None  # left out, it stays as it is
+    saga_file_per: str | None = None  # "client" or "invoice"; left out, it stays as it is
+
+
+class SagaFilesRequest(BaseModel):
+    cui: Union[str, int, None] = None  # left out: every client
 
 
 class OpenFolderRequest(BaseModel):
@@ -610,13 +615,27 @@ def create_app(
 
     # --- settings and keys changed on screen ---
 
-    @router.get("/settings", dependencies=documented_key, summary="The folder for SAGA")
+    @router.get(
+        "/settings", dependencies=documented_key,
+        summary="The folder for SAGA, and whether it gets one file per client or per invoice",
+    )
     def settings():
         return call(lambda s: s.app_settings())
 
-    @router.put("/settings", dependencies=documented_key, summary="Change the folder for SAGA")
-    def change_settings(body: SagaFolderRequest):
-        return call(lambda s: s.set_saga_folder(body.saga_folder))
+    @router.put(
+        "/settings", dependencies=documented_key,
+        summary="Change the folder for SAGA, the way its files are written, or both",
+    )
+    def change_settings(body: SagaSettingsRequest):
+        return call(lambda s: s.set_saga_output(body.saga_folder, body.saga_file_per))
+
+    @router.post(
+        "/saga-files/write", dependencies=documented_key,
+        summary="Bring the files for SAGA up to date, for one client or for all",
+    )
+    def write_saga_files(body: SagaFilesRequest):
+        cui = str(body.cui) if body.cui is not None else None
+        return call(lambda s: s.write_saga_files(cui))
 
     @router.post(
         "/settings/choose-folder", dependencies=documented_key,

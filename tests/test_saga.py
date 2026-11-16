@@ -240,3 +240,84 @@ def test_a_second_invoice_with_the_same_name_can_be_told_apart():
     invoice = parse_invoice(rich_invoice_xml(number="AB/12"))
 
     assert saga.file_name(invoice, distinct="3002") == "F_87654321_AB-12-3002_09.11.2026.xml"
+
+
+# --- several invoices in one file ---------------------------------------------------
+
+
+def entry(cont="628", upload_index="5001", download_id="3001", **kwargs):
+    return saga.Entry(parse_invoice(rich_invoice_xml(**kwargs)), cont, upload_index, download_id)
+
+
+def test_a_file_can_hold_several_invoices_each_with_its_own_account_and_ids():
+    root = ElementTree.fromstring(saga.build_file([
+        entry(cont="6022", upload_index="5001", download_id="3001", number="FV-1"),
+        entry(cont="626", upload_index="5002", download_id="3002", number="FV-2",
+              lines=[line("Abonament", "100.00"), line("Internet", "50.00")]),
+    ]))
+
+    assert root.tag == "Facturi"
+    assert [child.tag for child in root] == ["Factura", "Factura"]
+    first, second = root
+    assert [child.tag for child in second] == ["Antet", "Detalii"]
+    assert [child.tag for child in second.find("Antet")] == ANTET_ORDER
+    assert [factura.findtext("Antet/FacturaNumar") for factura in root] == ["FV-1", "FV-2"]
+    assert [factura.findtext("Antet/FacturaIndexSPV") for factura in root] == ["5001", "5002"]
+    assert [factura.findtext("Antet/FacturaIndexDescarcareSPV") for factura in root] == ["3001", "3002"]
+    assert [node.text for node in first.iter("Cont")] == ["6022"]
+    assert [node.text for node in second.iter("Cont")] == ["626", "626"]
+    assert [node.text for node in second.iter("LinieNrCrt")] == ["1", "2"]  # counted within each invoice
+
+
+def test_a_file_with_one_invoice_is_that_invoices_own_file():
+    one = entry()
+
+    assert saga.build_file([one]) == saga.build_xml(one.invoice, "628", "5001", "3001")
+
+
+# --- which files a client's waiting invoices make -------------------------------------
+
+
+def waiting(*numbers, **kwargs):
+    """Invoices with these numbers; ANAF's download id is the message id: 3001, 3002, ..."""
+    return [
+        entry(download_id=f"30{position:02d}", number=number, **kwargs)
+        for position, number in enumerate(numbers, start=1)
+    ]
+
+
+def numbers_in(file):
+    return [node.text for node in ElementTree.fromstring(file.content).iter("FacturaNumar")]
+
+
+def test_one_file_per_client_holds_every_waiting_invoice_under_the_first_ones_name():
+    (file,) = saga.files_for(waiting("FV-7", "FV-8", "FV-9"), saga.PER_CLIENT)
+
+    # SAGA has been seen to accept a file of many invoices under the name of one of them.
+    assert file.name == "F_87654321_FV-7_09.11.2026.xml"
+    assert file.ids == ("3001", "3002", "3003")
+    assert numbers_in(file) == ["FV-7", "FV-8", "FV-9"]
+
+
+def test_no_waiting_invoice_means_no_file():
+    assert saga.files_for([], saga.PER_CLIENT) == []
+    assert saga.files_for([], saga.PER_INVOICE) == []
+
+
+def test_one_file_per_invoice_gives_each_its_own_name():
+    first, second = saga.files_for(waiting("FV-7", "FV-8"), saga.PER_INVOICE)
+
+    assert (first.name, first.ids) == ("F_87654321_FV-7_09.11.2026.xml", ("3001",))
+    assert (second.name, second.ids) == ("F_87654321_FV-8_09.11.2026.xml", ("3002",))
+    assert (numbers_in(first), numbers_in(second)) == (["FV-7"], ["FV-8"])
+
+
+def test_invoices_whose_names_would_collide_are_told_apart_by_their_message_id():
+    # Punctuation is replaced in a file name, and Windows ignores letter case in one.
+    files = saga.files_for(waiting("AB 12", "AB/12", "ab-12"), saga.PER_INVOICE)
+
+    assert [file.name for file in files] == [
+        "F_87654321_AB-12_09.11.2026.xml",
+        "F_87654321_AB-12-3002_09.11.2026.xml",
+        "F_87654321_ab-12-3003_09.11.2026.xml",
+    ]

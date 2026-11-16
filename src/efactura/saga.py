@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
@@ -27,6 +28,12 @@ FILE_DATE_FORMAT = "%d.%m.%Y"  # in the file name
 ENCODING = "utf-8"
 CENT = Decimal("0.01")
 REVERSE_CHARGE = "AE"
+
+# The two ways the invoices waiting for SAGA are put in files: one file per client, or one
+# per invoice. Exactly one is in force.
+PER_CLIENT = "client"
+PER_INVOICE = "invoice"
+WAYS = (PER_CLIENT, PER_INVOICE)
 
 # ANAF carries UN/ECE unit codes; SAGA shows the unit as text.
 UNITS = {
@@ -72,15 +79,77 @@ def file_name(invoice: Invoice, distinct: str | None = None) -> str:
     )
 
 
-def build_xml(
-    invoice: Invoice, cont: str, upload_index: str | None, download_id: str | None
-) -> bytes:
-    """The invoice as a SAGA import file, every line booked on `cont`.
+@dataclass(frozen=True)
+class Entry:
+    """One invoice as it goes into a file for SAGA: every line booked on `cont`.
 
     `upload_index` and `download_id` are ANAF's ids for the e-Factura (SPV).
     """
-    rows = _rows(invoice)
+
+    invoice: Invoice
+    cont: str
+    upload_index: str | None
+    download_id: str | None  # also the id of the message the invoice came in
+
+
+def build_xml(
+    invoice: Invoice, cont: str, upload_index: str | None, download_id: str | None
+) -> bytes:
+    """The invoice as a SAGA import file of its own."""
+    return build_file([Entry(invoice, cont, upload_index, download_id)])
+
+
+def build_file(entries: Iterable[Entry]) -> bytes:
+    """A SAGA import file holding these invoices, in this order. SAGA's manual: to import
+    several invoices at once, the <Factura> part is repeated."""
     root = ElementTree.Element("Facturi")
+    for entry in entries:
+        _add_factura(root, entry)
+    ElementTree.indent(root)
+    return ElementTree.tostring(
+        root, encoding=ENCODING, xml_declaration=True, short_empty_elements=False
+    )
+
+
+@dataclass(frozen=True)
+class File:
+    """A file for SAGA: its name, its content, and the messages whose invoices are in it."""
+
+    name: str
+    content: bytes
+    ids: tuple[str, ...]
+
+
+def files_for(waiting: Sequence[Entry], per: str) -> list[File]:
+    """The files a client's folder must hold for the invoices waiting for SAGA, given in
+    the order they are to be imported. An invoice is known by ANAF's id for its message.
+
+    PER_CLIENT: a single file with all of them. It carries the name of its first invoice,
+    the one shape of name SAGA has been seen to take for a file of many.
+    PER_INVOICE: a file each; a name already taken gets the message id added.
+    """
+    if per == PER_CLIENT:
+        if not waiting:
+            return []
+        return [File(
+            name=file_name(waiting[0].invoice),
+            content=build_file(waiting),
+            ids=tuple(entry.download_id for entry in waiting),
+        )]
+    files, taken = [], set()
+    for entry in waiting:
+        name = file_name(entry.invoice)
+        if name.lower() in taken:  # Windows does not tell file names apart by letter case
+            name = file_name(entry.invoice, distinct=entry.download_id)
+        taken.add(name.lower())
+        files.append(File(name, build_file([entry]), (entry.download_id,)))
+    return files
+
+
+def _add_factura(root: ElementTree.Element, entry: Entry) -> None:
+    invoice, cont = entry.invoice, entry.cont
+    upload_index, download_id = entry.upload_index, entry.download_id
+    rows = _rows(invoice)
     factura = ElementTree.SubElement(root, "Factura")
 
     antet = ElementTree.SubElement(factura, "Antet")
@@ -118,11 +187,6 @@ def build_xml(
             ("Cont", cont),
         ):
             ElementTree.SubElement(linie, tag).text = value
-
-    ElementTree.indent(root)
-    return ElementTree.tostring(
-        root, encoding=ENCODING, xml_declaration=True, short_empty_elements=False
-    )
 
 
 def _party_tags(prefix: str, party: Party, extra_after_iban: bool) -> list[tuple[str, str | None]]:

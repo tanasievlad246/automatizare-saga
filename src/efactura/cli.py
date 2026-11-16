@@ -94,12 +94,24 @@ def run_server(cfg: Config, port: int) -> None:
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
     app.state.stop = lambda: setattr(server, "should_exit", True)  # what POST /shutdown calls
     stopped = threading.Event()
+    threading.Thread(target=_bring_saga_files_up_to_date, args=(cfg,), daemon=True).start()
     threading.Thread(target=_keep_house_until, args=(cfg, stopped), daemon=True).start()
     threading.Thread(target=_download_on_schedule_until, args=(cfg, stopped), daemon=True).start()
     try:
         server.run()
     finally:
         stopped.set()
+
+
+def _bring_saga_files_up_to_date(cfg: Config) -> None:
+    """Beside the server, once, as the program starts: the files for SAGA are made to say
+    what the database says. They may not after an update (an earlier version wrote them
+    another way), after a backup was put back, or when the PC went off in the middle."""
+    try:
+        with journal.trace(fresh=True):
+            Service(cfg).write_saga_files()
+    except Exception:  # this thread has nobody above it, and the page must start all the same
+        log.exception("The files for SAGA could not be brought up to date at the start")
 
 
 FIRST_HOUSEKEEPING = 60  # seconds after the program starts

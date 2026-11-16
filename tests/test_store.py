@@ -653,3 +653,105 @@ def test_a_database_from_before_the_switch_gets_every_client_switched_on(tmp_pat
 
     assert [c["enabled"] for c in store.clients()] == [True]
     assert store.client_switch_counts() == (1, 0)
+
+
+# --- the files written for SAGA -----------------------------------------------------
+
+
+def classified(store, message_id, cont="628", **row):
+    store.insert_message(make_row(id=message_id, **row))
+    store.set_classification(message_id, classification_status="classified", cont=cont)
+
+
+def test_waiting_for_saga_are_the_classified_invoices_not_yet_imported_oldest_first(store):
+    classified(store, "3002", first_seen_at="2026-11-11T10:00:00+02:00")
+    classified(store, "3001", first_seen_at="2026-11-11T09:00:00+02:00", cont="6022")
+    classified(store, "3003")
+    store.set_uploaded(["3003"], True, "2026-11-12T08:00:00+02:00")
+    store.insert_message(make_row(id="3004"))  # no account yet
+    classified(store, "3005", cui=OTHER_VALID_CUI)
+
+    waiting = store.waiting_for_saga(VALID_CUI)
+
+    assert [(row["id"], row["cont"]) for row in waiting] == [("3001", "6022"), ("3002", "628")]
+    assert waiting[0]["invoice_xml"] == "<Invoice/>" and waiting[0]["id_solicitare"] == "5001"
+
+
+def test_placing_invoices_in_files_clears_the_clients_other_rows_only(store):
+    classified(store, "3001")
+    classified(store, "3002")
+    classified(store, "3003", cui=OTHER_VALID_CUI)
+    for message_id in ("3002", "3003"):
+        store.set_classification(message_id, saga_xml_path=f"old/{message_id}.xml")
+
+    store.place_in_saga_files(VALID_CUI, {"3001": "SAGA Import/a.xml"}, "2026-11-12T10:00:00+02:00")
+
+    paths = {i: store.get_message(i)["saga_xml_path"] for i in ("3001", "3002", "3003")}
+    assert paths == {"3001": "SAGA Import/a.xml", "3002": None, "3003": "old/3003.xml"}
+
+
+def test_a_path_only_an_invoice_remembered_goes_on_record_before_the_invoice_forgets_it(store):
+    # An earlier version kept each file's path on its invoice and nowhere else.
+    classified(store, "3001")
+    store.set_classification("3001", saga_xml_path="SAGA Import/earlier.xml")
+    store.note_saga_file("SAGA Import/known.xml", VALID_CUI, "2026-11-11T09:00:00+02:00")
+
+    store.place_in_saga_files(VALID_CUI, {}, "2026-11-12T10:00:00+02:00")
+
+    assert store.get_message("3001")["saga_xml_path"] is None
+    assert store.saga_ledger(VALID_CUI) == {
+        "SAGA Import/earlier.xml": "2026-11-12T10:00:00+02:00",
+        "SAGA Import/known.xml": "2026-11-11T09:00:00+02:00",  # its own time is kept
+    }
+
+
+def test_the_ledger_knows_every_file_the_program_wrote_for_a_client(store):
+    classified(store, "3001")
+    store.set_classification("3001", saga_xml_path="SAGA Import/from-an-earlier-version.xml")
+    store.note_saga_file("SAGA Import/b.xml", VALID_CUI, "2026-11-11T09:30:00+02:00")
+    store.note_saga_file("SAGA Import/other.xml", OTHER_VALID_CUI, "2026-11-11T09:30:00+02:00")
+
+    assert store.saga_ledger(VALID_CUI) == {
+        "SAGA Import/from-an-earlier-version.xml": None,
+        "SAGA Import/b.xml": "2026-11-11T09:30:00+02:00",
+    }
+
+    store.note_saga_file("SAGA Import/b.xml", VALID_CUI, "2026-11-12T10:00:00+02:00")  # written again
+    store.set_classification("3001", saga_xml_path=None)
+    store.forget_saga_file("SAGA Import/from-an-earlier-version.xml")
+
+    assert store.saga_ledger(VALID_CUI) == {"SAGA Import/b.xml": "2026-11-12T10:00:00+02:00"}
+
+
+def test_clients_with_saga_files_are_those_with_invoices_waiting_or_files_left(store):
+    classified(store, "3001")
+    store.insert_message(make_row(id="3002", cui=OTHER_VALID_CUI))  # nothing for SAGA
+    store.note_saga_file("SAGA Import/left.xml", "18547290", "2026-11-11T09:30:00+02:00")
+    store.set_saga_problem("27845391", "PermissionError: the file is open", "2026-11-11T09:30:00+02:00")
+
+    assert store.clients_with_saga_files() == ["12345674", "18547290", "27845391"]
+
+
+def test_the_companies_of_some_messages_are_found_however_many_are_asked_for(store):
+    store.insert_message(make_row(id="3001"))
+    store.insert_message(make_row(id="3002", cui=OTHER_VALID_CUI))
+
+    assert store.cuis_of(["3001", "3002", "3001"]) == [VALID_CUI, OTHER_VALID_CUI]
+    assert store.cuis_of(["3002", *(str(n) for n in range(3000))]) == [OTHER_VALID_CUI]  # more than one query holds
+    assert store.cuis_of([]) == []
+
+
+def test_a_saga_problem_is_kept_per_client_until_cleared(store):
+    assert store.saga_problem(VALID_CUI) is None
+
+    store.set_saga_problem(VALID_CUI, "PermissionError: the file is open", "2026-11-11T09:30:00+02:00")
+    store.set_saga_problem(VALID_CUI, "PermissionError: still open", "2026-11-11T09:45:00+02:00")
+
+    assert store.saga_problem(VALID_CUI) == {
+        "message": "PermissionError: still open", "at": "2026-11-11T09:45:00+02:00"
+    }
+    assert store.saga_problem(OTHER_VALID_CUI) is None
+
+    store.set_saga_problem(VALID_CUI, None, "2026-11-11T10:00:00+02:00")
+
+    assert store.saga_problem(VALID_CUI) is None

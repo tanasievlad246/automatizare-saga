@@ -338,25 +338,6 @@ def test_waiting_invoices_are_classified_by_the_next_sync(service, anaf, cfg, op
     assert saga_file(cfg).exists()
 
 
-def test_a_saga_file_that_cannot_be_written_leaves_the_invoice_waiting(service, anaf, cfg, monkeypatch):
-    anaf.add("3001", xml=rich_invoice_xml(lines=FUEL))
-    real_write = service_module._write_file
-
-    def refuse_saga(path, content):
-        if "SAGA Import" in str(path):
-            raise PermissionError("folder is read-only")
-        real_write(path, content)
-
-    monkeypatch.setattr(service_module, "_write_file", refuse_saga)
-
-    result = service.sync(VALID_CUI)
-
-    (entry,) = result["new"]
-    assert result["ok"] is True
-    assert entry["classification_status"] == "pending"
-    assert "read-only" in entry["classification_error"]
-
-
 # --- what is never classified ----------------------------------------------------------
 
 
@@ -883,6 +864,7 @@ def test_a_failure_of_the_service_as_a_whole_still_stops_the_run(service, anaf, 
 
 
 def test_two_invoices_whose_numbers_differ_only_in_punctuation_get_separate_files(service, anaf, cfg):
+    service.set_saga_output(per="invoice")
     anaf.add("3001", xml=rich_invoice_xml(lines=[line("Motorina", "100.00")], number="AB 12"))
     anaf.add("3002", xml=rich_invoice_xml(lines=[line("Motorina", "999.00")], number="AB/12"))
 
@@ -897,6 +879,7 @@ def test_two_invoices_whose_numbers_differ_only_in_punctuation_get_separate_file
 
 
 def test_file_names_that_differ_only_in_letter_case_are_kept_apart(service, anaf):
+    service.set_saga_output(per="invoice")
     anaf.add("3001", xml=rich_invoice_xml(lines=FUEL, number="ab12"))
     anaf.add("3002", xml=rich_invoice_xml(lines=FUEL, number="AB12"))
 
@@ -918,6 +901,7 @@ def test_the_same_invoice_sent_again_under_a_new_anaf_id_waits_for_a_person(serv
 
 
 def test_deciding_a_repeated_invoice_never_touches_the_first_ones_file(service, anaf, cfg):
+    service.set_saga_output(per="invoice")
     anaf.add("3001", xml=rich_invoice_xml(lines=FUEL))
     service.sync(VALID_CUI)
     anaf.add("3002", xml=rich_invoice_xml(lines=FUEL))
@@ -1010,10 +994,11 @@ def test_an_invoice_already_marked_uploaded_is_not_reclassified(service, anaf, c
 
     assert error_code(lambda: service.set_cont("3001", cont="3022")) == "not_classifiable"
     assert error_code(lambda: service.classify("3001", force=True)) == "not_classifiable"
-    assert conts_in(saga_file(cfg)) == ["6022"]
+    assert not saga_file(cfg).exists()  # imported: it waits in no file
 
     service.mark_uploaded(["3001"], undo=True)
     assert service.set_cont("3001", cont="3022")["invoice"]["cont"] == "3022"
+    assert conts_in(saga_file(cfg)) == ["3022"]
 
 
 def test_when_the_list_of_accounts_leaves_no_room_for_the_invoice_it_goes_to_review(cfg, anaf, openrouter):
@@ -1115,12 +1100,12 @@ def test_invoice_view_of_a_message_that_is_not_an_invoice_has_no_document(servic
     assert error_code(lambda: service.invoice_view("nope")) == "not_found"
 
 
-def test_a_saga_file_deleted_by_hand_is_reported_as_missing_not_as_a_failure(service, anaf, cfg):
+def test_an_invoices_part_for_saga_is_shown_from_what_is_stored_not_from_the_file(service, anaf, cfg):
     anaf.add("3001", xml=rich_invoice_xml(lines=FUEL))
     service.sync(VALID_CUI)
-    saga_file(cfg).unlink()
+    saga_file(cfg).unlink()  # deleted by hand
 
-    assert service.invoice_view("3001")["saga_xml"] is None
+    assert "<Cont>6022</Cont>" in service.invoice_view("3001")["saga_xml"]
 
 
 def test_jev_calls_are_listed_newest_first_with_the_invoice_they_were_about(service, anaf, openrouter):
@@ -1189,12 +1174,12 @@ def test_the_folder_of_an_invoice_is_opened_where_its_file_really_is(service, an
     monkeypatch.setattr(service_module, "_reveal", revealed.append)
     anaf.add("3001", xml=rich_invoice_xml(lines=FUEL))
     service.sync(VALID_CUI)
-    service.set_saga_folder(str(tmp_path / "folderul nou"))  # the file stays in the old place
+    service.set_saga_output(folder=str(tmp_path / "folderul nou"))  # what is waiting moves there
 
     result = service.open_saga_folder(message_id="3001")
 
-    assert revealed == [saga_file(cfg).parent]
-    assert result["folder"] == str(saga_file(cfg).parent)
+    assert revealed == [tmp_path / "folderul nou" / VALID_CUI]
+    assert result["folder"] == str(tmp_path / "folderul nou" / VALID_CUI)
     assert error_code(lambda: service.open_saga_folder(message_id="nope")) == "not_found"
 
 
