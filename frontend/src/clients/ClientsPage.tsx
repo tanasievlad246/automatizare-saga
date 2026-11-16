@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Download } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { Notice } from '@/components/Notice'
 import { PageTitle } from '@/components/PageTitle'
@@ -13,6 +13,8 @@ import { useSchedule } from '../schedule/useSchedule'
 import type { Client } from '../types'
 import { AddClientDialog } from './AddClientDialog'
 import { ClientRow } from './ClientRow'
+import { ClientSearchField } from './ClientSearchField'
+import { searchClients, shownLine } from './clientSearch'
 import { ImportClientsDialog } from './ImportClientsDialog'
 import { SyncDialog } from './SyncDialog'
 import { switchedOffLine, switchedOn } from './switchedOff'
@@ -27,6 +29,18 @@ export function ClientsPage() {
   const [clientsToSync, setClientsToSync] = useState<Client[] | null>(null)
   const [importing, setImporting] = useState(false)
   const [adding, setAdding] = useState(false)
+  // What is typed in the search field narrows the rows shown, nothing else: the counts and the
+  // download for all clients are still about every client.
+  const [typed, setTyped] = useState('')
+  const searchField = useRef<HTMLInputElement>(null)
+  const found = searchClients(clients, typed)
+  const seen = shownLine(found.length, clients.length)
+  const showAll = () => {
+    setTyped('')
+    // The button pressed goes away with the search: the focus goes back to the field.
+    searchField.current?.focus()
+  }
+  const showAllButton = <Button type="button" variant="link" className="px-0" onClick={showAll}>Arată toți clienții</Button>
 
   const onClients = switchedOn(clients)
   const offLine = switchedOffLine(onClients.length, clients.length - onClients.length)
@@ -88,11 +102,31 @@ export function ClientsPage() {
         </p>
       )}
 
-      <div className="flex flex-col gap-3">
-        {clients.map((client) => (
-          <ClientRow key={client.cui} client={client} blocked={running !== null} onSync={() => setClientsToSync([client])} />
-        ))}
-      </div>
+      {clients.length > 0 && (
+        <div className="flex flex-col gap-3">
+          <ClientSearchField ref={searchField} value={typed} onChange={setTyped} />
+          {found.length === 0 ? (
+            <div className="rounded-2xl border bg-card px-6 py-5.5">
+              {/* Only the two sentences are announced, not the button under them. */}
+              <div role="status">
+                <p className="text-lg font-semibold">Niciun client nu se potrivește cu „{typed.trim()}”.</p>
+                <p className="text-muted-foreground">Verificați ce ați scris, sau căutați după CUI.</p>
+              </div>
+              {showAllButton}
+            </div>
+          ) : (
+            seen && (
+              <div className="flex flex-wrap items-center gap-x-4">
+                <p role="status" className="text-muted-foreground">{seen}</p>
+                {showAllButton}
+              </div>
+            )
+          )}
+          {found.map((client) => (
+            <ClientRow key={client.cui} client={client} blocked={running !== null} onSync={() => setClientsToSync([client])} />
+          ))}
+        </div>
+      )}
 
       <SyncDialog clients={clientsToSync} someAreOff={onClients.length < clients.length} onClose={() => setClientsToSync(null)} />
       <ImportClientsDialog open={importing} onClose={() => setImporting(false)} />

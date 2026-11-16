@@ -177,7 +177,7 @@ The page opens at `http://autosaga.localhost:8765/ui/`. `http://127.0.0.1:8765/u
 
 | Screen | What it is for |
 |---|---|
-| **Clienți** | Import clients from Excel or CSV, add one by hand, download invoices for one client or all (the last 1 to 30 days, or two dates). Shows how many invoices are new and how many wait for an account |
+| **Clienți** | Import clients from Excel or CSV, add one by hand, download invoices for one client or all (the last 1 to 30 days, or two dates). Shows how many invoices are new and how many wait for an account. A search field narrows the list by name or CUI as it is typed (no matter the case, the diacritics, or whether the CUI is written with `RO`); the download for all clients still covers every client that is on |
 | **A client's invoices** | New, to check, not yet in SAGA, all. One button marks the ready ones as imported in SAGA |
 | **One invoice** | The invoice as a person reads it, ANAF's XML, the SAGA XML; its account and who chose it; accept Jev's proposal or pick another; a rule proposed from it when no rule decided it; the path of the SAGA file |
 | **Reguli de clasificare** | Rules proposed from recent decisions, the rules, the accounts Jev chooses from, how sure Jev must be, the question Jev is asked. The button "Testează regulile" opens the rule test, see [Testing the rules](#testing-the-rules) |
