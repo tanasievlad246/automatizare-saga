@@ -88,7 +88,7 @@ export function ClientInvoicesPage() {
           }
         />
       )}
-      <ImportedInSagaCard ready={ready} />
+      <ImportedInSagaCard cui={cui} ready={ready} saga={data?.saga} />
 
       <SyncDialog
         clients={syncing ? [client ?? { cui, name: `CUI ${cui}`, invoices: 0, new_count: 0, review_count: 0, ready_count: 0, last_sync_at: null, enabled: true }] : null}

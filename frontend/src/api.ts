@@ -1,9 +1,10 @@
 // Every call the page makes to the Python program, in one place.
 
 import type {
-  AuthStatus, BackupStatus, Client, CostGroup, Costs, ImportResult, Invoice, InvoiceView, JevCall, JournalLine,
+  AppSettings, AuthStatus, BackupStatus, Client, CostGroup, Costs, ImportResult, Invoice, InvoiceView, JevCall, JournalLine,
   ProposedRules,
-  RuleEvidence, RuleFields, RuleTestResult, RulesOverview, SchedulePeriod, ScheduleStatus, Secret, SyncResult, UpdateStatus,
+  RuleEvidence, RuleFields, RuleTestResult, RulesOverview, SagaFilePer, SagaState, SchedulePeriod, ScheduleStatus, Secret,
+  SyncResult, UpdateStatus,
 } from './types'
 
 /** What the program answers when it refuses: a stable code and an English explanation. */
@@ -66,12 +67,19 @@ export const api = {
   loginWithCertificate: () => call<AuthStatus>('POST', '/auth/login/certificate'),
   finishLogin: (address: string) => call<AuthStatus>('POST', '/auth/login/finish', { address }),
 
-  sagaFolder: () => call<{ saga_folder: string; demo?: boolean }>('GET', '/settings'),
-  setSagaFolder: (saga_folder: string) => call<{ saga_folder: string }>('PUT', '/settings', { saga_folder }),
+  sagaFolder: () => call<AppSettings>('GET', '/settings'),
+  /**
+   * The folder, one file per client or per invoice, or both; what is left out stays as it
+   * is. `problems` names the clients whose files could not be written again.
+   */
+  setSagaOutput: (changes: { saga_folder?: string; saga_file_per?: SagaFilePer }) =>
+    call<AppSettings & { problems: { cui: string }[] }>('PUT', '/settings', changes),
+  /** Brings one client's files for SAGA up to date, after they could not be. */
+  writeSagaFiles: (cui: string) => call<{ problems: { cui: string }[] }>('POST', '/saga-files/write', { cui }),
   /** `purpose` says which folder is being picked, so the dialog is titled for it and opens where that folder is. */
   chooseFolder: (purpose?: 'backups') =>
     call<{ folder: string | null }>('POST', `/settings/choose-folder${query({ purpose })}`),
-  /** Opens the folder that invoice's SAGA file is really in, which may be an earlier SAGA folder. */
+  /** Opens the folder that invoice's SAGA file is in. */
   openFolderOf: (invoiceId: string) => call('POST', '/folders/open', { invoice_id: invoiceId }),
 
   clients: () => call<{ clients: Client[] }>('GET', '/clients'),
@@ -89,7 +97,7 @@ export const api = {
   sync: (cui: string, period: SyncPeriod) => call<SyncResult>('POST', '/sync', { cui, ...period }),
 
   receivedInvoices: (cui: string) =>
-    call<{ invoices: Invoice[] }>('GET', `/invoices${query({ cui, type: 'primita' })}`),
+    call<{ invoices: Invoice[]; saga: SagaState }>('GET', `/invoices${query({ cui, type: 'primita' })}`),
   invoiceView: (id: string) => call<InvoiceView>('GET', `/invoices/${id}/view`),
   classify: (id: string, force = false) => call('POST', `/invoices/${id}/classify`, { force }),
   acceptSuggestion: (id: string) => call('POST', `/invoices/${id}/cont`, { accept: true }),

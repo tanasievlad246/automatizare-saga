@@ -141,6 +141,13 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
 
   'settings.secret_changed': (data) => `A fost schimbată o cheie: ${KEY_NAMES[text(data.name)] ?? text(data.name)}.`,
   'settings.changed': (data) => (data.name === 'saga_dir' ? 'A fost schimbat folderul pentru SAGA.' : 'A fost schimbată o setare.'),
+  'settings.saga_file_per': (data) =>
+    data.per === 'invoice'
+      ? 'De acum, fiecare factură gata de import are fișierul ei pentru SAGA.'
+      : 'De acum, facturile gata de import ale fiecărui client se scriu într-un singur fișier pentru SAGA.',
+  'saga.files_failed': (data) =>
+    `Fișierele pentru SAGA ale clientului ${who(data)} nu au putut fi scrise. Programul încearcă din nou la următoarea schimbare.`,
+  'saga.files_written': (data) => `Fișierele pentru SAGA ale clientului ${who(data)} sunt din nou la zi.`,
   'settings.confidence': (data) => `Cât de sigur trebuie să fie Jev: acum ${formatPercent(Number(data.level_set))}.`,
   'settings.jev_question': () => 'A fost schimbată întrebarea pusă lui Jev.',
 

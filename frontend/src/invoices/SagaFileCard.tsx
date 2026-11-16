@@ -1,14 +1,16 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
+import { Notice } from '@/components/Notice'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { api } from '../api'
 import { showError } from '../errorMessages'
-import type { Invoice } from '../types'
+import type { Invoice, SagaState } from '../types'
+import { fileCardNote } from './sagaFiles'
 
-/** Where the file for SAGA is, and whether the invoice has been imported there. */
-export function SagaFileCard({ invoice }: { invoice: Invoice }) {
+/** Which file for SAGA the invoice is in, if any, and whether it has been imported there. */
+export function SagaFileCard({ invoice, saga }: { invoice: Invoice; saga: SagaState }) {
   const queryClient = useQueryClient()
   const setImported = useMutation({
     mutationFn: (imported: boolean) => api.markUploaded([invoice.id], imported),
@@ -18,14 +20,18 @@ export function SagaFileCard({ invoice }: { invoice: Invoice }) {
     onError: showError,
   })
   const openFolder = useMutation({ mutationFn: () => api.openFolderOf(invoice.id), onError: showError })
-  const path = invoice.saga_xml_path
+  const note = fileCardNote(invoice, saga)
+  // While the client's folder is not up to date, the file may not say what this screen says.
+  const stale = saga.problem !== null
+  const path = stale ? null : invoice.saga_xml_path
   const copyPath = () =>
     navigator.clipboard.writeText(path ?? '').then(() => toast.success('Calea a fost copiată.'), showError)
 
   return (
     <section aria-label="Fișierul pentru SAGA" className="flex flex-col gap-3 rounded-2xl border bg-card px-5 pt-4.5 pb-5.5">
       <h2 className="font-sans text-xl font-bold">Fișierul pentru SAGA</h2>
-      {path ? (
+      {note && (stale ? <Notice tone="attention">{note}</Notice> : <p className="text-muted-foreground">{note}</p>)}
+      {path && (
         <>
           <p className="rounded-lg bg-background px-3.5 py-3 font-mono text-[0.88rem] break-all">{path}</p>
           <div className="flex flex-wrap gap-2.5">
@@ -35,14 +41,13 @@ export function SagaFileCard({ invoice }: { invoice: Invoice }) {
             </Button>
           </div>
         </>
-      ) : (
-        <p className="text-muted-foreground">Se creează imediat ce factura are un cont.</p>
       )}
       <div className="flex min-h-12 items-center gap-3">
         <Checkbox
           id="imported-in-saga"
           checked={invoice.uploaded_to_accounting}
-          disabled={setImported.isPending}
+          // Not ticked while the folder is not up to date: SAGA may never have got this invoice.
+          disabled={setImported.isPending || (stale && !invoice.uploaded_to_accounting)}
           onCheckedChange={(checked) => setImported.mutate(checked === true)}
         />
         <Label htmlFor="imported-in-saga">Am importat factura în SAGA</Label>

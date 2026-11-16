@@ -20,6 +20,18 @@ export type Client = {
 
 export type ClassificationStatus = 'pending' | 'classified' | 'review' | null
 
+/** How the invoices waiting for SAGA are put in files: one file per client, or one per invoice. */
+export type SagaFilePer = 'client' | 'invoice'
+
+export type AppSettings = { saga_folder: string; saga_file_per: SagaFilePer; demo?: boolean }
+
+/** How one client's files for SAGA stand. `problem` is set while they could not be brought up to date. */
+export type SagaState = {
+  file_per: SagaFilePer
+  written_at: string | null
+  problem: { message: string; at: string } | null
+}
+
 export type Invoice = {
   id: string
   cui: string
@@ -86,6 +98,7 @@ export type InvoiceView = {
   document: InvoiceDocument | null
   xml: string | null
   saga_xml: string | null
+  saga: SagaState
   jev: { probabilities: Record<string, number> | null; error: string | null } | null
   rule_suggestion: RuleSuggestion | null
 }

@@ -149,3 +149,18 @@ describe('a line of the journal, in Romanian', () => {
       .toBe('Descărcarea automată nu a ajuns la ANAF. A fost ultima încercare pentru această oră.')
   })
 })
+
+describe('the files for SAGA in the journal', () => {
+  const line = (event: string, data: Record<string, unknown>) =>
+    describeEvent({ event, data, message: '' } as unknown as JournalLine)
+
+  it('says which way was chosen', () => {
+    expect(line('settings.saga_file_per', { per: 'client' })).toBe('De acum, facturile gata de import ale fiecărui client se scriu într-un singur fișier pentru SAGA.')
+    expect(line('settings.saga_file_per', { per: 'invoice' })).toBe('De acum, fiecare factură gata de import are fișierul ei pentru SAGA.')
+  })
+
+  it('says whose files could not be written, and when they are up to date again', () => {
+    expect(line('saga.files_failed', { client: 'Alfa SRL', cui: '1' })).toBe('Fișierele pentru SAGA ale clientului Alfa SRL nu au putut fi scrise. Programul încearcă din nou la următoarea schimbare.')
+    expect(line('saga.files_written', { cui: '12345674' })).toBe('Fișierele pentru SAGA ale clientului CUI 12345674 sunt din nou la zi.')
+  })
+})

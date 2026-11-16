@@ -19,7 +19,7 @@ type Shown = 'factura' | 'anaf' | 'saga'
 const WAYS_TO_SEE_IT: { value: Shown; label: string }[] = [
   { value: 'factura', label: 'Factura' },
   { value: 'anaf', label: 'Fișierul de la ANAF (XML)' },
-  { value: 'saga', label: 'Fișierul pentru SAGA (XML)' },
+  { value: 'saga', label: 'XML pentru SAGA' },
 ]
 
 /** One invoice: what it says, the two files behind it, its account and its file for SAGA. */
@@ -98,7 +98,7 @@ export function InvoicePage() {
               suggestion={view.rule_suggestion}
             />
           )}
-          <SagaFileCard invoice={invoice} />
+          <SagaFileCard invoice={invoice} saga={view.saga} />
         </div>
       </div>
       </div>
