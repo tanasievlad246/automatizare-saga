@@ -130,7 +130,8 @@ CREATE TABLE IF NOT EXISTS clients (
     cui      TEXT PRIMARY KEY,
     name     TEXT NOT NULL,
     added_at TEXT NOT NULL,
-    enabled  INTEGER NOT NULL DEFAULT 1
+    enabled  INTEGER NOT NULL DEFAULT 1,
+    per_line INTEGER NOT NULL DEFAULT 1   -- 1: each invoice line gets its own account
 );
 
 -- Every file the program has written for SAGA and not removed since. Only these are ever
@@ -267,8 +268,13 @@ class Store:
                 if name not in present:
                     self._conn.execute(f"ALTER TABLE messages ADD COLUMN {name} {kind}")
             # A client switched off is left out of every download; all start switched on.
-            if "enabled" not in {row["name"] for row in self._conn.execute("PRAGMA table_info(clients)")}:
+            of_clients = {row["name"] for row in self._conn.execute("PRAGMA table_info(clients)")}
+            if "enabled" not in of_clients:
                 self._conn.execute("ALTER TABLE clients ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1")
+            # Each line of an invoice gets its own account, for every client until it is
+            # switched off; the clients of an earlier version start with it on as well.
+            if "per_line" not in of_clients:
+                self._conn.execute("ALTER TABLE clients ADD COLUMN per_line INTEGER NOT NULL DEFAULT 1")
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_messages_classification "
                 "ON messages (cui, classification_status)"
@@ -612,7 +618,7 @@ class Store:
             return f"m.uploaded_to_accounting = 0 AND m.classification_status = '{status}'"
 
         rows = self._conn.execute(
-            "SELECT c.cui, c.name, c.added_at, c.enabled, "
+            "SELECT c.cui, c.name, c.added_at, c.enabled, c.per_line, "
             f"{count('m.' + RECEIVED_SQL)} AS invoices, "
             f"{count(IS_NEW_SQL)} AS new_count, "
             f"{count(waiting('review'))} AS review_count, "
@@ -622,7 +628,10 @@ class Store:
             f"FROM clients c LEFT JOIN messages m ON m.cui = c.cui {LATEST_RUN_JOIN}c.cui "
             "GROUP BY c.cui ORDER BY c.name COLLATE NOCASE, c.cui"
         )
-        return [{**row, "enabled": bool(row["enabled"])} for row in map(dict, rows)]
+        return [
+            {**row, "enabled": bool(row["enabled"]), "per_line": bool(row["per_line"])}
+            for row in map(dict, rows)
+        ]
 
     def client_name(self, cui: str) -> str | None:
         row = self._conn.execute("SELECT name FROM clients WHERE cui = ?", (cui,)).fetchone()
@@ -640,6 +649,23 @@ class Store:
             )
         if cursor.rowcount == 0:
             raise EfacturaError(NOT_FOUND, f"No client with CUI {cui}.")
+
+    def client_per_line(self, cui: str) -> bool:
+        """Does each line of this company's invoices get its own account? Yes, unless the
+        client was switched to one account per invoice; a company not in the list too."""
+        row = self._conn.execute("SELECT per_line FROM clients WHERE cui = ?", (cui,)).fetchone()
+        return True if row is None else bool(row["per_line"])
+
+    def set_client_per_line(self, cui: str, per_line: bool) -> bool:
+        """Returns whether anything changed."""
+        if self.client_enabled(cui) is None:
+            raise EfacturaError(NOT_FOUND, f"No client with CUI {cui}.")
+        with self._conn:
+            cursor = self._conn.execute(
+                "UPDATE clients SET per_line = ? WHERE cui = ? AND per_line <> ?",
+                (1 if per_line else 0, cui, 1 if per_line else 0),
+            )
+        return cursor.rowcount > 0
 
     def clients_switched_on(self) -> list[dict]:
         """The clients a download goes through, in the order of the list."""

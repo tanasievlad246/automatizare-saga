@@ -198,6 +198,10 @@ class ClientSwitchRequest(BaseModel):
     enabled: bool
 
 
+class PerLineRequest(BaseModel):
+    enabled: StrictBool
+
+
 class PeriodRequest(BaseModel):
     days: StrictInt | None = None  # the last so many days, 1-60; a number, not "7" or true
     start: str | None = None  # or a first day, YYYY-MM-DD, with a last one
@@ -605,6 +609,13 @@ def create_app(
     )
     def switch_client(cui: str, body: ClientSwitchRequest):
         return call(lambda s: s.set_client_enabled(cui, body.enabled))
+
+    @router.put(
+        "/clients/{cui}/per-line", dependencies=documented_key,
+        summary="An account for each invoice line of this client, or one for the whole invoice",
+    )
+    def switch_per_line(cui: str, body: PerLineRequest):
+        return call(lambda s: s.set_client_per_line(cui, body.enabled))
 
     @router.post(
         "/clients/import", dependencies=documented_key,

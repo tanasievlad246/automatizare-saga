@@ -514,6 +514,18 @@ def test_a_client_is_switched_off_through_the_api(api):
     assert [(c["cui"], c["enabled"]) for c in reply.json()["clients"]] == [(VALID_CUI, False)]
 
 
+def test_classification_per_line_is_switched_through_the_api(api):
+    api.post("/clients", json={"cui": VALID_CUI, "name": "Alfa Construct SRL"})
+
+    reply = api.put(f"/clients/RO{VALID_CUI}/per-line", json={"enabled": False})
+
+    assert reply.status_code == 200
+    assert [(c["cui"], c["per_line"], c["enabled"]) for c in reply.json()["clients"]] == [(VALID_CUI, False, True)]
+    assert api.put(f"/clients/{VALID_CUI}/per-line", json={"enabled": "nu"}).status_code == 400
+    unknown = api.put("/clients/14399840/per-line", json={"enabled": False})
+    assert (unknown.status_code, unknown.json()["error"]["code"]) == (404, "not_found")
+
+
 def test_downloading_a_client_that_is_off_answers_409(api):
     api.post("/clients", json={"cui": VALID_CUI, "name": "Alfa Construct SRL"})
     api.put(f"/clients/{VALID_CUI}/enabled", json={"enabled": False})

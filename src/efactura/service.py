@@ -765,6 +765,23 @@ class Service:
             store.close()
         return self.clients()
 
+    def set_client_per_line(self, cui: str, per_line: bool) -> dict:
+        """Whether each line of this client's invoices gets its own account, or the largest
+        line decides one account for the whole invoice. It holds for the invoices decided
+        from now on; the ones that already have an account keep it."""
+        cui = normalize_cui(cui)
+        store = self._open_store()
+        try:
+            if store.set_client_per_line(cui, per_line):
+                journal.record(
+                    "clients", "client.per_line",
+                    f"Client {cui}: " + ("an account for each line." if per_line else "one account for the whole invoice."),
+                    cui=cui, client=store.client_name(cui), per_line=per_line,
+                )
+        finally:
+            store.close()
+        return self.clients()
+
     def schedule(self) -> dict:
         """When the program downloads by itself, and how the last run went."""
         return schedule.status(self.cfg, self._now())

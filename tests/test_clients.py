@@ -312,6 +312,54 @@ def test_the_clients_that_are_on_are_listed_by_name(service, cfg):
     store.close()
 
 
+# --- classification line by line: on for every client until it is switched off -------------------
+
+
+def test_a_new_client_has_its_invoices_classified_line_by_line(service):
+    service.save_client(VALID_CUI, "Alfa")
+
+    assert service.clients()["clients"][0]["per_line"] is True
+
+
+def test_classification_per_line_can_be_switched_off_and_on_again(service):
+    service.save_client(VALID_CUI, "Alfa")
+
+    off = service.set_client_per_line(f"RO{VALID_CUI}", False)
+    on = service.set_client_per_line(VALID_CUI, True)
+
+    assert [c["per_line"] for c in off["clients"]] == [False]
+    assert [c["per_line"] for c in on["clients"]] == [True]
+    assert [c["enabled"] for c in off["clients"]] == [True]  # the download switch is another one
+
+
+def test_switching_per_line_for_a_client_that_is_not_in_the_list_is_not_found(service):
+    assert error_code(lambda: service.set_client_per_line(VALID_CUI, False)) == "not_found"
+
+
+def test_renaming_or_importing_a_client_leaves_per_line_as_it_was(service):
+    service.save_client(VALID_CUI, "Alfa")
+    service.set_client_per_line(VALID_CUI, False)
+
+    service.save_client(VALID_CUI, "Alfa Nou")
+    service.import_clients("clienti.csv", f"CUI,Denumire\n{VALID_CUI},Alfa Trei\n".encode())
+
+    assert service.clients()["clients"][0]["per_line"] is False
+
+
+def test_switching_per_line_is_written_in_the_journal(service, cfg):
+    journal.configure(cfg.db_path)
+    try:
+        service.save_client(VALID_CUI, "Alfa")
+        service.set_client_per_line(VALID_CUI, False)
+        service.set_client_per_line(VALID_CUI, False)  # already off: nothing changed, nothing written
+
+        lines = [e for e in journal.events(cfg.db_path)["events"] if e["event"] == "client.per_line"]
+    finally:
+        journal.configure(None)
+
+    assert [e["data"] for e in lines] == [{"cui": VALID_CUI, "client": "Alfa", "per_line": False}]
+
+
 def test_switching_a_client_is_written_in_the_journal(service, cfg):
     journal.configure(cfg.db_path)
     try:

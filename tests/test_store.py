@@ -655,6 +655,31 @@ def test_a_database_from_before_the_switch_gets_every_client_switched_on(tmp_pat
     assert store.client_switch_counts() == (1, 0)
 
 
+def test_a_database_from_before_per_line_gets_every_client_classified_line_by_line(tmp_path):
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.execute(
+        "CREATE TABLE clients (cui TEXT PRIMARY KEY, name TEXT NOT NULL, added_at TEXT NOT NULL, "
+        "enabled INTEGER NOT NULL DEFAULT 1)"
+    )
+    old.execute("INSERT INTO clients VALUES ('12345674', 'Alfa', '2026-11-01T09:00:00', 0)")
+    old.commit()
+    old.close()
+
+    store = Store(path)
+
+    assert [(c["enabled"], c["per_line"]) for c in store.clients()] == [(False, True)]
+    assert store.client_per_line("12345674") is True
+    store.close()
+
+
+def test_a_company_that_is_not_in_the_client_list_is_classified_line_by_line_too(tmp_path):
+    store = Store(tmp_path / "new.db")
+
+    assert store.client_per_line("12345674") is True
+    store.close()
+
+
 # --- the files written for SAGA -----------------------------------------------------
 
 
