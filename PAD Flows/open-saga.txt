@@ -1,0 +1,25 @@
+System.RunApplication.RunApplicationAndWaitToLoad ApplicationPath: $'''C:\\SAGA C.3.0\\sc.exe''' WindowStyle: System.ProcessWindowStyle.Normal Timeout: 0 ProcessId=> SagaProcessId WindowHandle=> SagaHandle
+UIAutomation.FocusWindow.FocusByInstanceOrHandle WindowInstance: SagaHandle
+UIAutomation.MoveWindow.MoveByInstanceOrHandle WindowInstance: SagaHandle X: 100 Y: 100
+DISABLE EXIT Code: 0
+UIAutomation.SetWindowState.SetStateByInstanceOrHandle WindowInstance: SagaHandle State: UIAutomation.WindowState.Restored
+UIAutomation.FocusWindow.FocusByInstanceOrHandle WindowInstance: SagaHandle
+WAIT 1
+MouseAndKeyboard.MoveMouse X: 176 Y: 328 RelativeTo: MouseAndKeyboard.PositionRelativeTo.ActiveWindow MovementStyle: MouseAndKeyboard.MovementStyle.AnimateFast
+MouseAndKeyboard.SendMouseClick.Click ClickType: MouseAndKeyboard.MouseClickType.LeftClick MillisecondsDelay: 0
+WAIT 1
+MouseAndKeyboard.MoveMouse X: 430 Y: 300 RelativeTo: MouseAndKeyboard.PositionRelativeTo.ActiveWindow MovementStyle: MouseAndKeyboard.MovementStyle.AnimateFast
+MouseAndKeyboard.SendMouseClick.Click ClickType: MouseAndKeyboard.MouseClickType.LeftClick MillisecondsDelay: 0
+WAIT 1
+MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: CurrentItem['NUME'] DelayBetweenKeystrokes: 15 SendTextAsHardwareKeys: True
+WAIT 3
+MouseAndKeyboard.MoveMouse X: 725 Y: 300 RelativeTo: MouseAndKeyboard.PositionRelativeTo.ActiveWindow MovementStyle: MouseAndKeyboard.MovementStyle.AnimateFast
+MouseAndKeyboard.SendMouseClick.Click ClickType: MouseAndKeyboard.MouseClickType.LeftClick MillisecondsDelay: 0
+WAIT 1
+MouseAndKeyboard.MoveMouse X: 350 Y: 370 RelativeTo: MouseAndKeyboard.PositionRelativeTo.ActiveWindow MovementStyle: MouseAndKeyboard.MovementStyle.AnimateFast
+MouseAndKeyboard.SendMouseClick.Click ClickType: MouseAndKeyboard.MouseClickType.LeftClick MillisecondsDelay: 0
+MouseAndKeyboard.MoveMouse X: 725 Y: 325 RelativeTo: MouseAndKeyboard.PositionRelativeTo.ActiveWindow MovementStyle: MouseAndKeyboard.MovementStyle.AnimateFast
+MouseAndKeyboard.SendMouseClick.Click ClickType: MouseAndKeyboard.MouseClickType.LeftClick MillisecondsDelay: 0
+WAIT 1
+MouseAndKeyboard.MoveMouse X: 690 Y: 525 RelativeTo: MouseAndKeyboard.PositionRelativeTo.ActiveWindow MovementStyle: MouseAndKeyboard.MovementStyle.AnimateFast
+MouseAndKeyboard.SendMouseClick.Click ClickType: MouseAndKeyboard.MouseClickType.LeftClick MillisecondsDelay: 0

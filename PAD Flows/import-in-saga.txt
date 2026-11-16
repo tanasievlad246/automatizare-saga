@@ -1,0 +1,22 @@
+# Muta mouse pe Diverse
+UIAutomation.FocusWindow.FocusByInstanceOrHandle WindowInstance: SagaHandle
+MouseAndKeyboard.MoveMouse X: 230 Y: 41 RelativeTo: MouseAndKeyboard.PositionRelativeTo.ActiveWindow MovementStyle: MouseAndKeyboard.MovementStyle.AnimateFast
+MouseAndKeyboard.SendMouseClick.Click ClickType: MouseAndKeyboard.MouseClickType.LeftClick MillisecondsDelay: 0
+# Click import date
+MouseAndKeyboard.MoveMouse X: 264 Y: 155 RelativeTo: MouseAndKeyboard.PositionRelativeTo.ActiveWindow MovementStyle: MouseAndKeyboard.MovementStyle.AnimateFast
+MouseAndKeyboard.SendMouseClick.Click ClickType: MouseAndKeyboard.MouseClickType.LeftClick MillisecondsDelay: 0
+MouseAndKeyboard.MoveMouse X: 492 Y: 128 RelativeTo: MouseAndKeyboard.PositionRelativeTo.ActiveWindow MovementStyle: MouseAndKeyboard.MovementStyle.AnimateFast
+MouseAndKeyboard.SendMouseClick.Click ClickType: MouseAndKeyboard.MouseClickType.LeftClick MillisecondsDelay: 0
+MouseAndKeyboard.SendKeys.FocusAndSendKeysByInstanceOrHandle WindowInstance: SagaHandle TextToSend: $'''{Control}()a''' DelayBetweenKeystrokes: 10 SendTextAsHardwareKeys: False
+MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: $'''{Back}''' DelayBetweenKeystrokes: 10 SendTextAsHardwareKeys: False
+MouseAndKeyboard.SendKeys.FocusAndSendKeys TextToSend: CurrentCuiFiles DelayBetweenKeystrokes: 10 SendTextAsHardwareKeys: False
+WAIT 2
+MouseAndKeyboard.MoveMouse X: 638 Y: 198 RelativeTo: MouseAndKeyboard.PositionRelativeTo.ActiveWindow MovementStyle: MouseAndKeyboard.MovementStyle.AnimateFast
+MouseAndKeyboard.SendMouseClick.Click ClickType: MouseAndKeyboard.MouseClickType.LeftClick MillisecondsDelay: 0
+WAIT (MouseAndKeyboard.WaitForMouse.WaitForMouseToBecome MousePointerState: MouseAndKeyboard.MousePointerState.WaitCursor)
+WAIT 5
+WAIT (MouseAndKeyboard.WaitForMouse.WaitForMouseToBecome MousePointerState: MouseAndKeyboard.MousePointerState.Arrow)
+Display.ShowMessageDialog.ShowMessage Title: $'''FINISH SAGA IMPORT''' Message: $'''FINISHED SAGA IMPORT''' Icon: Display.Icon.None Buttons: Display.Buttons.OK DefaultButton: Display.DefaultButton.Button1 IsTopMost: False ButtonPressed=> ButtonPressed2
+# Click pe cale de import
+# Pune in locul acelui text, calea catre subfolderul pe cui
+# Pentru fiecare factura de pe tabel, identifica coordonatele fiecarui button de import, si da click pe fiecare button

@@ -1,0 +1,25 @@
+SET SagaImportFolderPath TO $'''C:\\Users\\tanas\\Desktop\\Saga Facturi Clasificate Pentru Import'''
+SET SkipCurrentCui TO $'''false'''
+Excel.LaunchExcel.LaunchAndOpenUnderExistingProcess Path: $'''C:\\Users\\tanas\\Downloads\\Registru 3.xlsx''' Visible: True ReadOnly: False UseMachineLocale: False Instance=> ExcelInstance
+Excel.GetTableRange Instance: ExcelInstance TableName: $'''Table1''' IsPivot: False FirstColumnIndex=> FirstColumnIndex FirstRowIndex=> FirstRowIndex LastColumnIndex=> LastColumnIndex LastRowIndex=> LastRowIndex
+Excel.ReadFromExcel.ReadCells Instance: ExcelInstance StartColumn: FirstColumnIndex StartRow: FirstRowIndex EndColumn: LastColumnIndex EndRow: LastRowIndex GetCellContentsMode: Excel.GetCellContentsMode.TypedValues FirstLineIsHeader: True RangeValue=> ExcelData
+LOOP FOREACH CurrentItem IN ExcelData
+    SET SkipCurrentCui TO $'''false'''
+    DISABLE Display.ShowMessageDialog.ShowMessage Title: $'''Firma - %CurrentItem['NUME']%''' Message: $'''%CurrentItem['NUME']% - %CurrentItem['CUI']%''' Icon: Display.Icon.None Buttons: Display.Buttons.OK DefaultButton: Display.DefaultButton.Button1 IsTopMost: False ButtonPressed=> ButtonPressed2
+    Folder.GetFiles Folder: $'''%SagaImportFolderPath%\\%CurrentItem['CUI']%''' FileFilter: $'''*''' IncludeSubfolders: False FailOnAccessDenied: True SortBy1: Folder.SortBy.NoSort SortDescending1: False SortBy2: Folder.SortBy.NoSort SortDescending2: False SortBy3: Folder.SortBy.NoSort SortDescending3: False Files=> CurrentCuiFiles
+    ON ERROR
+        SET SkipCurrentCui TO $'''true'''
+    END
+    IF SkipCurrentCui = $'''true''' THEN
+        DISABLE Display.ShowMessageDialog.ShowMessage Title: $'''Skiping current cui''' Message: $'''Skiping %CurrentItem['NUME']% - %CurrentItem['CUI']%''' Icon: Display.Icon.None Buttons: Display.Buttons.OK DefaultButton: Display.DefaultButton.Button1 IsTopMost: False ButtonPressed=> ButtonPressed3
+        NEXT LOOP
+    ELSE
+    END
+    CALL 'Deschide saga pentru firma'
+    LOOP FOREACH CurrentCuiFile IN CurrentCuiFiles
+        Display.ShowMessageDialog.ShowMessage Title: $'''File''' Message: $'''Importing %CurrentCuiFile%''' Icon: Display.Icon.None Buttons: Display.Buttons.OK DefaultButton: Display.DefaultButton.Button1 IsTopMost: False ButtonPressed=> ButtonPressed
+        CALL 'Import facturi XML in SAGA'
+        Display.ShowMessageDialog.ShowMessage Title: CurrentCuiFile Message: $'''Imported %CurrentCuiFile%!!!''' Icon: Display.Icon.None Buttons: Display.Buttons.OK DefaultButton: Display.DefaultButton.Button1 IsTopMost: False ButtonPressed=> ButtonPressed3
+    END
+    System.TerminateProcess.TerminateProcessById ProcessId: SagaProcessId
+END
