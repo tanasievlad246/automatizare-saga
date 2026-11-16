@@ -88,6 +88,9 @@ export const api = {
   saveClient: (cui: string, name: string) => call('POST', '/clients', { cui, name }),
   setClientEnabled: (cui: string, enabled: boolean) =>
     call<{ clients: Client[] }>('PUT', `/clients/${cui}/enabled`, { enabled }),
+  /** An account for each line of this client's invoices (true), or one for the whole invoice. */
+  setClientPerLine: (cui: string, enabled: boolean) =>
+    call<{ clients: Client[] }>('PUT', `/clients/${cui}/per-line`, { enabled }),
   removeClient: (cui: string) => call('DELETE', `/clients/${cui}`),
   importClients: (file: File) =>
     call<ImportResult>('POST', `/clients/import${query({ filename: file.name })}`, file),
@@ -106,8 +109,11 @@ export const api = {
     call<{ invoices: Invoice[] }>('GET', `/invoices${query({ cui, type: 'trimisa' })}`),
   invoiceView: (id: string) => call<InvoiceView>('GET', `/invoices/${id}/view`),
   classify: (id: string, force = false) => call('POST', `/invoices/${id}/classify`, { force }),
-  acceptSuggestion: (id: string) => call('POST', `/invoices/${id}/cont`, { accept: true }),
-  setCont: (id: string, cont: string, force = false) => call('POST', `/invoices/${id}/cont`, { cont, force }),
+  /** Without `line`: Jev's proposal for the invoice, or for every line left on an invoice decided line by line. */
+  acceptSuggestion: (id: string, line?: number) => call('POST', `/invoices/${id}/cont`, { accept: true, line }),
+  /** Without `line`: the account of the whole invoice, or of every line on an invoice decided line by line. */
+  setCont: (id: string, cont: string, force = false, line?: number) =>
+    call('POST', `/invoices/${id}/cont`, { cont, force, line }),
   markUploaded: (ids: string[], uploaded = true) => call('POST', '/invoices/uploaded', { ids, uploaded }),
 
   rules: () => call<RulesOverview>('GET', '/rules'),
@@ -126,7 +132,7 @@ export const api = {
     call('POST', '/rules/suggestions/dismiss', { invoice_ids: invoiceIds }),
   saveAccount: (cont: string, description: string) => call('PUT', `/accounts/${cont}`, { description }),
   deleteAccount: (cont: string) => call('DELETE', `/accounts/${cont}`),
-  setJevSettings: (settings: { min_confidence?: number; jev_instructions?: string }) =>
+  setJevSettings: (settings: { min_confidence?: number; jev_instructions?: string; jev_line_instructions?: string }) =>
     call('PUT', '/classification/settings', settings),
 
   costs: (range: CostRange, group: CostGroup) =>

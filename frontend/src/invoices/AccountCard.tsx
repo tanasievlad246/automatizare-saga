@@ -17,10 +17,13 @@ const WHO_CHOSE: Record<string, (invoice: Invoice) => string> = {
   human: () => 'Ales de dumneavoastră',
 }
 
-/** The account of one invoice: what it is and who chose it, or the question when nobody has. */
+/**
+ * The account of one invoice: what it is and who chose it, or the question when nobody has.
+ * `perLine`: the client's invoices are now decided line by line, though this one was not.
+ */
 export function AccountCard({
-  invoice, jev, accounts,
-}: { invoice: Invoice; jev: InvoiceView['jev']; accounts: Record<string, string> }) {
+  invoice, jev, accounts, perLine = false,
+}: { invoice: Invoice; jev: InvoiceView['jev']; accounts: Record<string, string>; perLine?: boolean }) {
   const queryClient = useQueryClient()
   const [changing, setChanging] = useState(false)
   const afterChange = {
@@ -47,7 +50,9 @@ export function AccountCard({
     mutationFn: () => api.classify(invoice.id, outsideClassification),
     ...afterChange,
   })
-  const busy = accept.isPending || choose.isPending || decide.isPending
+  // Decided again from the start, with the rules and Jev, line by line this time.
+  const redecide = useMutation({ mutationFn: () => api.classify(invoice.id, true), ...afterChange })
+  const busy = accept.isPending || choose.isPending || decide.isPending || redecide.isPending
   const chooser = (
     <AccountChooser
       accounts={accounts}
@@ -147,7 +152,19 @@ export function AccountCard({
       {invoice.uploaded_to_accounting ? (
         <p className="text-muted-foreground">Factura este importată în SAGA, așa că aici contul nu se mai schimbă.</p>
       ) : invoice.cont && !changing ? (
-        <Button variant="outline" className="self-start" onClick={() => setChanging(true)}>Schimbă contul</Button>
+        <>
+          <Button variant="outline" className="self-start" onClick={() => setChanging(true)}>Schimbă contul</Button>
+          {perLine && (
+            <div className="flex flex-col gap-1.5 border-t pt-3">
+              <p className="text-muted-foreground">
+                Clientul are clasificarea pe fiecare linie, dar această factură a primit un singur cont înainte.
+              </p>
+              <Button variant="outline" className="h-auto min-h-11 self-start py-2 text-left whitespace-normal" disabled={busy} onClick={() => redecide.mutate()}>
+                {redecide.isPending ? 'Se alege…' : 'Clasifică din nou, pe fiecare linie'}
+              </Button>
+            </div>
+          )}
+        </>
       ) : (
         <>
           {!invoice.cont && (

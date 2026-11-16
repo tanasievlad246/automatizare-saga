@@ -9,7 +9,7 @@ from efactura import auth, journal, service as service_module
 from efactura.api import create_app
 from efactura.auth import Tokens
 from efactura.config import load_config
-from efactura.rules import Rule, Rulebook
+from efactura.rules import DEFAULT_JEV_LINE_INSTRUCTIONS, Rule, Rulebook
 from efactura.service import Service
 
 from helpers import VALID_CUI, FakeAnaf, FakeOpenRouter, line, rich_invoice_xml, set_rulebook
@@ -77,6 +77,7 @@ def test_rules_route_shows_accounts_rules_and_the_question(api):
     assert overview["accounts"] == BOOK.accounts
     assert [rule["name"] for rule in overview["rules"]] == ["combustibil"]
     assert overview["jev_instructions"] == "Alege contul facturii."
+    assert overview["jev_line_instructions"] == DEFAULT_JEV_LINE_INSTRUCTIONS
 
 
 def test_an_account_can_be_added_and_removed_over_the_api(api):

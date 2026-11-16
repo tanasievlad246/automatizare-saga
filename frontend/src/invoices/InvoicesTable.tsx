@@ -6,6 +6,7 @@ import { formatDate, formatMoney } from '../format'
 import type { Invoice } from '../types'
 import { InvoiceStateBadges } from './InvoiceStateBadges'
 import { needsAnAccount } from './invoiceState'
+import { listAccount } from './lineAccounts'
 
 /**
  * A client's invoices, one per row, each leading to the invoice itself. While they are
@@ -52,11 +53,7 @@ export function InvoicesTable({
                   {formatMoney(invoice.total_with_vat, invoice.currency)}
                 </TableCell>
                 <TableCell>
-                  {invoice.cont ? (
-                    <span className="font-heading text-xl font-bold">{invoice.cont}</span>
-                  ) : (
-                    <span className="text-muted-foreground">neales</span>
-                  )}
+                  <AccountShown invoice={invoice} />
                 </TableCell>
                 <TableCell><InvoiceStateBadges invoice={invoice} /></TableCell>
                 <TableCell className="text-right">
@@ -80,5 +77,16 @@ export function InvoicesTable({
         </TableBody>
       </Table>
     </div>
+  )
+}
+
+/** "605", "605 +1" when its lines are on other accounts too, "605 · o linie fără cont" while some wait. */
+function AccountShown({ invoice }: { invoice: Invoice }) {
+  const { main, more } = listAccount(invoice)
+  return (
+    <span className="flex flex-wrap items-baseline gap-x-2">
+      {main ? <span className="font-heading text-xl font-bold">{main}</span> : !more && <span className="text-muted-foreground">neales</span>}
+      {more && <span className="text-[0.9rem] text-muted-foreground">{more}</span>}
+    </span>
   )
 }

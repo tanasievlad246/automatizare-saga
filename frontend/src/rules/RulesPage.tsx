@@ -64,7 +64,13 @@ export function RulesPage() {
       </section>
 
       {data && <AccountsCard accounts={data.accounts} />}
-      {data && <JevSettingsCard minConfidence={data.min_confidence} question={data.jev_instructions} />}
+      {data && (
+        <JevSettingsCard
+          minConfidence={data.min_confidence}
+          question={data.jev_instructions}
+          lineQuestion={data.jev_line_instructions}
+        />
+      )}
       {editing && <RuleDialog {...editing} clients={clients} onClose={() => setEditing(null)} />}
     </div>
   )

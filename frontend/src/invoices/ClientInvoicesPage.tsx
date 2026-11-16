@@ -16,6 +16,7 @@ import { ImportedInSagaCard } from './ImportedInSagaCard'
 import { InvoicesTable } from './InvoicesTable'
 import { IssuedInvoicesCard } from './IssuedInvoicesCard'
 import { needsAnAccount } from './invoiceState'
+import { PerLineSwitch } from './PerLineSwitch'
 import { whenNoneReceived } from './issuedInvoices'
 
 // The four ways to look at a client's invoices. The first one that has anything is shown.
@@ -71,6 +72,7 @@ export function ClientInvoicesPage() {
         </div>
       </div>
 
+      {client && <PerLineSwitch client={client} />}
       {error && <Notice tone="attention">{errorMessage(error)}</Notice>}
       <PillTabs
         label="Ce facturi se văd"
@@ -97,7 +99,7 @@ export function ClientInvoicesPage() {
       <IssuedInvoicesCard cui={cui} count={data?.issued_count} />
 
       <SyncDialog
-        clients={syncing ? [client ?? { cui, name: `CUI ${cui}`, invoices: 0, new_count: 0, review_count: 0, ready_count: 0, last_sync_at: null, enabled: true }] : null}
+        clients={syncing ? [client ?? { cui, name: `CUI ${cui}`, invoices: 0, new_count: 0, review_count: 0, ready_count: 0, last_sync_at: null, enabled: true, per_line: false }] : null}
         someAreOff={false}
         onClose={() => setSyncing(false)}
       />

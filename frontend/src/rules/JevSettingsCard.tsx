@@ -8,12 +8,18 @@ import { Textarea } from '@/components/ui/textarea'
 import { api } from '../api'
 import { showError } from '../errorMessages'
 
-/** How sure Jev must be before its answer is used, and the question it is asked. */
-export function JevSettingsCard({ minConfidence, question }: { minConfidence: number; question: string }) {
+/**
+ * How sure Jev must be before its answer is used, and the questions it is asked: about one
+ * line (clients decided line by line) and about a whole invoice (clients with one account).
+ */
+export function JevSettingsCard({
+  minConfidence, question, lineQuestion,
+}: { minConfidence: number; question: string; lineQuestion: string }) {
   const queryClient = useQueryClient()
   const [percent, setPercent] = useState(String(Math.round(minConfidence * 100)))
   const [questionShown, setQuestionShown] = useState(false)
   const [typedQuestion, setTypedQuestion] = useState(question)
+  const [typedLineQuestion, setTypedLineQuestion] = useState(lineQuestion)
   // An empty field would read as 0%, which lets every answer of Jev's through unchecked.
   const level = percent.trim() === '' ? NaN : Number(percent)
   const levelIsUsable = level >= 0 && level <= 100
@@ -54,21 +60,37 @@ export function JevSettingsCard({ minConfidence, question }: { minConfidence: nu
           Dacă Jev este mai puțin sigur de atât, factura vine la dumneavoastră pentru verificare.
         </p>
         {questionShown ? (
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="jev-question">Întrebarea pe care o primește Jev la fiecare factură</Label>
-            <Textarea id="jev-question" rows={5} value={typedQuestion} onChange={(event) => setTypedQuestion(event.target.value)} />
-            <Button
-              variant="outline"
-              className="self-start"
-              disabled={!typedQuestion.trim() || save.isPending}
-              onClick={() => save.mutate({ jev_instructions: typedQuestion })}
-            >
-              Salvează întrebarea
-            </Button>
-          </div>
+          <>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="jev-line-question">Întrebarea pe care o primește Jev la fiecare linie</Label>
+              <p className="text-[0.95rem] text-muted-foreground">Pentru clienții cu clasificarea pe fiecare linie.</p>
+              <Textarea id="jev-line-question" rows={5} value={typedLineQuestion} onChange={(event) => setTypedLineQuestion(event.target.value)} />
+              <Button
+                variant="outline"
+                className="self-start"
+                disabled={!typedLineQuestion.trim() || save.isPending}
+                onClick={() => save.mutate({ jev_line_instructions: typedLineQuestion })}
+              >
+                Salvează întrebarea pentru linie
+              </Button>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="jev-question">Întrebarea pe care o primește Jev la fiecare factură</Label>
+              <p className="text-[0.95rem] text-muted-foreground">Pentru clienții cu un singur cont pe factură.</p>
+              <Textarea id="jev-question" rows={5} value={typedQuestion} onChange={(event) => setTypedQuestion(event.target.value)} />
+              <Button
+                variant="outline"
+                className="self-start"
+                disabled={!typedQuestion.trim() || save.isPending}
+                onClick={() => save.mutate({ jev_instructions: typedQuestion })}
+              >
+                Salvează întrebarea pentru factură
+              </Button>
+            </div>
+          </>
         ) : (
           <Button variant="link" className="self-start px-0" onClick={() => setQuestionShown(true)}>
-            Arată întrebarea pe care o primește Jev
+            Arată întrebările pe care le primește Jev
           </Button>
         )}
       </div>

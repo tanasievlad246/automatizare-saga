@@ -12,6 +12,8 @@ import { ProposedRuleCard } from '../rules/ProposedRuleCard'
 import { AccountCard } from './AccountCard'
 import { InvoiceStateBadges } from './InvoiceStateBadges'
 import { ISSUED_INVOICE, isIssued } from './issuedInvoices'
+import { LineAccountDialog, type LineTarget } from './LineAccountDialog'
+import { LineAccountsCard } from './LineAccountsCard'
 import { RenderedInvoice } from './RenderedInvoice'
 import { SagaFileCard } from './SagaFileCard'
 import { XmlViewer } from './XmlViewer'
@@ -30,8 +32,10 @@ const WAYS_TO_SEE_IT: { value: Shown; label: string }[] = [
 export function InvoicePage() {
   const { cui = '', id = '' } = useParams()
   const [shown, setShown] = useState<Shown>('factura')
+  const [choosing, setChoosing] = useState<number | 'all' | null>(null)
   const { data: view, error } = useQuery({ queryKey: ['invoice', id], queryFn: () => api.invoiceView(id) })
   const accounts = useQuery({ queryKey: ['rules'], queryFn: api.rules }).data?.accounts ?? {}
+  const perLine = useQuery({ queryKey: ['clients'], queryFn: api.clients }).data?.clients.find((each) => each.cui === cui)?.per_line ?? false
 
   const back = (
     <Link to={`/clienti/${cui}`} className="inline-flex min-h-11 items-center gap-1.5 self-start font-semibold no-underline">
@@ -51,6 +55,15 @@ export function InvoicePage() {
 
   const { invoice, document } = view
   const issued = isIssued(invoice)
+  const lineAccounts = invoice.line_accounts
+  const chosenLine = typeof choosing === 'number' ? document?.lines.find((line) => line.number === choosing) : undefined
+  const chosenEntry = lineAccounts?.find((entry) => entry.line === choosing)
+  const target: LineTarget | null =
+    choosing === 'all'
+      ? 'all'
+      : chosenLine && chosenEntry
+        ? { entry: chosenEntry, description: chosenLine.description, value: chosenLine.value }
+        : null
   return (
     <div className="flex flex-col gap-5">
       {back}
@@ -80,7 +93,19 @@ export function InvoicePage() {
           </div>
           {shown === 'factura' &&
             (document ? (
-              <RenderedInvoice document={document} goesToSaga={!issued} />
+              <RenderedInvoice
+                document={document}
+                goesToSaga={!issued}
+                lineColumn={
+                  lineAccounts
+                    ? {
+                        accounts: lineAccounts,
+                        invoiceCont: invoice.cont,
+                        onChoose: invoice.uploaded_to_accounting ? null : setChoosing,
+                      }
+                    : null
+                }
+              />
             ) : (
               <p className="px-6 py-6 text-muted-foreground">Acest mesaj de la ANAF nu este o factură.</p>
             ))}
@@ -106,7 +131,11 @@ export function InvoicePage() {
           </section>
         ) : (
           <div className="flex min-w-0 flex-col gap-5">
-            <AccountCard invoice={invoice} jev={view.jev} accounts={accounts} />
+            {lineAccounts ? (
+              <LineAccountsCard invoice={invoice} accounts={accounts} onChooseAll={() => setChoosing('all')} />
+            ) : (
+              <AccountCard invoice={invoice} jev={view.jev} accounts={accounts} perLine={perLine} />
+            )}
             {view.rule_suggestion && (
               // Another invoice, or another account for this one, is a different proposal: start it afresh.
               <ProposedRuleCard
@@ -117,6 +146,9 @@ export function InvoicePage() {
             )}
             <SagaFileCard invoice={invoice} saga={view.saga} />
           </div>
+        )}
+        {target && (
+          <LineAccountDialog key={String(choosing)} invoice={invoice} target={target} accounts={accounts} onClose={() => setChoosing(null)} />
         )}
       </div>
       </div>

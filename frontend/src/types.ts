@@ -10,6 +10,7 @@ export type AuthStatus = {
 export type Client = {
   cui: string
   name: string
+  per_line: boolean // each line of its invoices gets its own account
   invoices: number
   new_count: number
   review_count: number
@@ -54,8 +55,21 @@ export type Invoice = {
   confidence: number | null
   confidence_threshold: number | null
   saga_xml_path: string | null
+  line_accounts: LineAccount[] | null // null: one account for the whole invoice
   classification_error: string | null
   possible_duplicate_of: string | null
+}
+
+/** The account of one line of an invoice decided line by line. `line` is its number on the invoice. */
+export type LineAccount = {
+  line: number
+  cont: string | null // null while it waits for a person
+  method: 'rules' | 'jev' | 'jev_accepted' | 'human' | 'follows' | null // follows: the largest line's account
+  rule: string | null
+  reason: string // the program's English explanation
+  suggested_cont: string | null
+  confidence: number | null
+  confidence_threshold: number | null
 }
 
 export type Party = {
@@ -153,7 +167,8 @@ export type RuleFields = Omit<Rule, 'id'>
 export type RulesOverview = {
   accounts: Record<string, string>
   rules: Rule[]
-  jev_instructions: string
+  jev_instructions: string // the question about a whole invoice
+  jev_line_instructions: string // the question about one line
   min_confidence: number
 }
 

@@ -1,16 +1,30 @@
 import { Fragment } from 'react'
+import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { cn } from '@/lib/utils'
 import { formatAmount, formatDate, formatNumber } from '../format'
-import type { InvoiceDocument, Party } from '../types'
+import type { InvoiceDocument, LineAccount, Party } from '../types'
 import { totalRows, totalsNote } from './invoiceTotals'
+import { whoChoseLine } from './lineAccounts'
+
+/** The account of each line, for an invoice decided line by line. `onChoose` is null once it is imported. */
+export type LineColumn = {
+  accounts: LineAccount[]
+  invoiceCont: string | null // what a discount on the whole invoice is booked on
+  onChoose: ((line: number) => void) | null
+}
 
 const ROW_WEIGHTS = { plain: '', bold: 'font-bold', large: 'text-xl font-bold' }
 
 /**
  * The invoice as a person reads it: who, when, what was bought, how much. `goesToSaga` is
- * false for an invoice the client issued, which is only looked at.
+ * false for an invoice the client issued, which is only looked at. With `lineColumn`, each
+ * line shows its account and can be given another; the price then makes room for it.
  */
-export function RenderedInvoice({ document, goesToSaga }: { document: InvoiceDocument; goesToSaga: boolean }) {
+export function RenderedInvoice({
+  document, goesToSaga, lineColumn = null,
+}: { document: InvoiceDocument; goesToSaga: boolean; lineColumn?: LineColumn | null }) {
+  const accountOf = new Map(lineColumn?.accounts.map((entry) => [entry.line, entry]))
   const note = totalsNote(document, goesToSaga)
   // SAGA has no credit notes; they are booked as invoices with negative amounts, so say what this is.
   const kind = document.is_credit_note ? 'Factură de stornare (scade din ce datorează clientul)' : null
@@ -31,33 +45,69 @@ export function RenderedInvoice({ document, goesToSaga }: { document: InvoiceDoc
           <TableRow>
             <TableHead>Denumire</TableHead>
             <TableHead className="text-right">Cantitate</TableHead>
-            <TableHead className="text-right">Preț</TableHead>
+            {!lineColumn && <TableHead className="text-right">Preț</TableHead>}
             <TableHead className="text-right">Valoare</TableHead>
             <TableHead className="text-right">TVA</TableHead>
+            {lineColumn && <TableHead>Cont</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
-          {document.lines.map((line) => (
-            <TableRow key={line.number}>
-              <TableCell className="font-semibold">{line.description}</TableCell>
-              <TableCell className="text-right whitespace-nowrap">
-                {formatNumber(line.quantity)} {line.unit_name?.toLowerCase()}
-              </TableCell>
-              <TableCell className="text-right">{formatAmount(line.unit_price)}</TableCell>
-              <TableCell className="text-right">{formatAmount(line.value)}</TableCell>
-              <TableCell className="text-right">{line.vat_percent ? `${formatNumber(line.vat_percent)}%` : ''}</TableCell>
-            </TableRow>
-          ))}
+          {document.lines.map((line) => {
+            const entry = accountOf.get(line.number)
+            const waiting = lineColumn !== null && !entry?.cont
+            return (
+              <TableRow key={line.number} className={cn(waiting && 'bg-attention/40 hover:bg-attention/50')}>
+                <TableCell className="font-semibold">{line.description}</TableCell>
+                <TableCell className="text-right whitespace-nowrap">
+                  {formatNumber(line.quantity)} {line.unit_name?.toLowerCase()}
+                </TableCell>
+                {!lineColumn && <TableCell className="text-right">{formatAmount(line.unit_price)}</TableCell>}
+                <TableCell className="text-right">{formatAmount(line.value)}</TableCell>
+                <TableCell className="text-right">{line.vat_percent ? `${formatNumber(line.vat_percent)}%` : ''}</TableCell>
+                {lineColumn && (
+                  // The account, who chose it and the button in one cell: a column more would
+                  // push the button out of sight beside the account card.
+                  <TableCell className="w-44 whitespace-normal">
+                    <div className="flex flex-col items-start gap-1">
+                      {entry?.cont ? (
+                        <span className="font-heading text-xl leading-tight font-bold">{entry.cont}</span>
+                      ) : (
+                        <span className="font-bold text-attention-foreground">fără cont</span>
+                      )}
+                      {entry && <span className="text-[0.85rem] leading-snug text-muted-foreground">{whoChoseLine(entry)}</span>}
+                      {entry && lineColumn.onChoose && (
+                        <Button
+                          size="sm"
+                          variant={waiting ? 'default' : 'outline'}
+                          className={cn('mt-0.5', waiting && 'bg-attention-foreground hover:bg-attention-foreground/85')}
+                          aria-label={`${waiting ? 'Alege contul' : 'Schimbă contul'} pentru linia ${line.number}: ${line.description}`}
+                          onClick={() => lineColumn.onChoose?.(line.number)}
+                        >
+                          {waiting ? 'Alege contul' : 'Schimbă'}
+                        </Button>
+                      )}
+                    </div>
+                  </TableCell>
+                )}
+              </TableRow>
+            )
+          })}
           {document.adjustments.map((adjustment, index) => (
             <TableRow key={`adjustment-${index}`}>
               <TableCell className="font-semibold">
                 {adjustment.reason ?? (adjustment.is_charge ? 'Taxă suplimentară' : 'Reducere')}
               </TableCell>
-              <TableCell colSpan={2} />
+              <TableCell colSpan={lineColumn ? 1 : 2} />
               <TableCell className="text-right">
                 {adjustment.is_charge ? '' : '−'}{formatAmount(adjustment.amount)}
               </TableCell>
               <TableCell />
+              {lineColumn && (
+                <TableCell className="whitespace-normal">
+                  <div className="font-heading text-xl leading-tight font-bold">{lineColumn.invoiceCont ?? '—'}</div>
+                  <div className="text-[0.85rem] text-muted-foreground">ca linia cea mai mare</div>
+                </TableCell>
+              )}
             </TableRow>
           ))}
         </TableBody>

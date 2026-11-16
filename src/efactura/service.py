@@ -1095,6 +1095,7 @@ class Service:
                 "accounts": store.accounts(),
                 "rules": store.rules(),
                 "jev_instructions": store.get_setting(JEV_INSTRUCTIONS) or "",
+                "jev_line_instructions": store.get_setting(JEV_LINE_INSTRUCTIONS) or DEFAULT_JEV_LINE_INSTRUCTIONS,
                 "min_confidence": _min_confidence(store),
             }
         finally:
