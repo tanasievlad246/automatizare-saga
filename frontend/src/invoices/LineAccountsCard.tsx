@@ -55,7 +55,16 @@ export function LineAccountsCard({
       ) : (
         !sentTwice && <p>Nicio linie nu are încă un cont.</p>
       )}
-      {left > 0 && !imported && <Notice tone="attention">{linesLeftNote(left)}</Notice>}
+      {invoice.classification_status === 'pending' ? (
+        <Notice tone="attention">
+          <p>Programul nu a putut încă să îl întrebe pe Jev despre toate liniile. Încearcă din nou la următoarea descărcare.</p>
+          {invoice.classification_error && (
+            <p className="text-[0.9rem]">Detalii tehnice: {invoice.classification_error}</p>
+          )}
+        </Notice>
+      ) : (
+        left > 0 && !imported && <Notice tone="attention">{linesLeftNote(left)}</Notice>
+      )}
       {imported ? (
         <p className="text-muted-foreground">Factura este importată în SAGA, așa că aici conturile nu se mai schimbă.</p>
       ) : (

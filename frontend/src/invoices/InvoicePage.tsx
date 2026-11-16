@@ -134,7 +134,12 @@ export function InvoicePage() {
             {lineAccounts ? (
               <LineAccountsCard invoice={invoice} accounts={accounts} onChooseAll={() => setChoosing('all')} />
             ) : (
-              <AccountCard invoice={invoice} jev={view.jev} accounts={accounts} perLine={perLine} />
+              <AccountCard
+                invoice={invoice}
+                jev={view.jev}
+                accounts={accounts}
+                splittable={perLine && (document?.lines.length ?? 0) > 1}
+              />
             )}
             {view.rule_suggestion && (
               // Another invoice, or another account for this one, is a different proposal: start it afresh.

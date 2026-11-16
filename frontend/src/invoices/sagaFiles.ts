@@ -75,7 +75,10 @@ export function fileCardNote(invoice: Invoice, saga: SagaState): string | null {
       ? 'Factura este marcată ca importată, așa că nu mai este în fișierul pentru SAGA. Dacă scoateți bifa, intră la loc.'
       : 'Factura este marcată ca importată și nu are cont, așa că nu este în fișierul pentru SAGA.'
   }
-  return hasAccount
-    ? `Factura are cont, dar nu este încă în fișierul pentru SAGA. Deschideți lista de facturi a clientului și apăsați acolo „${NOT_UP_TO_DATE.retry}”.`
+  if (hasAccount) {
+    return `Factura are cont, dar nu este încă în fișierul pentru SAGA. Deschideți lista de facturi a clientului și apăsați acolo „${NOT_UP_TO_DATE.retry}”.`
+  }
+  return invoice.line_accounts
+    ? 'Factura intră în fișierul pentru SAGA imediat ce toate liniile au un cont.'
     : 'Factura intră în fișierul pentru SAGA imediat ce are un cont.'
 }

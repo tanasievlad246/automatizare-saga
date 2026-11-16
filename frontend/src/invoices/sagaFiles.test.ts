@@ -68,6 +68,15 @@ describe('what the card says', () => {
   })
 })
 
+describe('the note on an invoice decided line by line', () => {
+  it('says the invoice waits for every line to have an account', () => {
+    const lines = [{ line: 1, cont: '605' }, { line: 2, cont: null }] as Invoice['line_accounts']
+
+    expect(fileCardNote(invoice('1', null, { classification_status: 'review', line_accounts: lines }), fine()))
+      .toBe('Factura intră în fișierul pentru SAGA imediat ce toate liniile au un cont.')
+  })
+})
+
 describe('the note on an invoice', () => {
   it('says the invoice shares the file of its client', () => {
     expect(fileCardNote(invoice('1', FILE), fine())).toBe('Factura este în fișierul clientului, împreună cu celelalte facturi gata de import:')

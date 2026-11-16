@@ -19,11 +19,12 @@ const WHO_CHOSE: Record<string, (invoice: Invoice) => string> = {
 
 /**
  * The account of one invoice: what it is and who chose it, or the question when nobody has.
- * `perLine`: the client's invoices are now decided line by line, though this one was not.
+ * `splittable`: the client's invoices are now decided line by line and this one, which has
+ * several lines, got one account before.
  */
 export function AccountCard({
-  invoice, jev, accounts, perLine = false,
-}: { invoice: Invoice; jev: InvoiceView['jev']; accounts: Record<string, string>; perLine?: boolean }) {
+  invoice, jev, accounts, splittable = false,
+}: { invoice: Invoice; jev: InvoiceView['jev']; accounts: Record<string, string>; splittable?: boolean }) {
   const queryClient = useQueryClient()
   const [changing, setChanging] = useState(false)
   const afterChange = {
@@ -52,6 +53,11 @@ export function AccountCard({
   })
   // Decided again from the start, with the rules and Jev, line by line this time.
   const redecide = useMutation({ mutationFn: () => api.classify(invoice.id, true), ...afterChange })
+  const confirmRedecide = () => {
+    if (window.confirm(
+      'Regulile și Jev aleg din nou contul fiecărei linii. Contul de acum se pierde, iar liniile despre care Jev nu este sigur vin la verificat. Continuați?',
+    )) redecide.mutate()
+  }
   const busy = accept.isPending || choose.isPending || decide.isPending || redecide.isPending
   const chooser = (
     <AccountChooser
@@ -154,12 +160,12 @@ export function AccountCard({
       ) : invoice.cont && !changing ? (
         <>
           <Button variant="outline" className="self-start" onClick={() => setChanging(true)}>Schimbă contul</Button>
-          {perLine && (
+          {splittable && (
             <div className="flex flex-col gap-1.5 border-t pt-3">
               <p className="text-muted-foreground">
                 Clientul are clasificarea pe fiecare linie, dar această factură a primit un singur cont înainte.
               </p>
-              <Button variant="outline" className="h-auto min-h-11 self-start py-2 text-left whitespace-normal" disabled={busy} onClick={() => redecide.mutate()}>
+              <Button variant="outline" className="h-auto min-h-11 self-start py-2 text-left whitespace-normal" disabled={busy} onClick={confirmRedecide}>
                 {redecide.isPending ? 'Se alege…' : 'Clasifică din nou, pe fiecare linie'}
               </Button>
             </div>

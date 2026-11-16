@@ -7,7 +7,7 @@ from xml.etree import ElementTree
 
 import pytest
 
-from efactura import auth, saga, service as service_module
+from efactura import auth, journal, saga, service as service_module
 from efactura.auth import Tokens
 from efactura.config import load_config
 from efactura.errors import EfacturaError
@@ -1272,10 +1272,12 @@ def test_each_line_gets_its_own_account_when_the_client_classifies_line_by_line(
     assert line_accounts(per_line) == [
         {"line": 1, "cont": "6022", "method": "rules", "rule": "combustibil",
          "reason": 'Rule "combustibil" matched line 1.',
-         "suggested_cont": None, "confidence": None, "confidence_threshold": None},
+         "suggested_cont": None, "confidence": None, "confidence_threshold": None,
+         "probabilities": None, "asked": False},
         {"line": 2, "cont": "626", "method": "jev", "rule": None,
          "reason": "Jev chose 626 with confidence 0.93.",
-         "suggested_cont": "626", "confidence": 0.93, "confidence_threshold": 0.8},
+         "suggested_cont": "626", "confidence": 0.93, "confidence_threshold": 0.8,
+         "probabilities": {"626": 0.93}, "asked": True},
     ]
     assert jev_lines_asked(openrouter) == ["Abonament telefonie mobila"]  # the rule's line is not asked about
 
@@ -1370,7 +1372,7 @@ def test_a_line_jev_will_not_answer_goes_to_a_person_with_the_reason(per_line, a
     assert saved(cfg)["classification_status"] == "review"
 
 
-def test_when_openrouter_fails_the_invoice_waits_whole_for_the_next_run(per_line, anaf, openrouter, cfg):
+def test_when_openrouter_fails_the_invoice_waits_for_the_next_run(per_line, anaf, openrouter, cfg):
     openrouter.valid_keys = {"another-key"}  # the key is refused: no line can be asked about
     anaf.add("3001", xml=rich_invoice_xml(lines=[line("Motorina Euro 5", "450.00"), line("Piese de schimb", "300.00")]))
 
@@ -1378,13 +1380,14 @@ def test_when_openrouter_fails_the_invoice_waits_whole_for_the_next_run(per_line
 
     row = saved(cfg)
     assert (row["classification_status"], row["cont"]) == ("pending", None)
-    assert line_accounts(per_line) is None  # nothing half-decided is kept
+    assert [(entry["cont"], entry["asked"]) for entry in line_accounts(per_line)] == [("6022", False), (None, False)]
     assert "rejected the API key" in row["classification_error"]
+    assert not saga_file(cfg).exists()
 
 
 def test_the_question_about_one_line_can_be_changed(per_line, anaf, openrouter):
     per_line.set_jev_line_instructions("  Contul acestei linii?  ")
-    anaf.add("3001", xml=rich_invoice_xml(lines=PARTS))
+    anaf.add("3001", xml=rich_invoice_xml(lines=[line("Motorina Euro 5", "450.00"), *PARTS]))
 
     per_line.sync(VALID_CUI)
 
@@ -1453,6 +1456,134 @@ def test_a_duplicate_of_a_client_decided_line_by_line_waits_with_every_line_open
     assert saved(cfg, "3002")["classification_status"] == "classified"
 
 
+def test_lines_already_answered_are_kept_when_openrouter_fails_partway(per_line, anaf, openrouter, cfg):
+    openrouter.fail_for = {"ulei": 429}  # the service starts refusing at the third line
+    anaf.add("3001", xml=rich_invoice_xml(lines=[
+        line("Motorina Euro 5", "450.00"), line("Piese de schimb", "300.00"), line("Ulei motor", "90.00"),
+    ]))
+
+    per_line.sync(VALID_CUI)
+
+    row = saved(cfg)
+    assert row["classification_status"] == "pending"
+    assert [(entry["cont"], entry["method"]) for entry in line_accounts(per_line)] == [
+        ("6022", "rules"), ("628", "jev"), (None, None),
+    ]
+    asked_first = jev_lines_asked(openrouter)
+    assert asked_first.count("Piese de schimb") == 1
+
+    openrouter.fail_for = {}
+    per_line.sync(VALID_CUI)
+
+    assert jev_lines_asked(openrouter)[len(asked_first):] == ["Ulei motor"]  # Piese is not paid for again
+    assert saved(cfg)["classification_status"] == "classified"
+    assert [entry["cont"] for entry in line_accounts(per_line)] == ["6022", "628", "628"]
+
+
+def test_answers_are_not_reused_when_an_invoice_is_classified_again_on_purpose(per_line, anaf, openrouter):
+    anaf.add("3001", xml=rich_invoice_xml(lines=[line("Motorina Euro 5", "450.00"), line("Piese de schimb", "300.00")]))
+    per_line.sync(VALID_CUI)
+    asked = len(openrouter.requests)
+
+    per_line.classify("3001", force=True)
+
+    assert len(openrouter.requests) == asked + 1  # a fresh decision asks again
+
+
+def test_an_invoice_of_one_line_is_decided_whole_for_a_client_decided_line_by_line(per_line, anaf, openrouter, cfg):
+    anaf.add("3001", xml=rich_invoice_xml(lines=PARTS))
+
+    per_line.sync(VALID_CUI)
+
+    row = saved(cfg)
+    assert (row["classification_status"], row["cont"], row["classification_method"]) == ("classified", "628", "jev")
+    assert line_accounts(per_line) is None  # one line is one account: shown and booked as before
+    assert "linii" in openrouter.requests[0]["state"]  # the question about a whole invoice
+
+
+def test_jevs_likelihoods_are_kept_for_each_line_asked_about(per_line, anaf, openrouter, cfg):
+    openrouter.answer_for("piese", "628", confidence=0.41, probabilities_extra={"626": 0.3})
+    anaf.add("3001", xml=rich_invoice_xml(lines=[line("Motorina Euro 5", "450.00"), line("Piese de schimb", "300.00")]))
+
+    per_line.sync(VALID_CUI)
+
+    first, second = line_accounts(per_line)
+    assert first["probabilities"] is None  # a rule decided it
+    assert second["probabilities"] == {"628": 0.41, "626": 0.3}
+    reviewed = per_line.review(VALID_CUI)["invoices"][0]
+    assert reviewed["jev_probabilities"] is None  # per line, in line_accounts: not one line's guess for the whole
+
+
+def test_only_the_lines_that_need_a_choice_are_counted_as_left(per_line, anaf, openrouter, cfg):
+    openrouter.answer_for("piese", "628", confidence=0.4)
+    journal.configure(cfg.db_path)
+    try:
+        anaf.add("3001", xml=rich_invoice_xml(lines=[line("Piese de schimb", "900.00"), line("Discount", "-50.00")]))
+        per_line.sync(VALID_CUI)
+        events = journal.events(cfg.db_path, details=True)["events"]
+    finally:
+        journal.configure(None)
+
+    to_review = next(e for e in events if e["event"] == "account.to_review")
+    assert (to_review["data"]["lines"], to_review["data"]["lines_left"]) == (2, 1)  # the discount follows line 1
+    answered = [e for e in events if e["event"] == "jev.answered"]
+    assert [(e["level"], e["data"]["line"]) for e in answered] == [("detail", 1)]  # one line per call, out of sight
+
+
+def test_an_invoice_booked_line_by_line_is_one_line_in_the_journal_with_its_counts(per_line, anaf, openrouter, cfg):
+    openrouter.answer_for("abonament", "626", confidence=0.93)
+    journal.configure(cfg.db_path)
+    try:
+        anaf.add("3001", xml=rich_invoice_xml(lines=[
+            line("Motorina Euro 5", "450.00"), line("Abonament telefonie", "200.00"), line("Discount", "-10.00"),
+        ]))
+        per_line.sync(VALID_CUI)
+        booked = [e for e in journal.events(cfg.db_path)["events"] if e["event"] == "account.by_lines"]
+    finally:
+        journal.configure(None)
+
+    (event,) = booked
+    assert {key: event["data"][key] for key in ("lines", "by_rules", "by_jev", "by_person", "following", "cont", "accounts")} == {
+        "lines": 3, "by_rules": 1, "by_jev": 1, "by_person": 0, "following": 1, "cont": "6022", "accounts": ["6022", "626"],
+    }
+
+
+def test_after_an_earlier_failure_in_the_same_run_no_line_is_sent_to_jev(per_line, anaf, openrouter, cfg):
+    openrouter.fail_for = {"ulei": 429}
+    anaf.add("3001", xml=rich_invoice_xml(lines=[line("Motorina Euro 5", "450.00"), line("Ulei motor", "90.00")]))
+    anaf.add("3002", xml=rich_invoice_xml(lines=[line("Motorina Euro 5", "450.00"), line("Piese de schimb", "300.00")], number="FV-2"))
+
+    per_line.sync(VALID_CUI)
+
+    assert "Piese de schimb" not in jev_lines_asked(openrouter)
+    later = saved(cfg, "3002")
+    assert (later["classification_status"], later["classification_error"]) == (
+        "pending", "Not sent to Jev: OpenRouter failed earlier in this run.",
+    )
+
+
+def test_without_accounts_for_jev_the_lines_no_rule_decides_wait_for_a_person(per_line, anaf, openrouter, cfg):
+    set_rulebook(cfg.db_path, Rulebook(accounts={}, rules=BOOK.rules, instructions=BOOK.instructions))
+    anaf.add("3001", xml=rich_invoice_xml(lines=[line("Motorina Euro 5", "450.00"), line("Piese de schimb", "300.00")]))
+
+    per_line.sync(VALID_CUI)
+
+    assert "no accounts for Jev" in line_accounts(per_line)[1]["reason"]
+    assert openrouter.requests == []
+
+
+def test_a_line_whose_question_does_not_fit_waits_for_a_person(per_line, anaf, openrouter, monkeypatch):
+    from efactura import classify
+
+    monkeypatch.setattr(classify, "MAX_REQUEST_BYTES", 50)
+    anaf.add("3001", xml=rich_invoice_xml(lines=[line("Motorina Euro 5", "450.00"), line("Piese de schimb", "300.00")]))
+
+    per_line.sync(VALID_CUI)
+
+    assert "do not fit" in line_accounts(per_line)[1]["reason"]
+    assert openrouter.requests == []
+
+
 # --- line by line: a person's choice -------------------------------------------------------
 
 
@@ -1498,6 +1629,54 @@ def test_one_account_can_be_put_on_every_line_at_once(one_line_left, cfg):
 
     assert [(entry["cont"], entry["method"]) for entry in line_accounts(one_line_left)] == [("604", "human"), ("604", "human")]
     assert saved(cfg)["cont"] == "604"
+
+
+def test_accepting_without_a_line_never_replaces_an_account_already_chosen(one_line_left):
+    one_line_left.set_cont("3001", cont="626", line=2)  # Jev had proposed 628 there
+
+    assert error_code(lambda: one_line_left.set_cont("3001", accept=True)) == "invalid_input"
+    assert [entry["cont"] for entry in line_accounts(one_line_left)] == ["6022", "626"]
+
+
+def test_a_new_account_on_the_largest_line_brings_back_a_rule_proposal_turned_down(per_line, anaf, openrouter, cfg):
+    anaf.add("3001", xml=rich_invoice_xml(lines=[line("Piese de schimb", "900.00"), line("Ulei motor", "90.00")]))
+    per_line.sync(VALID_CUI)
+    per_line.dismiss_rule_suggestions(["3001"])
+    assert dismissed_for(cfg) == "628"
+
+    per_line.set_cont("3001", cont="6024", line=1)
+
+    assert dismissed_for(cfg) is None
+
+
+def dismissed_for(cfg, message_id="3001"):
+    store = Store(cfg.db_path)
+    state = store.suggestion_state(message_id)
+    store.close()
+    return state["suggestion_dismissed_for"]
+
+
+def test_damaged_line_accounts_count_as_one_account(per_line, anaf, cfg):
+    anaf.add("3001", xml=rich_invoice_xml(lines=[line("Motorina Euro 5", "450.00"), line("Ulei", "90.00", seller_code="X")]))
+    per_line.sync(VALID_CUI)
+    store = Store(cfg.db_path)
+    store.set_classification("3001", line_accounts="[1, 2]")
+    store.close()
+
+    assert line_accounts(per_line) is None
+    per_line.set_cont("3001", cont="626")  # works as on an invoice with one account
+    assert conts_in(saga_file(cfg)) == ["626", "626"]
+
+
+def test_a_choice_on_lines_that_no_longer_match_the_invoice_starts_from_its_lines(one_line_left, cfg):
+    store = Store(cfg.db_path)
+    store.set_classification("3001", line_accounts=json.dumps([{"line": 2, "cont": None, "method": None, "reason": ""}]))
+    store.close()
+
+    one_line_left.set_cont("3001", cont="626", line=2)
+
+    assert [(entry["line"], entry["cont"]) for entry in line_accounts(one_line_left)] == [(1, None), (2, "626")]
+    assert saved(cfg)["classification_status"] == "review"
 
 
 def test_a_line_that_is_not_on_the_invoice_is_refused(one_line_left):

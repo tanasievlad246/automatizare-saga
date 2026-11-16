@@ -70,6 +70,8 @@ export type LineAccount = {
   suggested_cont: string | null
   confidence: number | null
   confidence_threshold: number | null
+  probabilities: Record<string, number> | null // how likely Jev found each account, for this line
+  asked: boolean // Jev was asked about this line
 }
 
 export type Party = {

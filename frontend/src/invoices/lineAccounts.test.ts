@@ -4,7 +4,7 @@ import { accountsUsed, linesLeft, linesLeftNote, listAccount, whoChoseLine } fro
 
 const entry = (over: Partial<LineAccount>): LineAccount => ({
   line: 1, cont: null, method: null, rule: null, reason: '',
-  suggested_cont: null, confidence: null, confidence_threshold: null, ...over,
+  suggested_cont: null, confidence: null, confidence_threshold: null, probabilities: null, asked: false, ...over,
 })
 const invoice = (over: Partial<Invoice>) => ({ cont: null, line_accounts: null, ...over }) as Invoice
 
@@ -33,6 +33,10 @@ describe('who chose the account of a line', () => {
     expect(whoChoseLine(entry({ reason: 'Jev declined to answer.' }))).toBe('Jev nu a vrut să răspundă')
     expect(whoChoseLine(entry({ reason: 'Jev found that none of the accounts fits.' }))).toBe('Jev nu a găsit un cont potrivit')
     expect(whoChoseLine(entry({ reason: 'Jev could not decide this line: HTTP 400' }))).toBe('Jev nu a dat un răspuns folosibil')
+    expect(whoChoseLine(entry({ reason: 'This line and the list of accounts do not fit in one request to Jev.' })))
+      .toBe('linia și lista de conturi nu încap într-o întrebare pentru Jev')
+    expect(whoChoseLine(entry({ reason: 'Waiting: OpenRouter failed before Jev was asked about this line.' })))
+      .toBe('Jev nu a putut fi întrebat încă; programul încearcă din nou la următoarea descărcare')
     expect(whoChoseLine(entry({ reason: 'Something new' }))).toBe('alegeți contul acestei linii')
     expect(whoChoseLine(entry({ method: 'follows' }))).toBe('primește contul liniei celei mai mari, după ce îl alegeți')
   })
@@ -51,6 +55,10 @@ describe('the accounts of an invoice decided line by line', () => {
   it('count the lines still without an account', () => {
     expect(linesLeft(lines)).toBe(1)
     expect(linesLeft(lines.slice(0, 3))).toBe(0)
+  })
+
+  it('do not count a line that only waits for the largest one: it needs no choice of its own', () => {
+    expect(linesLeft([entry({ line: 1 }), entry({ line: 2, method: 'follows' })])).toBe(1)
   })
 
   it('say what waiting lines hold back', () => {
@@ -77,5 +85,7 @@ describe('the account column of a list', () => {
 
     expect(listAccount(invoice({ line_accounts: lines }))).toEqual({ main: '704', more: '2 linii fără cont' })
     expect(listAccount(invoice({ line_accounts: [entry({ line: 1 })] }))).toEqual({ main: null, more: 'o linie fără cont' })
+    expect(listAccount(invoice({ line_accounts: [entry({ line: 1 }), entry({ line: 2, method: 'follows' })] })))
+      .toEqual({ main: null, more: 'o linie fără cont' })
   })
 })

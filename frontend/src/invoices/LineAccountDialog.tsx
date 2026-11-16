@@ -22,7 +22,11 @@ export function LineAccountDialog({
       Promise.all(
         ['invoice', 'invoices', 'clients', 'proposed-rules'].map((key) => queryClient.invalidateQueries({ queryKey: [key] })),
       ).then(onClose),
-    onError: showError,
+    // The invoice may have changed meanwhile (another tab, a new decision): read it again.
+    onError: (error: unknown) => {
+      showError(error)
+      return queryClient.invalidateQueries({ queryKey: ['invoice'] })
+    },
   }
   const accept = useMutation({ mutationFn: () => api.acceptSuggestion(invoice.id, entry?.line), ...done })
   const choose = useMutation({ mutationFn: (cont: string) => api.setCont(invoice.id, cont, false, entry?.line), ...done })
@@ -60,7 +64,7 @@ export function LineAccountDialog({
         )}
         <AccountChooser
           accounts={accounts}
-          likelihoods={proposed && entry?.confidence !== null && entry ? { [proposed]: entry.confidence ?? 0 } : null}
+          likelihoods={entry?.probabilities ?? null}
           busy={busy}
           label={proposed ? 'sau alegeți alt cont' : 'Alegeți contul'}
           takeFocus={!proposed}

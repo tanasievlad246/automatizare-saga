@@ -17,7 +17,8 @@ const WAITING_BECAUSE: [(reason: string) => boolean, string][] = [
   [(reason) => reason.startsWith('Jev declined'), 'Jev nu a vrut să răspundă'],
   [(reason) => reason.startsWith('Jev found that none'), 'Jev nu a găsit un cont potrivit'],
   [(reason) => reason.startsWith('Jev could not decide'), 'Jev nu a dat un răspuns folosibil'],
-  [(reason) => reason.includes('do not fit'), 'linia este prea lungă pentru a fi trimisă lui Jev'],
+  [(reason) => reason.includes('do not fit'), 'linia și lista de conturi nu încap într-o întrebare pentru Jev'],
+  [(reason) => reason.startsWith('Waiting: OpenRouter failed'), 'Jev nu a putut fi întrebat încă; programul încearcă din nou la următoarea descărcare'],
 ]
 
 /** Under a line's account: who chose it; for a line that waits, what Jev proposed or why there is nothing. */
@@ -39,8 +40,9 @@ export function accountsUsed(entries: LineAccount[]): { cont: string; lines: num
   return [...counted].map(([cont, lines]) => ({ cont, lines })).sort((one, other) => other.lines - one.lines)
 }
 
+/** The lines that wait for a choice. One that only takes the largest line's account needs none of its own. */
 export function linesLeft(entries: LineAccount[]): number {
-  return entries.filter((entry) => !entry.cont).length
+  return entries.filter((entry) => !entry.cont && entry.method !== 'follows').length
 }
 
 /** Said on the invoice while some lines have no account. */

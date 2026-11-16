@@ -174,7 +174,16 @@ Nothing is pushed without your word. Each phase gets its own branch, review and 
 - 2026-11-16: the board is redrawn on the canvas ("Plan: cont pe fiecare linie și facturile emise în lucru"). The owner has not yet said it is right.
 - 2026-11-16: the three checks for the real programs are in `scripts/trials/` (`saga_trial.py`, `jev_trial.py`, `id_check.sql`). None has been run yet.
 - 2026-11-16: A1 is built: the client's switch (`clients.per_line`, on by default, `PUT /clients/{cui}/per-line`).
-- 2026-11-16: A2 to A5 are built, with the journal sentences: each line decided by the rules, the largest line or Jev; a person's choice per line; each line's account in the file for SAGA; `line_accounts` and `line` over the API and `--line` on the command line. The page (A6) waits for the owner's view of the board.
+- 2026-11-16: A2 to A5 are built, with the journal sentences: each line decided by the rules, the largest line or Jev; a person's choice per line; each line's account in the file for SAGA; `line_accounts` and `line` over the API and `--line` on the command line. The owner approved the board on 2026-11-16 ("Yes, build it").
+- 2026-11-17: A6 is built (the switch, each line's account on the invoice, the summary card, the dialog per line, the list column, the question about one line) and checked in the browser on the demo. A second reader reviewed phase A; what it found is fixed, each with a test that fails without the fix:
+  - an invoice stopped by OpenRouter keeps the lines already answered, so the next run asks only about the others (before, a long invoice could be paid for again on every run and never finish);
+  - an invoice of one line is decided whole;
+  - Jev's likelihoods are kept per line, for the dialog and for `review`;
+  - a line that only follows the largest one is not counted as waiting;
+  - damaged line data counts as one account, and a choice starts from the invoice's own lines;
+  - Jev's answer about one line is a detail in the journal;
+  - "Clasifică din nou, pe fiecare linie" only for invoices of several lines, and after a confirmation.
+  Left as they are: the costs page lists each line's call under the invoice without the line number; a line of the other sign that is not a discount follows the largest line (the README says to write a rule for it); there is no limit on the lines asked about in one invoice; the version is set at release.
 
 Calls made while building, beyond the plan (each can be changed):
 
@@ -184,4 +193,5 @@ Calls made while building, beyond the plan (each can be changed):
 - **Jev is asked one line per request.** Whether it answers several questions at once is not known until `scripts/trials/jev_trial.py` is run; one at a time works either way. The request carries the supplier and that line only.
 - **A line worth nothing follows the largest line**, like a discount, unless a rule matches it.
 - **A duplicate of a client decided line by line waits with every line open**, so each line can get its own account.
-- **While OpenRouter fails as a whole, nothing half-decided is kept**; the invoice waits, whole, for the next run, and its lines are asked about again then.
+- **While OpenRouter fails as a whole the invoice waits with the lines decided so far**, and the next run asks only about the others (changed after the review; it first kept nothing).
+- **An invoice of one line is decided whole** (after the review): one line is one account, and the old screens and journal lines say more about it.

@@ -175,7 +175,7 @@ CLASSIFICATION_COLUMNS = {
     # NULL: not subject to classification (saved before it existed, or not a received
     # invoice). Otherwise: pending | classified | review.
     "classification_status": "TEXT",
-    "cont": "TEXT",                   # the account every line is booked on
+    "cont": "TEXT",                   # the account of the invoice (of its largest line, when decided line by line)
     "classification_method": "TEXT",  # rules | jev | jev_accepted | human
     "classification_reason": "TEXT",
     "suggested_cont": "TEXT",         # Jev's pick, kept even when a person overrules it

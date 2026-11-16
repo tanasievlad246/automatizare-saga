@@ -59,7 +59,7 @@ export function RuleTestPage() {
         <Link to="/reguli" className="font-semibold">‹ Înapoi la reguli</Link>
         <div className="mt-3">
           <PageTitle title="Testează regulile">
-            Scrieți o factură de probă și vedeți ce cont ar primi, la fel ca o factură venită de la ANAF. Nu se salvează nimic și nimic nu ajunge în SAGA.
+            Scrieți o factură de probă și vedeți ce cont ar primi după linia cu valoarea cea mai mare, ca la un client cu un singur cont pe factură. Nu se salvează nimic și nimic nu ajunge în SAGA.
           </PageTitle>
         </div>
       </div>
