@@ -32,16 +32,48 @@ describe('the totals under an invoice', () => {
     expect(totalRows(withDebt).map((row) => row.weight)).toEqual(['plain', 'plain', 'bold', 'plain', 'large'])
   })
 
-  it('take an advance already paid off what is left to pay', () => {
+  it('take what was already paid off what is left to pay', () => {
+    // Paid on the spot or in advance: the invoice does not say which, so neither does the row.
     const paidInPart = invoice({ total_without_vat: '1000.00', total_vat: '190.00', total_with_vat: '1190.00', total_prepaid: '200.00', total_payable: '990.00' })
 
     expect(shown(paidInPart)).toEqual([
       'Fără TVA: 1.000,00 lei', 'TVA: 190,00 lei', 'Total factură: 1.190,00 lei',
-      'Plătit în avans: −200,00 lei', 'De plată: 990,00 lei',
+      'Deja plătit: −200,00 lei', 'De plată: 990,00 lei',
     ])
     expect(shown(invoice({ total_prepaid: '368.91', total_payable: '0.00' })).slice(-2)).toEqual([
-      'Plătit în avans: −368,91 lei', 'De plată: 0,00 lei',
+      'Deja plătit: −368,91 lei', 'De plată: 0,00 lei',
     ])
+  })
+
+  it('do not call a refund already made an earlier debt', () => {
+    // A reversal written as an invoice with negative amounts, its money already given back.
+    const reversal = invoice({ total_without_vat: '-1000.00', total_vat: '-190.00', total_with_vat: '-1190.00', total_prepaid: '-1190.00', total_payable: '0.00' })
+
+    expect(shown(reversal)).toEqual([
+      'Fără TVA: −1.000,00 lei', 'TVA: −190,00 lei', 'Total factură: −1.190,00 lei',
+      'Sumă plătită: −1.190,00 lei', 'De plată: 0,00 lei',
+    ])
+    expect(totalsNote(reversal, true)).toBeNull()
+  })
+
+  it('name a paid amount on a credit note plainly, and say nothing about SAGA, where it goes with a minus', () => {
+    const creditNote = invoice({ is_credit_note: true, total_prepaid: '368.91', total_payable: '0.00' })
+
+    expect(shown(creditNote).slice(-3)).toEqual(['Total factură: 368,91 lei', 'Sumă plătită: 368,91 lei', 'De plată: 0,00 lei'])
+    expect(totalsNote(creditNote, true)).toBeNull()
+  })
+
+  it('write every minus the same way', () => {
+    expect(shown(invoice({ total_prepaid: '678.91', total_payable: '-310.00' })).slice(-2)).toEqual([
+      'Deja plătit: −678,91 lei', 'De plată: −310,00 lei',
+    ])
+  })
+
+  it('are the three usual rows for an invoice read by an older program, which names no paid amount at all', () => {
+    const older = invoice({ total_prepaid: undefined, total_rounding: undefined })
+
+    expect(shown(older)).toEqual(['Fără TVA: 334,05 lei', 'TVA: 34,86 lei', 'Total: 368,91 lei'])
+    expect(totalsNote(older, true)).toBeNull()
   })
 
   it('show a rounding of what is left to pay, with its sign', () => {
@@ -72,9 +104,9 @@ describe('the note under the totals', () => {
     )
   })
 
-  it('says that an advance was taken off, and that SAGA gets the whole invoice', () => {
+  it('says that what was already paid was taken off, and that SAGA gets the whole invoice', () => {
     expect(plain(totalsNote(invoice({ total_prepaid: '200.00', total_payable: '168.91' }), true))).toBe(
-      'Din suma de plată s-a scăzut ce s-a plătit în avans. În fișierul pentru SAGA intră valoarea întreagă a facturii: 368,91 lei.',
+      'Din suma de plată s-a scăzut ce s-a plătit deja. În fișierul pentru SAGA intră valoarea întreagă a facturii: 368,91 lei.',
     )
   })
 
@@ -82,6 +114,6 @@ describe('the note under the totals', () => {
     expect(totalsNote(invoice({ total_prepaid: '-3123.88' }), false))
       .toBe('Suma de plată cuprinde și o datorie mai veche, care nu face parte din această factură.')
     expect(totalsNote(invoice({ total_prepaid: '200.00' }), false))
-      .toBe('Din suma de plată s-a scăzut ce s-a plătit în avans.')
+      .toBe('Din suma de plată s-a scăzut ce s-a plătit deja.')
   })
 })

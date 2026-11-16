@@ -217,6 +217,18 @@ def two_waiting(api, anaf):
     api.post("/sync", json={"cui": VALID_CUI})
 
 
+def test_the_api_lists_an_invoice_at_what_it_is_worth_and_keeps_what_is_left_to_pay(api, anaf):
+    anaf.add("3001", xml=rich_invoice_xml(lines=FUEL, number="A1", prepaid="-3123.88"))
+    (saved,) = api.post("/sync", json={"cui": VALID_CUI}).json()["new"]
+
+    (listed,) = api.get("/invoices", params={"cui": VALID_CUI}).json()["invoices"]
+    one = api.get("/invoices/3001").json()["invoice"]
+
+    for row in (saved, listed, one):
+        assert (row["total_with_vat"], row["total_payable"]) == ("535.50", "3659.38")
+    assert api.get("/invoices/3001/view").json()["document"]["total_prepaid"] == "-3123.88"
+
+
 def test_issued_invoices_stay_hidden_until_the_switch_is_turned(api):
     assert api.get("/settings").json()["show_issued"] is False
 

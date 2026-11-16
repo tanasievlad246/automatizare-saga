@@ -14,6 +14,7 @@ describe('amounts', () => {
     expect(plain(formatMoney('1071.00', 'RON'))).toBe('1.071,00 lei')
     expect(plain(formatMoney('119.5', 'EUR'))).toBe('119,50 EUR')
     expect(formatMoney(null)).toBe('')
+    expect(formatMoney(undefined)).toBe('') // a field an older program does not send
   })
 
   it('keeps at least two decimals on a price and at most four', () => {

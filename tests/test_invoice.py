@@ -226,9 +226,10 @@ def test_a_paid_amount_that_cannot_be_read_counts_as_missing():
 
 def test_what_an_invoice_is_worth_from_its_totals():
     assert total_with_vat(Decimal("334.05"), Decimal("34.86"), Decimal("3492.79")) == Decimal("368.91")
-    assert total_with_vat(Decimal("100.00"), None, Decimal("100.00")) == Decimal("100.00")  # no VAT written
-    # Without a net total there is only the amount to pay to go by.
+    # Without a net total or without the VAT there is only the amount to pay to go by.
     assert total_with_vat(None, Decimal("19.00"), Decimal("119.00")) == Decimal("119.00")
+    assert total_with_vat(Decimal("1000.00"), None, Decimal("1190.00")) == Decimal("1190.00")
+    assert total_with_vat(Decimal("100.00"), Decimal("0.00"), Decimal("100.00")) == Decimal("100.00")
     assert total_with_vat(None, None, None) is None
 
 

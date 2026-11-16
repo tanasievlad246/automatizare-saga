@@ -218,10 +218,10 @@ def total_with_vat(
     """What an invoice itself is worth, VAT included: BT-109 + BT-110, which EN 16931 makes
     equal to BT-112. It is not what is left to pay (BT-115): that also counts what was paid
     before and, at some suppliers, what is still owed from earlier invoices. An invoice
-    without a readable net total has only the amount to pay to go by."""
-    if without_vat is None:
+    without a readable net total or VAT has only the amount to pay to go by."""
+    if without_vat is None or vat is None:
         return payable
-    return without_vat + (vat or 0)
+    return without_vat + vat
 
 
 def total_with_vat_of(stored: dict) -> Decimal | None:

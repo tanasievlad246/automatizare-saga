@@ -2,6 +2,7 @@
 
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from xml.etree import ElementTree
 
 import pytest
@@ -1080,11 +1081,12 @@ def test_invoice_view_gathers_everything_the_screen_shows(service, anaf, cfg, in
 
 def test_an_invoice_with_an_earlier_balance_is_listed_at_what_it_is_worth(service, anaf, cfg):
     anaf.add("3001", xml=rich_invoice_xml(lines=FUEL, prepaid="-3123.88"))
-    service.sync(VALID_CUI)
+    (saved,) = service.sync(VALID_CUI)["new"]
 
     (listed,) = service.invoices(cui=VALID_CUI)["invoices"]
     view = service.invoice_view("3001")
 
+    assert (saved["total_with_vat"], saved["total_payable"]) == ("535.50", "3659.38")
     assert (listed["total_with_vat"], listed["total_payable"]) == ("535.50", "3659.38")
     assert view["invoice"]["total_with_vat"] == "535.50"
     document = view["document"]
@@ -1098,10 +1100,12 @@ def test_an_earlier_balance_never_reaches_the_file_for_saga(service, anaf, cfg):
     anaf.add("3001", xml=rich_invoice_xml(lines=FUEL, prepaid="-3123.88"))
     service.sync(VALID_CUI)
 
-    written = service.invoice_view("3001")["saga_xml"]
+    view = service.invoice_view("3001")
+    on_disk = Path(view["invoice"]["saga_xml_path"]).read_text(encoding="utf-8")
 
-    assert "<Valoare>450.00</Valoare>" in written and "<TVA>85.50</TVA>" in written
-    assert "3123.88" not in written and "3659.38" not in written
+    for written in (view["saga_xml"], on_disk):
+        assert "<Valoare>450.00</Valoare>" in written and "<TVA>85.50</TVA>" in written
+        assert "3123.88" not in written and "3659.38" not in written
 
 
 def test_a_message_that_is_no_invoice_is_worth_nothing(service, anaf, cfg):

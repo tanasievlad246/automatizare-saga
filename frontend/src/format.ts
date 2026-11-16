@@ -46,8 +46,8 @@ function startOfDay(moment: Date): number {
 }
 
 /** "1.071,00 lei" from "1071.00"; other currencies keep their code. */
-export function formatMoney(amount: string | null, currency: string | null = 'RON'): string {
-  if (amount === null || amount === '') return ''
+export function formatMoney(amount: string | null | undefined, currency: string | null = 'RON'): string {
+  if (amount == null || amount === '') return ''
   const number = Number(amount).toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   return `${number} ${!currency || currency === 'RON' ? 'lei' : currency}`
 }
