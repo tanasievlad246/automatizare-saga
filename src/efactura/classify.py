@@ -9,7 +9,7 @@ from decimal import Decimal
 
 from .errors import JEV_ERROR, EfacturaError
 from .invoice import Invoice, Line
-from .rules import Rulebook, Subject
+from .rules import DEFAULT_JEV_LINE_INSTRUCTIONS, Rule, Rulebook, Subject, normalise
 
 # Jev always picks one of the options it is given, so "none of them" has to be an option.
 NONE_OF_THESE = "altul"
@@ -60,6 +60,80 @@ def decide_by_rules(invoice: Invoice, rulebook: Rulebook) -> Decision | None:
     if rule is None:
         return None
     return Decision(cont=rule.cont, rule=rule.name, line=deciding_line(invoice).number)
+
+
+# --- line by line ------------------------------------------------------------------
+
+
+def line_subject(invoice: Invoice, item: Line) -> Subject:
+    """What the rules read from one line: the supplier and that line."""
+    return Subject(
+        supplier_cui=invoice.supplier.cui,
+        description=item.description,
+        seller_code=item.seller_code,
+        barcode=item.barcode,
+        commodity_codes=item.commodity_codes,
+    )
+
+
+def rules_by_line(invoice: Invoice, rulebook: Rulebook) -> dict[int, Rule]:
+    """The rule that gives each line its account, by line number; a line no rule matches
+    is left out."""
+    found = {}
+    for item in invoice.lines:
+        rule = rulebook.rule_for(line_subject(invoice, item))
+        if rule is not None:
+            found[item.number] = rule
+    return found
+
+
+def follows_largest(invoice: Invoice, item: Line) -> bool:
+    """A line that takes the account of the invoice's largest line when no rule gives it
+    one: a discount (its value has the other sign) or a line worth nothing. Jev cannot
+    judge "Discount" or "Paleti returnabili" on its own."""
+    largest = deciding_line(invoice)
+    if largest is None or item.number == largest.number:
+        return False
+    return item.value == 0 or (item.value < 0) != (largest.value < 0)
+
+
+def same_question(item: Line) -> tuple:
+    """Lines that would put the same question to Jev: the same words, codes and unit."""
+    return (
+        normalise(item.description), item.seller_code, item.barcode,
+        tuple(item.commodity_codes), (item.unit or "").upper(),
+    )
+
+
+def jev_line_request(invoice: Invoice, item: Line, rulebook: Rulebook, model: str) -> dict:
+    """The body for OpenRouter's Decisions API about one line of the invoice.
+
+    Only the supplier and that line are sent: not the other lines, not the buyer, no
+    address, bank account or contact.
+    """
+    return {
+        "model": model,
+        "state": {
+            "furnizor": {"nume": invoice.supplier.name, "cui": invoice.supplier.cui},
+            "factura": {
+                "tip": "nota de credit" if invoice.is_credit_note else "factura",
+                "moneda": invoice.currency,
+            },
+            "linia": _describe(item),
+        },
+        "questions": {
+            QUESTION: {
+                "type": "choice",
+                "instructions": rulebook.line_instructions or DEFAULT_JEV_LINE_INSTRUCTIONS,
+                "criteria": {**rulebook.accounts, NONE_OF_THESE: NONE_OF_THESE_MEANS},
+            }
+        },
+    }
+
+
+def fits(request: dict) -> bool:
+    """Small enough for Jev to answer in its usual mode."""
+    return _size(request) <= MAX_REQUEST_BYTES
 
 
 # --- Jev --------------------------------------------------------------------------

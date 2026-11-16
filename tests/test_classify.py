@@ -311,3 +311,92 @@ def test_an_empty_keyword_matches_nothing():
     book = book_of(Rule("gol", "628", keywords=("", "  ", "*")))
 
     assert decide_by_rules(invoice_of(line("Orice", "10.00")), book) is None
+
+
+# --- line by line ----------------------------------------------------------------
+
+
+def test_each_line_is_read_by_the_rules_on_its_own():
+    invoice = invoice_of(
+        line("Motorina Euro 5", "450.00"), line("Abonament telefonie mobila", "200.00"), line("Spalare auto", "50.00"),
+    )
+
+    found = classify.rules_by_line(invoice, BOOK)
+
+    assert {number: rule.cont for number, rule in found.items()} == {1: "6022", 2: "626"}
+
+
+def test_a_line_brings_its_own_codes_to_the_rules():
+    invoice = invoice_of(line("Servicii", "500.00"), line("Toner", "80.00", seller_code="TN-2420"))
+
+    assert {number: rule.name for number, rule in classify.rules_by_line(invoice, BOOK).items()} == {2: "papetarie"}
+
+
+def test_a_rule_on_the_supplier_gives_every_line_its_account():
+    invoice = invoice_of(line("Chirie birou", "1000.00"), line("Utilitati", "120.00"), supplier_cui="RO11112222")
+
+    assert {number: rule.cont for number, rule in classify.rules_by_line(invoice, BOOK).items()} == {1: "612", 2: "612"}
+
+
+def test_a_discount_and_a_free_line_follow_the_largest_line():
+    invoice = invoice_of(
+        line("Ciment", "840.00"), line("Discount", "-40.00"), line("Paleti", "0.00"), line("Transport", "60.00"),
+    )
+
+    assert [classify.follows_largest(invoice, item) for item in invoice.lines] == [False, True, True, False]
+
+
+def test_on_an_invoice_with_negative_amounts_the_positive_line_follows():
+    invoice = invoice_of(line("Storno ciment", "-840.00"), line("Storno discount", "40.00"))
+
+    assert [classify.follows_largest(invoice, item) for item in invoice.lines] == [False, True]
+
+
+def test_lines_with_the_same_text_are_one_question():
+    invoice = invoice_of(
+        line("Ciment 40 kg", "840.00"), line("CIMENT  40 kg", "280.00"),
+        line("Ciment 40 kg", "100.00", seller_code="C2"), line("Nisip", "90.00"),
+    )
+
+    keys = [classify.same_question(item) for item in invoice.lines]
+
+    assert keys[0] == keys[1]
+    assert len({keys[0], keys[2], keys[3]}) == 3
+
+
+def test_the_request_about_one_line_names_that_line_and_the_supplier_only():
+    invoice = invoice_of(
+        line("Motorina Euro 5", "450.00"),
+        line("Ciment Portland", "840.00", quantity="30", unit="KGM", price="28.00", commodity="44111200"),
+    )
+
+    request = classify.jev_line_request(invoice, invoice.lines[1], BOOK, "typesafe/jev-1.14")
+
+    assert request["model"] == "typesafe/jev-1.14"
+    assert request["state"]["furnizor"] == {"nume": "Furnizor SRL", "cui": "87654321"}
+    assert request["state"]["linia"] == {
+        "nr": 2, "descriere": "Ciment Portland", "coduri_clasificare": ["44111200"], "um": "KGM",
+        "cantitate": "30", "valoare_fara_tva": "840.00", "cota_tva": "19",
+    }
+    sent = json.dumps(request, ensure_ascii=False)
+    assert "linii" not in request["state"] and "Motorina" not in sent  # the other lines stay here
+    assert "Client SRL" not in sent and "12345674" not in sent  # nor does the buyer
+    question = request["questions"][classify.QUESTION]
+    assert question["instructions"] == classify.DEFAULT_JEV_LINE_INSTRUCTIONS
+    assert set(question["criteria"]) == {"6022", "626", "371", NONE_OF_THESE}
+
+
+def test_the_question_about_one_line_is_the_one_set_for_lines():
+    book = Rulebook(accounts=BOOK.accounts, rules=(), instructions="Contul facturii?", line_instructions="Contul liniei?")
+    invoice = invoice_of(line("Ciment", "840.00"))
+
+    request = classify.jev_line_request(invoice, invoice.lines[0], book, "m")
+
+    assert request["questions"][classify.QUESTION]["instructions"] == "Contul liniei?"
+    assert "Contul facturii?" not in json.dumps(request)
+
+
+def test_the_answer_about_one_line_is_read_like_the_answer_about_an_invoice():
+    body = {"answers": {classify.QUESTION: {"type": "choice", "choice": "6022", "confidence": 0.9}}}
+
+    assert read_jev_answer(body, BOOK).choice == "6022"

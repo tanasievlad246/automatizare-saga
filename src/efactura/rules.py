@@ -111,7 +111,8 @@ class Rulebook:
 
     accounts: dict[str, str]  # account -> what belongs on it; this is also what Jev is told
     rules: tuple[Rule, ...]  # in the order they are checked
-    instructions: str  # the question put to Jev
+    instructions: str  # the question put to Jev about a whole invoice
+    line_instructions: str = ""  # the question about one line; empty: the default one
 
     def rule_for(self, subject: Subject) -> Rule | None:
         # Most invoices match no rule at all. One look settles that, instead of one per rule.
@@ -166,4 +167,11 @@ DEFAULT_JEV_INSTRUCTIONS = (
     "mare (numărul ei este în linia_cu_valoarea_cea_mai_mare); celelalte linii și numele "
     "furnizorului sunt doar context. Dacă niciun cont din listă nu se potrivește cu ceea ce "
     "s-a cumpărat, alege varianta care spune acest lucru."
+)
+
+DEFAULT_JEV_LINE_INSTRUCTIONS = (
+    "Pe ce cont contabil se înregistrează această linie a unei facturi primite de la furnizor? "
+    "Hotărăște după ce s-a cumpărat pe linie (descrierea, codurile și unitatea de măsură); "
+    "numele furnizorului este doar context. Dacă niciun cont din listă nu se potrivește cu "
+    "ceea ce s-a cumpărat pe această linie, alege varianta care spune acest lucru."
 )
