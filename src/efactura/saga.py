@@ -59,6 +59,7 @@ class _Row:
     value: Decimal
     percent: Decimal
     vat: Decimal
+    line: int | None = None  # the invoice line it comes from; None for a discount on the whole invoice
 
 
 def file_name(invoice: Invoice, distinct: str | None = None) -> str:
@@ -81,7 +82,9 @@ def file_name(invoice: Invoice, distinct: str | None = None) -> str:
 
 @dataclass(frozen=True)
 class Entry:
-    """One invoice as it goes into a file for SAGA: every line booked on `cont`.
+    """One invoice as it goes into a file for SAGA. Each line is booked on its own account
+    from `line_conts` (line number, account); a line not named there, and a discount or
+    charge on the whole invoice, on `cont`.
 
     `upload_index` and `download_id` are ANAF's ids for the e-Factura (SPV).
     """
@@ -90,13 +93,18 @@ class Entry:
     cont: str
     upload_index: str | None
     download_id: str | None  # also the id of the message the invoice came in
+    line_conts: tuple[tuple[int, str], ...] = ()
+
+    def cont_for(self, line: int | None) -> str:
+        return dict(self.line_conts).get(line, self.cont) if line is not None else self.cont
 
 
 def build_xml(
-    invoice: Invoice, cont: str, upload_index: str | None, download_id: str | None
+    invoice: Invoice, cont: str, upload_index: str | None, download_id: str | None,
+    line_conts: tuple[tuple[int, str], ...] = (),
 ) -> bytes:
     """The invoice as a SAGA import file of its own."""
-    return build_file([Entry(invoice, cont, upload_index, download_id)])
+    return build_file([Entry(invoice, cont, upload_index, download_id, line_conts)])
 
 
 def build_file(entries: Iterable[Entry]) -> bytes:
@@ -147,7 +155,7 @@ def files_for(waiting: Sequence[Entry], per: str) -> list[File]:
 
 
 def _add_factura(root: ElementTree.Element, entry: Entry) -> None:
-    invoice, cont = entry.invoice, entry.cont
+    invoice = entry.invoice
     upload_index, download_id = entry.upload_index, entry.download_id
     rows = _rows(invoice)
     factura = ElementTree.SubElement(root, "Factura")
@@ -184,7 +192,7 @@ def _add_factura(root: ElementTree.Element, entry: Entry) -> None:
             ("Valoare", _money(row.value)),
             ("ProcTVA", _plain(row.percent)),
             ("TVA", _money(row.vat)),
-            ("Cont", cont),
+            ("Cont", entry.cont_for(row.line)),
         ):
             ElementTree.SubElement(linie, tag).text = value
 
@@ -236,6 +244,7 @@ def _rows(invoice: Invoice) -> list[_Row]:
             value=value,
             percent=percent,
             vat=_vat(value, percent),
+            line=item.number,
         ))
     # Discounts and charges on the invoice as a whole: one line each, so the totals match.
     for item in invoice.adjustments:

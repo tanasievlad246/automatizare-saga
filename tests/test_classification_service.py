@@ -7,7 +7,7 @@ from xml.etree import ElementTree
 
 import pytest
 
-from efactura import auth, service as service_module
+from efactura import auth, saga, service as service_module
 from efactura.auth import Tokens
 from efactura.config import load_config
 from efactura.errors import EfacturaError
@@ -1407,6 +1407,32 @@ def test_classifying_again_decides_an_invoice_of_one_account_line_by_line(per_li
     per_line.classify("3001", force=True)
 
     assert [entry["cont"] for entry in line_accounts(per_line)] == ["6022", "628"]
+
+
+def test_the_file_for_saga_carries_each_lines_account(per_line, anaf, openrouter, cfg):
+    openrouter.answer_for("abonament", "626", confidence=0.93)
+    anaf.add("3001", xml=rich_invoice_xml(lines=[
+        line("Motorina Euro 5", "450.00"), line("Abonament telefonie mobila", "200.00"), line("Discount", "-10.00"),
+    ]))
+
+    per_line.sync(VALID_CUI)
+
+    assert conts_in(saga_file(cfg)) == ["6022", "626", "6022"]
+    own = ElementTree.fromstring(per_line.invoice_view("3001")["saga_xml"].encode(saga.ENCODING))
+    assert [node.text for node in own.iter("Cont")] == ["6022", "626", "6022"]
+
+
+def test_a_line_chosen_by_a_person_reaches_the_file_for_saga(per_line, anaf, openrouter, cfg):
+    openrouter.answer_for("majorari", "628", confidence=0.55)
+    anaf.add("3001", xml=rich_invoice_xml(lines=[
+        line("Motorina Euro 5", "450.00"), line("Majorari de intarziere", "17.17", percent="0", category="E"),
+    ]))
+    per_line.sync(VALID_CUI)
+    assert not saga_file(cfg).exists()
+
+    per_line.set_cont("3001", cont="626", line=2)
+
+    assert conts_in(saga_file(cfg)) == ["6022", "626"]
 
 
 # --- line by line: a person's choice -------------------------------------------------------

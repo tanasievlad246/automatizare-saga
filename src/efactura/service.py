@@ -1903,7 +1903,7 @@ class Service:
             if invoice is None:  # it was read when it was given its account
                 log.warning("Message %s has an account but its invoice cannot be read", row["id"])
                 continue
-            waiting.append(saga.Entry(invoice, row["cont"], row["id_solicitare"], row["id"]))
+            waiting.append(saga.Entry(invoice, row["cont"], row["id_solicitare"], row["id"], _line_conts(row)))
         saga_dir = self._saga_dir(store)
         folder = saga_dir / cui
         known = store.saga_ledger(cui)
@@ -2545,7 +2545,14 @@ def _own_saga_xml(invoice: Invoice | None, row: dict) -> str | None:
     imported and is in none. None until it has an account."""
     if invoice is None or row["classification_status"] != CLASSIFIED or not row["cont"]:
         return None
-    return saga.build_xml(invoice, row["cont"], row["id_solicitare"], row["id"]).decode(saga.ENCODING)
+    return saga.build_xml(
+        invoice, row["cont"], row["id_solicitare"], row["id"], _line_conts(row)
+    ).decode(saga.ENCODING)
+
+
+def _line_conts(row: dict) -> tuple[tuple[int, str], ...]:
+    """Each line's account, for the file for SAGA; empty for an invoice on one account."""
+    return tuple((entry["line"], entry["cont"]) for entry in _stored_lines(row) or () if entry.get("cont"))
 
 
 def _checked_folder(folder: str) -> Path:

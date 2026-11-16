@@ -434,7 +434,7 @@ class Store:
         """This company's invoices that have an account and are not yet marked as imported,
         the one that has waited longest first. Each comes with its XML."""
         rows = self._conn.execute(
-            "SELECT id, id_solicitare, cont, invoice_xml FROM messages "
+            "SELECT id, id_solicitare, cont, line_accounts, invoice_xml FROM messages "
             "WHERE cui = ? AND classification_status = 'classified' AND cont IS NOT NULL "
             "AND uploaded_to_accounting = 0 ORDER BY first_seen_at, id",
             (cui,),

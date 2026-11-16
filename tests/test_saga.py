@@ -245,8 +245,8 @@ def test_a_second_invoice_with_the_same_name_can_be_told_apart():
 # --- several invoices in one file ---------------------------------------------------
 
 
-def entry(cont="628", upload_index="5001", download_id="3001", **kwargs):
-    return saga.Entry(parse_invoice(rich_invoice_xml(**kwargs)), cont, upload_index, download_id)
+def entry(cont="628", upload_index="5001", download_id="3001", line_conts=(), **kwargs):
+    return saga.Entry(parse_invoice(rich_invoice_xml(**kwargs)), cont, upload_index, download_id, line_conts)
 
 
 def test_a_file_can_hold_several_invoices_each_with_its_own_account_and_ids():
@@ -321,3 +321,49 @@ def test_invoices_whose_names_would_collide_are_told_apart_by_their_message_id()
         "F_87654321_AB-12-3002_09.11.2026.xml",
         "F_87654321_ab-12-3003_09.11.2026.xml",
     ]
+
+
+# --- an account on each line --------------------------------------------------------
+
+
+def conts_of(xml: bytes) -> list[str]:
+    return [node.text for node in ElementTree.fromstring(xml).iter("Cont")]
+
+
+def descriptions_of(xml: bytes) -> list[str]:
+    return [node.text for node in ElementTree.fromstring(xml).iter("Descriere")]
+
+
+def test_each_line_is_written_with_its_own_account():
+    lines = [line("Apa potabila", "177.65"), line("Canalizare", "139.23"), line("Majorari", "17.17", percent="0", category="E")]
+
+    written = saga.build_file([entry(cont="605", lines=lines, line_conts=((1, "605"), (2, "605"), (3, "6581")))])
+
+    assert descriptions_of(written) == ["Apa potabila", "Canalizare", "Majorari"]
+    assert conts_of(written) == ["605", "605", "6581"]
+
+
+def test_a_discount_on_the_whole_invoice_takes_the_account_of_the_invoice():
+    written = saga.build_file([entry(
+        cont="371", lines=[line("Marfa", "1000.00"), line("Transport", "50.00")],
+        adjustments=[adjustment("30.00", reason="Discount comercial")], line_conts=((1, "371"), (2, "624")),
+    )])
+
+    assert descriptions_of(written) == ["Marfa", "Transport", "Discount comercial"]
+    assert conts_of(written) == ["371", "624", "371"]
+
+
+def test_a_line_without_an_account_of_its_own_takes_the_invoices():
+    written = saga.build_file([entry(cont="628", lines=[line("A", "10.00"), line("B", "5.00")], line_conts=((1, "605"),))])
+
+    assert conts_of(written) == ["605", "628"]
+
+
+def test_an_invoice_on_one_account_is_written_as_before():
+    assert conts_of(saga.build_file([entry(cont="626", lines=[line("A", "10.00"), line("B", "5.00")])])) == ["626", "626"]
+
+
+def test_an_invoice_on_its_own_carries_its_line_accounts_too():
+    invoice = parse_invoice(rich_invoice_xml(lines=[line("A", "10.00"), line("B", "5.00")]))
+
+    assert conts_of(saga.build_xml(invoice, "605", "5001", "3001", line_conts=((2, "6581"),))) == ["605", "6581"]
