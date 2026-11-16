@@ -236,6 +236,30 @@ def test_message_id_cannot_steer_the_file_outside_the_dated_folder(service, anaf
     assert Path(saved["xml_path"]).parent == cfg.data_dir / "invoices" / TODAY_FOLDER
 
 
+def test_a_download_counts_the_received_and_the_issued_invoices_apart(service, anaf, logged_in):
+    anaf.add("3001")
+    anaf.add("3002", tip="FACTURA TRIMISA")
+    anaf.add("3003", tip="FACTURA TRIMISA")
+    anaf.add("3004", tip="ERORI FACTURA")
+
+    result = service.sync(VALID_CUI)
+
+    assert (result["new_count"], result["received_count"], result["issued_count"]) == (4, 1, 2)
+
+
+def test_an_issued_invoice_can_be_looked_at_and_has_nothing_for_saga(service, anaf, logged_in):
+    anaf.add("3002", tip="FACTURA TRIMISA", xml=invoice_xml(number="AC-2031"))
+    service.sync(VALID_CUI)
+
+    (listed,) = service.invoices(cui=VALID_CUI, message_type="trimisa")["invoices"]
+    view = service.invoice_view("3002")
+
+    assert (listed["invoice_number"], listed["customer_name"]) == ("AC-2031", "Client SRL")
+    assert (listed["classification_status"], listed["is_new"]) == (None, False)
+    assert view["document"]["number"] == "AC-2031"
+    assert (view["saga_xml"], view["rule_suggestion"], view["jev"]) == (None, None, None)
+
+
 def test_no_messages_is_a_successful_empty_run(service, cfg, logged_in):
     result = service.sync(VALID_CUI)
 
@@ -245,6 +269,8 @@ def test_no_messages_is_a_successful_empty_run(service, cfg, logged_in):
         "window_days": 7,
         "listed": 0,
         "new_count": 0,
+        "received_count": 0,
+        "issued_count": 0,
         "failed_count": 0,
         "folder": None,
         "new": [],

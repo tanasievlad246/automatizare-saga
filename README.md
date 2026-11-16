@@ -178,8 +178,8 @@ The page opens at `http://autosaga.localhost:8765/ui/`. `http://127.0.0.1:8765/u
 | Screen | What it is for |
 |---|---|
 | **Clienți** | Import clients from Excel or CSV, add one by hand, download invoices for one client or all (the last 1 to 30 days, or two dates). Shows how many invoices are new and how many wait for an account. A search field narrows the list by name or CUI as it is typed (no matter the case, the diacritics, or whether the CUI is written with `RO`); the download for all clients still covers every client that is on |
-| **A client's invoices** | New, to check, not yet in SAGA, all. Under the list, the client's file for SAGA: its path, when it was written, and one button that names how many invoices it marks as imported. While the folder is not up to date, a notice says so and offers "Încearcă din nou", and the marking button is off |
-| **One invoice** | The invoice as a person reads it, ANAF's XML, its own part of the SAGA XML; its account and who chose it; accept Jev's proposal or pick another; a rule proposed from it when no rule decided it; the file for SAGA it is in, or why it is in none; a warning, and no ticking as imported, while the client's folder is not up to date |
+| **A client's invoices** | New, to check, not yet in SAGA, all. Under the list, the client's file for SAGA: its path, when it was written, and one button that names how many invoices it marks as imported. While the folder is not up to date, a notice says so and offers "Încearcă din nou", and the marking button is off. At the foot, "Facturile emise de client": how many invoices the client issued were downloaded, and the switch "Arată facturile emise" that lists them. See [issued invoices](#issued-invoices) |
+| **One invoice** | The invoice as a person reads it, ANAF's XML, its own part of the SAGA XML; its account and who chose it; accept Jev's proposal or pick another; a rule proposed from it when no rule decided it; the file for SAGA it is in, or why it is in none; a warning, and no ticking as imported, while the client's folder is not up to date. An invoice the client issued shows only what it says and ANAF's XML |
 | **Reguli de clasificare** | Rules proposed from recent decisions, the rules, the accounts Jev chooses from, how sure Jev must be, the question Jev is asked. The button "Testează regulile" opens the rule test, see [Testing the rules](#testing-the-rules) |
 | **Costuri Jev** | Cost between two dates, by day, week, month or year, and every invoice Jev classified |
 | **Descărcare automată** | Switch the automatic download on or off, the days and times (up to four a day, chosen as 00 to 23 hours whatever the PC's regional settings), the period of the invoices (the last 3, 5, 7 or 10 days, or two dates), when the next one is, and how the last one went. See [Automatic download](#automatic-download) |
@@ -195,6 +195,14 @@ On every screen, the top bar holds the name, the **folder for SAGA** and the **A
 - The ANAF chip says one of: connected, with the days left; expiring, from 30 days before the end; not connected. Clicking it opens the login steps. While the program does not answer it says that instead, and does not ask for a login.
 
 The menu on the left has a fixed width and the screen's content takes the rest. In a window narrower than about 1020 px the menu moves above the content.
+
+### Issued invoices
+
+ANAF lists the invoices a client issued (`FACTURA TRIMISA`) next to the ones it received, and the program saves both. Only received invoices get an account and a file for SAGA, and only they are counted as "new" anywhere: on the client list, in the download window, in the journal and at the automatic download.
+
+- **Hidden until asked for.** A client's screen says how many issued invoices were downloaded. The switch "Arată facturile emise" lists them under the received ones: buyer, number, date, total, and "Deschide". The switch is one for all clients and stays as it was left; it is kept in the database (`show_issued`) and can be read and set with `/settings`.
+- **Only to look at.** An issued invoice's screen shows the invoice and ANAF's XML. It has no account, no rule and nothing for SAGA, and asking the API to classify it answers `not_classifiable`.
+- **The download window says what came:** "3 facturi noi, 5 facturi emise", or "nicio factură primită, 2 facturi emise" when the period held no received invoice. A client with downloads but no received invoice no longer reads "Nu ați descărcat încă facturi".
 
 A client can be switched off. A client that is off keeps its invoices and is left out of every download until it is switched on again; asking to download it answers `client_off`. A CUI that is not in the client list is not affected and is downloaded as before.
 
@@ -303,6 +311,8 @@ Success (from `sync`):
   "window_days": 7,
   "listed": 12,
   "new_count": 1,
+  "received_count": 1,
+  "issued_count": 0,
   "failed_count": 0,
   "folder": "C:\\efactura\\data\\invoices\\11-11-2026",
   "new": [
@@ -327,6 +337,8 @@ Success (from `sync`):
 ```
 
 (Entries carry a few more fields: due date, type code, customer, totals, `first_seen_at`, `uploaded_at`, and the classification fields described [below](#classification-and-saga). The reply also has a `classification` summary and `saga_folder`.)
+
+`new_count` is every message saved. Of those, `received_count` are received invoices and `issued_count` are invoices the client issued; error messages and other messages from ANAF are in neither. `sync-all` answers the same three as `new`, `received` and `issued`, in total and for each client.
 
 Failure (from any command):
 
@@ -411,7 +423,7 @@ Routes that exist for the screen and have no command:
 | `PUT /accounts/{cont}` with `{"description"}`, `DELETE /accounts/{cont}` | The accounts Jev chooses from |
 | `PUT /classification/settings` with `{"min_confidence", "jev_instructions"}` | The confidence level and the question for Jev |
 | `GET /classification/calls?since=...&until=...&cui=...&limit=...` | What Jev was asked, newest first |
-| `GET /settings`, `PUT /settings` with `{"saga_folder", "saga_file_per"}` | The folder for SAGA, and whether it gets one file per `"client"` or one per `"invoice"`. Either field may be left out and then stays as it is; nothing is saved unless all of it is valid. What waits for SAGA is then written again, and the reply to `PUT` adds `problems`: the clients whose files could not be |
+| `GET /settings`, `PUT /settings` with `{"saga_folder", "saga_file_per", "show_issued"}` | The folder for SAGA, whether it gets one file per `"client"` or one per `"invoice"`, and whether a client's screen lists its [issued invoices](#issued-invoices) (`true` or `false`). Any field may be left out and then stays as it is; nothing is saved unless all of it is valid. When a setting for SAGA is given, what waits for SAGA is written again. The reply to `PUT` adds `problems`: the clients whose files could not be, an empty list when nothing was written |
 | `POST /saga-files/write` with `{"cui"}` or `{}` | Bring the files for SAGA up to date, for one client or for all. Answers `{"clients", "problems": [{"cui", "message", "at"}]}` |
 | `POST /settings/choose-folder?purpose=saga` (or `backups`), `POST /folders/open` with `{"invoice_id"}` or `{"cui"}` | Open the computer's folder dialog, titled for the SAGA folder or the backup folder and starting there; show in Explorer the folder an invoice's SAGA file is in, or a client's folder |
 | `GET /secrets`, `PUT /secrets/{key}` with `{"value"}` | The keys, in full |
@@ -601,7 +613,7 @@ data/
       F_87654321_FV-1042_09.11.2026.xml    the invoices waiting for SAGA, named after the first
 ```
 
-- **Database:** table `messages` (one row per ANAF message: list details, invoice fields read from the XML, the full invoice XML and ANAF's signature XML, `uploaded_to_accounting`, `uploaded_at`, the classification fields), `sync_runs` (one row per run), `jev_calls` (every request to Jev with its reply and cost), `clients`, `accounts`, `rules`, `events` (the [journal](#the-journal)), `saga_files` (the files written for SAGA that are still there) and `saga_problems` (why a client's files could not be brought up to date, until they are), and `settings` (the confidence level, the question for Jev, the schedule `auto_sync` and the record of the last automatic download `auto_sync_last_run`, and what was changed on screen: the SAGA folder, one file per client or per invoice `saga_file_per`, the backup folder and the keys). Any SQLite tool can read it. A database made by an earlier version gains the new columns when it is first opened; nothing is lost.
+- **Database:** table `messages` (one row per ANAF message: list details, invoice fields read from the XML, the full invoice XML and ANAF's signature XML, `uploaded_to_accounting`, `uploaded_at`, the classification fields), `sync_runs` (one row per run), `jev_calls` (every request to Jev with its reply and cost), `clients`, `accounts`, `rules`, `events` (the [journal](#the-journal)), `saga_files` (the files written for SAGA that are still there) and `saga_problems` (why a client's files could not be brought up to date, until they are), and `settings` (the confidence level, the question for Jev, the schedule `auto_sync` and the record of the last automatic download `auto_sync_last_run`, and what was changed on screen: the SAGA folder, one file per client or per invoice `saga_file_per`, issued invoices shown or not `show_issued`, the backup folder and the keys). Any SQLite tool can read it. A database made by an earlier version gains the new columns when it is first opened; nothing is lost.
 - **Saved login:** `%LOCALAPPDATA%\efactura\tokens.json`, in the Windows user's private folder and outside this project. Treat it like the token and PIN: whoever copies it can read e-Factura data for every company the certificate covers until it expires.
 - **`config.toml`** holds the client secret, the API key and the OpenRouter key. It is ignored by git; do not share it.
 - **Keys changed on screen** are stored in the database as plain text, like those in `config.toml`. Treat `data/efactura.db` as a secret too, and with it every copy in the backup folder.

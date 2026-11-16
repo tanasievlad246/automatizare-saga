@@ -25,7 +25,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, StrictInt
+from pydantic import BaseModel, StrictBool, StrictInt
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -211,9 +211,10 @@ class ScheduleRequest(BaseModel):
     period: PeriodRequest | None = None  # which invoices each run asks for; left out, it stays as stored
 
 
-class SagaSettingsRequest(BaseModel):
+class ScreenSettingsRequest(BaseModel):
     saga_folder: str | None = None  # left out, it stays as it is
     saga_file_per: str | None = None  # "client" or "invoice"; left out, it stays as it is
+    show_issued: StrictBool | None = None  # issued invoices on a client's screen; left out, it stays
 
 
 class SagaFilesRequest(BaseModel):
@@ -617,17 +618,17 @@ def create_app(
 
     @router.get(
         "/settings", dependencies=documented_key,
-        summary="The folder for SAGA, and whether it gets one file per client or per invoice",
+        summary="The folder for SAGA, one file per client or per invoice, and whether issued invoices are shown",
     )
     def settings():
         return call(lambda s: s.app_settings())
 
     @router.put(
         "/settings", dependencies=documented_key,
-        summary="Change the folder for SAGA, the way its files are written, or both",
+        summary="Change the folder for SAGA, the way its files are written, or whether issued invoices are shown",
     )
-    def change_settings(body: SagaSettingsRequest):
-        return call(lambda s: s.set_saga_output(body.saga_folder, body.saga_file_per))
+    def change_settings(body: ScreenSettingsRequest):
+        return call(lambda s: s.change_settings(body.saga_folder, body.saga_file_per, body.show_issued))
 
     @router.post(
         "/saga-files/write", dependencies=documented_key,

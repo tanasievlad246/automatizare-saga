@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from efactura import auth, service as service_module
+from efactura import auth, journal, service as service_module
 from efactura.api import create_app
 from efactura.auth import Tokens
 from efactura.config import load_config
@@ -215,6 +215,58 @@ def two_waiting(api, anaf):
     anaf.add("3001", xml=rich_invoice_xml(lines=FUEL, number="A1"))
     anaf.add("3002", xml=rich_invoice_xml(lines=FUEL, number="A2"))
     api.post("/sync", json={"cui": VALID_CUI})
+
+
+def test_issued_invoices_stay_hidden_until_the_switch_is_turned(api):
+    assert api.get("/settings").json()["show_issued"] is False
+
+    changed = api.put("/settings", json={"show_issued": True})
+
+    assert (changed.status_code, changed.json()["show_issued"], changed.json()["problems"]) == (200, True, [])
+    assert api.get("/settings").json()["show_issued"] is True
+    assert api.put("/settings", json={"show_issued": False}).json()["show_issued"] is False
+
+
+def test_the_switch_for_issued_invoices_leaves_the_saga_settings_alone(api, anaf, cfg):
+    two_waiting(api, anaf)
+    api.put("/settings", json={"saga_file_per": "invoice"})
+
+    changed = api.put("/settings", json={"show_issued": True}).json()
+
+    assert (changed["saga_file_per"], changed["saga_folder"]) == ("invoice", str(cfg.data_dir / "SAGA Import"))
+    assert saga_files_of(cfg.data_dir / "SAGA Import") == [
+        "F_87654321_A1_09.11.2026.xml", "F_87654321_A2_09.11.2026.xml"
+    ]
+
+
+def test_the_switch_can_be_turned_together_with_the_saga_settings(api):
+    changed = api.put("/settings", json={"saga_file_per": "invoice", "show_issued": True}).json()
+
+    assert (changed["saga_file_per"], changed["show_issued"]) == ("invoice", True)
+
+
+@pytest.mark.parametrize("value", ["da", 1, "true"])
+def test_the_switch_takes_only_true_or_false(api, value):
+    refused = api.put("/settings", json={"show_issued": value})
+
+    assert (refused.status_code, refused.json()["error"]["code"]) == (400, "invalid_input")
+    assert api.get("/settings").json()["show_issued"] is False
+
+
+def test_a_refused_saga_setting_leaves_the_switch_as_it_was(api):
+    refused = api.put("/settings", json={"saga_file_per": "both", "show_issued": True})
+
+    assert refused.status_code == 400
+    assert api.get("/settings").json()["show_issued"] is False
+
+
+def test_turning_the_switch_is_written_in_the_journal_once(api, cfg):
+    api.put("/settings", json={"show_issued": True})
+    api.put("/settings", json={"show_issued": True})  # already on: nothing changed, nothing written
+
+    lines = [e for e in journal.events(cfg.db_path)["events"] if e["event"] == "settings.show_issued"]
+
+    assert [line_["data"]["shown"] for line_ in lines] == [True]
 
 
 def test_settings_say_one_file_per_client_until_another_way_is_chosen(api):
@@ -628,8 +680,6 @@ def test_a_bad_period_answers_400(api):
 
 
 def test_reading_the_schedule_is_not_written_in_the_journal(api, cfg):
-    from efactura import journal
-
     api.get("/sync/schedule")
     api.put("/sync/schedule", json={"enabled": False, "days": [0], "times": ["08:00"]})
 

@@ -288,6 +288,18 @@ def test_run_if_due_never_raises(tmp_path):
     assert schedule.run_if_due(cfg, MONDAY_8) is None
 
 
+def test_an_automatic_run_counts_only_received_invoices_as_new(cfg, anaf, make_service):
+    with_clients(cfg, make_service, (VALID_CUI, "Alfa"))
+    anaf.add("3001", cui=VALID_CUI)
+    anaf.add("3002", cui=VALID_CUI, tip="FACTURA TRIMISA")
+    anaf.add("3003", cui=VALID_CUI, tip="FACTURA TRIMISA")
+    switch_on(cfg)
+
+    record = schedule.run_if_due(cfg, MONDAY_8, make_service)
+
+    assert (record["status"], record["new"]) == ("ok", 1)
+
+
 def test_a_run_is_one_story_in_the_journal(cfg, anaf, make_service):
     with_clients(cfg, make_service, (VALID_CUI, "Alfa"))
     anaf.add("3001", cui=VALID_CUI)

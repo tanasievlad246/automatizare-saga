@@ -466,7 +466,8 @@ def _run(cfg, now, make_service, clock, found, trace, period: Period) -> dict:
     record.update(
         finished_at=_text(local_clock(now)), status=answer["status"],
         clients=answer.get("clients", 0), failed_clients=answer.get("failed_clients", 0),
-        new=answer.get("new", 0), review=answer.get("review", 0), error=error,
+        # "New" on the screen are the invoices to work on: the received ones.
+        new=answer.get("received", 0), review=answer.get("review", 0), error=error,
     )
     try:
         _write_record(cfg, record)

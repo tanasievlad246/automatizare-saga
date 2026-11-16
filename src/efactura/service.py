@@ -120,6 +120,8 @@ EDITABLE_SECRETS = ("openrouter_api_key", "anaf_client_id", "anaf_client_secret"
 # The setting that says how the invoices waiting for SAGA are put in files: one file per
 # client (saga.PER_CLIENT, unless another way is saved) or one per invoice.
 SAGA_FILE_PER = "saga_file_per"
+# Whether a client's screen also lists the invoices the client issued. Only the page reads it.
+SHOW_ISSUED = "show_issued"
 # Bringing a client's files up to date takes a moment; a second writer waits this long for it.
 SAGA_LOCK_WAIT = 30.0
 
@@ -293,7 +295,8 @@ class Service:
                 results.append(
                     {
                         "cui": cui, "name": name, "ok": True,
-                        "new_count": result["new_count"], "failed_count": result["failed_count"],
+                        "new_count": result["new_count"], "received_count": result["received_count"],
+                        "issued_count": result["issued_count"], "failed_count": result["failed_count"],
                         "review": (result["classification"] or {}).get(REVIEW, 0),
                     }
                 )
@@ -315,6 +318,8 @@ class Service:
             "clients": total,
             "failed_clients": failed_clients,
             "new": sum(r["new_count"] for r in done),
+            "received": sum(r["received_count"] for r in done),
+            "issued": sum(r["issued_count"] for r in done),
             "review": sum(r["review"] for r in done),
             "stopped_by": stopped_by,
             "results": results,
@@ -426,6 +431,7 @@ class Service:
                     f"{result['failed_count']} failed.",
                     level="warning" if result["failed_count"] else "info",
                     cui=cui, client=client, listed=result["listed"], new=result["new_count"],
+                    received=result["received_count"], issued=result["issued_count"],
                     failed=result["failed_count"], classified=decided.get(CLASSIFIED), review=decided.get(REVIEW),
                     waiting=decided.get(PENDING), duration_ms=_since(began),
                 )
@@ -479,6 +485,10 @@ class Service:
             "window_days": window.days,
             "listed": len(entries),
             "new_count": len(saved),
+            # Of those: the invoices the client received, which get an account, and the ones
+            # it issued, which are only kept. Errors and other messages are in neither.
+            "received_count": sum(type_slug(m["message_type"]) == "primita" for m in saved),
+            "issued_count": sum(type_slug(m["message_type"]) == "trimisa" for m in saved),
             "failed_count": len(failed),
             "folder": str(folder) if saved else None,
             "new": saved,
@@ -832,10 +842,41 @@ class Service:
     def app_settings(self) -> dict:
         store = self._open_store()
         try:
-            folder, per = self._saga_dir(store), _saga_file_per(store)
+            folder, per, issued = self._saga_dir(store), _saga_file_per(store), _show_issued(store)
         finally:
             store.close()
-        return {"ok": True, "saga_folder": str(folder), "saga_file_per": per, "demo": self.cfg.demo}
+        return {
+            "ok": True, "saga_folder": str(folder), "saga_file_per": per, "show_issued": issued,
+            "demo": self.cfg.demo,
+        }
+
+    def change_settings(
+        self, saga_folder: str | None = None, saga_file_per: str | None = None,
+        show_issued: bool | None = None,
+    ) -> dict:
+        """What is changed on the screen, any of it at once; what is left out stays as it
+        is. The settings for SAGA are checked first, so a refusal changes nothing."""
+        for_saga = saga_folder is not None or saga_file_per is not None
+        if not for_saga and show_issued is None:
+            raise EfacturaError(INVALID_INPUT, "Give saga_folder, saga_file_per or show_issued.")
+        if show_issued is not None and not isinstance(show_issued, bool):
+            raise EfacturaError(INVALID_INPUT, "show_issued must be true or false.")
+        problems = self.set_saga_output(saga_folder, saga_file_per)["problems"] if for_saga else []
+        if show_issued is not None:
+            self._set_show_issued(show_issued)
+        return {**self.app_settings(), "problems": problems}
+
+    def _set_show_issued(self, shown: bool) -> None:
+        store = self._open_store()
+        try:
+            if shown != _show_issued(store):
+                store.set_setting(SHOW_ISSUED, "1" if shown else "0")
+                journal.record(
+                    "settings", "settings.show_issued",
+                    f"The invoices a client issued are now {'shown' if shown else 'hidden'}.", shown=shown,
+                )
+        finally:
+            store.close()
 
     def set_saga_output(self, folder: str | None = None, per: str | None = None) -> dict:
         """Change the folder for SAGA, whether it gets one file per client or one per
@@ -2281,6 +2322,10 @@ def _checked_folder(folder: str) -> Path:
 def _saga_file_per(store: Store) -> str:
     saved = store.get_setting(SAGA_FILE_PER)
     return saved if saved in saga.WAYS else saga.PER_CLIENT
+
+
+def _show_issued(store: Store) -> bool:
+    return store.get_setting(SHOW_ISSUED) == "1"
 
 
 def _is_inside(path: Path, folder: Path) -> bool:

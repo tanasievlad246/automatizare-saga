@@ -93,8 +93,21 @@ def test_with_no_client_on_the_run_is_fine_and_empty(cfg, anaf):
 
     assert service.sync_all() == {
         "ok": True, "status": "ok", "clients": 0, "failed_clients": 0,
-        "new": 0, "review": 0, "stopped_by": None, "results": [],
+        "new": 0, "received": 0, "issued": 0, "review": 0, "stopped_by": None, "results": [],
     }
+
+
+def test_the_answer_counts_the_received_and_the_issued_invoices_apart(service, anaf):
+    anaf.add("3001")  # the stand-in lists everything for whoever asks first: Alfa
+    anaf.add("3002", tip="FACTURA TRIMISA")
+    anaf.add("3003", tip="FACTURA TRIMISA")
+
+    answer = service.sync_all()
+
+    assert (answer["new"], answer["received"], answer["issued"]) == (3, 1, 2)
+    assert [(r["name"], r["received_count"], r["issued_count"]) for r in answer["results"]] == [
+        ("Alfa", 1, 2), ("Beta", 0, 0),
+    ]
 
 
 def test_one_client_failing_does_not_stop_the_others(service, anaf, monkeypatch):

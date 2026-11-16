@@ -85,6 +85,16 @@ TODAY = {
         ("Papetărie Centrală SRL", "RO60223344", "PC 118", [line("Hârtie copiator A4", "95.00", quantity="5", price="19.00")]),
     ],
 }
+# What a client issued itself: (buyer name, buyer CUI, invoice number, lines) per client. ANAF
+# lists these too; the program keeps them and shows them only when asked to.
+ISSUED = {
+    "12345674": [
+        ("Gama Imobiliare SA", "31557788", "AC-2029", [line("Reparații acoperiș", "600.00")]),
+        ("Primăria Comunei Valea Mare", "4553380", "AC-2030", [line("Lucrări de zidărie", "10000.00")]),
+        ("Beta Instal SRL", "27745431", "AC-2031", [line("Manoperă instalații", "2000.00")]),
+    ],
+}
+BUYERS = [(name, cui) for name, cui, _, _ in ISSUED["12345674"]]
 # Booked by a person on another account than Jev chose for the same kind of work, so the
 # rule proposed from it shows invoices on two accounts.
 BOOKED_BY_HAND = ("12345674", "SA 3340", "611")
@@ -153,6 +163,7 @@ def build(folder: Path, now: datetime | None = None) -> Config:
     setup.save_rule(name="chirie birou", cont="612", supplier_cuis=["11112222"], client_cui="12345674")
 
     message_id = 3000
+    issued_id = FIRST_ISSUED_ID
     for moment, batch in ((now - timedelta(days=6), EARLIER), (now, TODAY)):
         for cui, invoices in batch.items():
             anaf = FakeAnaf()
@@ -161,6 +172,9 @@ def build(folder: Path, now: datetime | None = None) -> Config:
                 anaf.add(str(message_id), xml=rich_invoice_xml(
                     lines=lines, number=number, supplier_cui=supplier_cui, supplier_name=supplier,
                 ))
+            for buyer, buyer_cui, number, lines in ISSUED.get(cui, []) if batch is TODAY else []:
+                issued_id += 1
+                anaf.add(str(issued_id), tip="FACTURA TRIMISA", xml=_issued_xml(cui, buyer, buyer_cui, number, lines))
             service_at(moment, anaf).sync(cui)
 
     cui, number, cont = BOOKED_BY_HAND
@@ -174,9 +188,18 @@ def build(folder: Path, now: datetime | None = None) -> Config:
     return cfg
 
 
+def _issued_xml(cui: str, buyer: str, buyer_cui: str, number: str, lines: list, **dates) -> bytes:
+    """An invoice the client itself issued: the client is its supplier."""
+    return rich_invoice_xml(
+        lines=lines, number=number, supplier_cui=f"RO{cui}", supplier_name=CLIENTS.get(cui, f"Client {cui}"),
+        customer_cui=buyer_cui, customer_name=buyer, **dates,
+    )
+
+
 # --- the stand-ins the running program talks to ---------------------------------------
 
 STATE_FILE = "standin.json"
+FIRST_ISSUED_ID = 3500  # `build` numbers the issued invoices from here, apart from the received ones
 FIRST_MESSAGE_ID = 7000  # above the ids `build` used, which are in the database already
 HOSTS = ("logincert.anaf.ro", "api.anaf.ro", "openrouter.ai")
 
@@ -198,7 +221,8 @@ _state_lock = threading.Lock()  # one request at a time reads and rewrites the s
 class StateAnaf(FakeAnaf):
     """A stand-in for ANAF that keeps what it "has" in a file, because the program makes a
     new Service for every request and nothing can be remembered in memory. Each time the
-    list is asked for a CUI, one or two new received invoices appear in it."""
+    list is asked for a CUI, one or two new received invoices appear in it, and every second
+    time an invoice the client issued as well."""
 
     def __init__(self, path: Path, now=None):
         super().__init__()
@@ -255,11 +279,24 @@ class StateAnaf(FakeAnaf):
             self.entries = everything
 
     def _receive(self, state: dict, cui: str) -> None:
-        """Invoices that arrived since the last time: one, then two, then one again."""
+        """Invoices that arrived since the last time: one, then two, then one again. With
+        the two comes one the client issued."""
         asked = state.setdefault("asked", {})
         count = asked.get(cui, 0)
         asked[cui] = count + 1
         moment = self.now()
+        dates = {
+            "issue_date": moment.date().isoformat(),
+            "due_date": (moment + timedelta(days=30)).date().isoformat(),
+        }
+        if count % 2 == 1:
+            message_id = state.get("next_id", FIRST_MESSAGE_ID)
+            state["next_id"] = message_id + 1
+            buyer, buyer_cui = BUYERS[message_id % len(BUYERS)]
+            self.add(
+                str(message_id), cui=cui, tip="FACTURA TRIMISA", created=moment.strftime("%Y%m%d%H%M"),
+                xml=_issued_xml(cui, buyer, buyer_cui, f"DEMO {message_id}", [line("Lucrări conform contract", "1200.00")], **dates),
+            )
         for _ in range(1 if count % 2 == 0 else 2):
             message_id = state.get("next_id", FIRST_MESSAGE_ID)
             state["next_id"] = message_id + 1
@@ -270,8 +307,7 @@ class StateAnaf(FakeAnaf):
                 xml=rich_invoice_xml(
                     lines=[line(text, value) for text, value in chosen],
                     number=f"DEMO {message_id}", supplier_cui=supplier_cui, supplier_name=name,
-                    issue_date=moment.date().isoformat(),
-                    due_date=(moment + timedelta(days=30)).date().isoformat(), customer_cui=cui,
+                    customer_cui=cui, **dates,
                 ),
             )
 

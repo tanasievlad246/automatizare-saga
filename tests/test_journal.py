@@ -206,6 +206,20 @@ def downloaded(cfg, monkeypatch):
     return cfg, trace
 
 
+def test_the_end_of_a_download_says_how_many_invoices_were_received_and_how_many_issued(cfg):
+    anaf = FakeAnaf()
+    anaf.add("3001", tip="FACTURA TRIMISA")
+    anaf.add("3002", tip="FACTURA TRIMISA")
+    anaf.add("3003", xml=rich_invoice_xml(lines=[line("Motorina Euro 5", "450.00")], number="FV-1"))
+    with journal.trace() as trace:
+        Service(cfg, http=anaf.client(), now=lambda: NOW).sync(VALID_CUI)
+
+    finished = rows(cfg, trace=trace, oldest_first=True)[-1]
+
+    assert finished["event"] == "sync.finished"
+    assert (finished["data"]["new"], finished["data"]["received"], finished["data"]["issued"]) == (3, 1, 2)
+
+
 def test_a_download_leaves_its_whole_story_under_one_trace(downloaded):
     cfg, trace = downloaded
 

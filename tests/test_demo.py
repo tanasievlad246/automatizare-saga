@@ -79,8 +79,29 @@ def test_every_download_brings_one_or_two_new_invoices_and_they_are_remembered(c
     first = demo.service(cfg).sync(CLIENT)
     second = demo.service(cfg).sync(CLIENT)  # a new Service each time, as each request makes one
 
-    assert (first["new_count"], second["new_count"]) == (1, 2)
+    assert (first["received_count"], second["received_count"]) == (1, 2)
     assert (cfg.data_dir / "standin.json").is_file()
+
+
+def test_the_demo_has_invoices_a_client_issued(cfg):
+    issued = demo.service(cfg).invoices(cui=CLIENT, message_type="trimisa")["invoices"]
+
+    assert len(issued) == 3
+    assert {each["supplier_name"] for each in issued} == {"Alfa Construct SRL"}
+    assert [each["customer_name"] for each in issued] == [
+        "Gama Imobiliare SA", "Primăria Comunei Valea Mare", "Beta Instal SRL",
+    ]
+    assert all(each["classification_status"] is None and not each["is_new"] for each in issued)
+
+
+def test_every_second_download_also_brings_an_invoice_the_client_issued(cfg):
+    first = demo.service(cfg).sync(CLIENT)
+    second = demo.service(cfg).sync(CLIENT)
+
+    assert (first["issued_count"], second["issued_count"]) == (0, 1)
+    (issued,) = [each for each in second["new"] if each["message_type"] == "FACTURA TRIMISA"]
+    assert (issued["supplier_name"], issued["supplier_cui"]) == ("Alfa Construct SRL", CLIENT)
+    assert issued["customer_name"] and issued["customer_cui"] != CLIENT
 
 
 @pytest.fixture
@@ -96,8 +117,8 @@ def test_any_service_on_demo_settings_talks_to_the_stand_ins_by_itself(cfg, no_n
     desk = Service(cfg)  # no client given, as any new caller would write it
 
     assert desk._http.get("https://example.com/").status_code == 404
-    assert desk.sync(CLIENT)["new_count"] == 1
-    assert demo.service(cfg).sync(CLIENT)["new_count"] == 2  # the old way still works
+    assert desk.sync(CLIENT)["received_count"] == 1
+    assert demo.service(cfg).sync(CLIENT)["received_count"] == 2  # the old way still works
 
 
 def test_demo_never_reaches_past_its_three_hosts(cfg):

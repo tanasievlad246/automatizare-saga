@@ -259,7 +259,7 @@ _RICH_INVOICE = """<?xml version="1.0" encoding="UTF-8"?>
         <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme>
       </cac:PartyTaxScheme>
       <cac:PartyLegalEntity>
-        <cbc:RegistrationName>Client SRL</cbc:RegistrationName>
+        <cbc:RegistrationName>{customer_name}</cbc:RegistrationName>
         <cbc:CompanyID>J12/55/2015</cbc:CompanyID>
       </cac:PartyLegalEntity>
     </cac:Party>
@@ -310,7 +310,8 @@ def adjustment(amount, charge=False, reason="Discount comercial", percent="19", 
 def rich_invoice_xml(lines=None, number="FV-1042", supplier_cui="RO87654321",
                      supplier_name="Furnizor SRL", currency="RON", adjustments=(),
                      vat_total=None, credit_note=False, vat_on_collection=False,
-                     issue_date="2026-11-09", due_date="2026-12-09", customer_cui=VALID_CUI) -> bytes:
+                     issue_date="2026-11-09", due_date="2026-12-09", customer_cui=VALID_CUI,
+                     customer_name="Client SRL") -> bytes:
     """A UBL invoice (or credit note) with addresses, a bank account and lines."""
     lines = [line("Servicii diverse", "1000.00")] if lines is None else lines
     root = "CreditNote" if credit_note else "Invoice"
@@ -366,7 +367,7 @@ def rich_invoice_xml(lines=None, number="FV-1042", supplier_cui="RO87654321",
     return _RICH_INVOICE.format(
         root=root, number=number, issue_date=issue_date, due_date=due_date,
         customer_cui=customer_cui, type_code="381" if credit_note else "380", currency=currency,
-        supplier_cui=supplier_cui, supplier_name=supplier_name,
+        supplier_cui=supplier_cui, supplier_name=supplier_name, customer_name=customer_name,
         period=("<cac:InvoicePeriod><cbc:DescriptionCode>432</cbc:DescriptionCode></cac:InvoicePeriod>"
                 if vat_on_collection else ""),
         adjustments="".join(adjustment_parts), lines="".join(line_parts),
