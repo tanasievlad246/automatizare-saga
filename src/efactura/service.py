@@ -25,7 +25,19 @@ import httpx
 
 from . import __version__, auth, certificate_login, jev, journal, saga, schedule
 from .anaf import TYPE_PREFIXES, AnafService, normalize_cui, parse_created_at, type_slug
-from .classify import decide_by_rules, deciding_line, jev_request, read_jev_answer, subject_of
+from .classify import (
+    JevAnswer,
+    decide_by_rules,
+    deciding_line,
+    fits,
+    follows_largest,
+    jev_line_request,
+    jev_request,
+    read_jev_answer,
+    rules_by_line,
+    same_question,
+    subject_of,
+)
 from .clients_file import read_client_rows
 from .config import MAX_DAYS, Config
 from .errors import (
@@ -55,8 +67,8 @@ from .invoice import (
     parse_invoice,
     parse_invoice_fields,
 )
-from .rules import CONDITIONS, Rule, Rulebook, Subject, any_of
-from .store import JEV_INSTRUCTIONS, RULE_TEST, Store
+from .rules import CONDITIONS, DEFAULT_JEV_LINE_INSTRUCTIONS, Rule, Rulebook, Subject, any_of
+from .store import JEV_INSTRUCTIONS, JEV_LINE_INSTRUCTIONS, RULE_TEST, Store
 from .suggestions import propose, ticked_words, words_of
 
 log = logging.getLogger(__name__)
@@ -670,9 +682,12 @@ class Service:
         }
 
     def set_cont(
-        self, message_id: str, cont: str | None = None, accept: bool = False, force: bool = False
+        self, message_id: str, cont: str | None = None, accept: bool = False, force: bool = False,
+        line: int | None = None,
     ) -> dict:
-        """A person's decision: accept Jev's suggestion, or set an account."""
+        """A person's decision: accept Jev's suggestion, or set an account. On an invoice
+        decided line by line, `line` names the one line; without it every line gets `cont`,
+        or every line left without an account gets what Jev proposed for it."""
         if accept == (cont is not None):
             raise EfacturaError(
                 INVALID_INPUT, "Either accept Jev's suggestion or give a cont, one of the two."
@@ -683,6 +698,17 @@ class Service:
             store = self._open_store()
             try:
                 row, invoice = self._classifiable(store, message_id, force, classified_ok=True)
+                entries = _stored_lines(row)
+                if entries is not None:
+                    _choose_on_lines(entries, cont, accept, line)
+                    self._record_lines(store, row, invoice, entries)
+                    self._write_saga_files(store, row["cui"])
+                    return {"ok": True, "invoice": self._present(store.get_message(message_id))}
+                if line is not None:
+                    raise EfacturaError(
+                        INVALID_INPUT,
+                        "This invoice has one account for all its lines. Classify it again to decide it line by line.",
+                    )
                 if accept:
                     if not row["suggested_cont"]:
                         raise EfacturaError(
@@ -709,9 +735,26 @@ class Service:
                 "jev_configured": bool(self.cfg.openrouter_api_key),
                 "accounts": store.accounts(),
                 "jev_instructions": store.get_setting(JEV_INSTRUCTIONS) or "",
+                "jev_line_instructions": store.get_setting(JEV_LINE_INSTRUCTIONS) or DEFAULT_JEV_LINE_INSTRUCTIONS,
             }
         finally:
             store.close()
+
+    def set_jev_line_instructions(self, text: str) -> dict:
+        """The question Jev is asked about one line, for the clients whose invoices are
+        decided line by line."""
+        text = str(text or "").strip()
+        if not text:
+            raise EfacturaError(INVALID_INPUT, "The question for Jev cannot be empty.")
+        store = self._open_store()
+        try:
+            store.set_setting(JEV_LINE_INSTRUCTIONS, text)
+            journal.record(
+                "settings", "settings.jev_line_question", "The question put to Jev about one line was changed."
+            )
+        finally:
+            store.close()
+        return self.classification_settings()
 
     def set_jev_instructions(self, text: str) -> dict:
         """The question Jev is asked about every invoice the rules cannot decide."""
@@ -1556,6 +1599,9 @@ class Service:
                 f"{earlier}. Decide whether it has to be booked again.",
             )
 
+        if store.client_per_line(row["cui"]):
+            return self._classify_lines(store, row, invoice, rulebook, tally, jev_allowed)
+
         decision = decide_by_rules(invoice, rulebook)
         if decision:
             return self._finish(
@@ -1587,33 +1633,111 @@ class Service:
             answer = self._ask_jev(store, row, request, rulebook, tally)
         except _JevCouldNotDecide as exc:
             return self._to_review(store, row, f"Jev could not decide this invoice: {exc}")
-        level = _min_confidence(store)
-        jev_said = {
-            "suggested_cont": answer.choice,
-            "confidence": answer.confidence,
-            "confidence_threshold": level,
-        }
-        if answer.refused:
-            return self._to_review(store, row, "Jev declined to answer.", **jev_said)
-        if answer.choice is None:
-            return self._to_review(store, row, "Jev found that none of the accounts fits.", **jev_said)
-        if answer.confidence is None:
-            return self._to_review(
-                store, row, f"Jev suggested {answer.choice} without a confidence figure.", **jev_said
-            )
-        if answer.confidence < level:
-            return self._to_review(
-                store, row,
-                f"Jev suggested {answer.choice} with confidence {answer.confidence:.2f}, "
-                f"below the level of {level:.2f}.",
-                **jev_said,
-            )
-        return self._finish(
-            store, row, invoice, answer.choice, "jev",
-            f"Jev chose {answer.choice} with confidence {answer.confidence:.2f}.", **jev_said,
-        )
+        cont, reason, jev_said = _judged(answer, _min_confidence(store))
+        if cont is None:
+            return self._to_review(store, row, reason, **jev_said)
+        return self._finish(store, row, invoice, cont, "jev", reason, **jev_said)
 
-    def _ask_jev(self, store: Store, row: dict, request: dict, rulebook: Rulebook, tally: dict):
+    def _classify_lines(
+        self, store: Store, row: dict, invoice: Invoice, rulebook: Rulebook, tally: dict, jev_allowed: bool,
+    ) -> str:
+        """Decide each line on its own: the rules first; a discount or a line worth nothing
+        takes the account of the largest line; Jev for the rest, one question per distinct
+        line; a person for whatever is left. Nothing is recorded while OpenRouter is failing
+        as a whole: the invoice then waits, whole, for the next run."""
+        if not invoice.lines:
+            return self._to_review(store, row, "The invoice has no lines to decide from.")
+        largest = deciding_line(invoice).number
+        entries = {
+            number: _line_entry(number, rule.cont, "rules", f'Rule "{rule.name}" matched line {number}.', rule=rule.name)
+            for number, rule in rules_by_line(invoice, rulebook).items()
+        }
+        for item in invoice.lines:
+            if item.number not in entries and follows_largest(invoice, item):
+                entries[item.number] = _line_entry(
+                    item.number, None, FOLLOWS, f"Takes the account of line {largest}, the largest on the invoice."
+                )
+        asked = [item for item in invoice.lines if item.number not in entries]
+        why_not = None
+        if asked and not self.cfg.openrouter_api_key:
+            why_not = "No rule matched this line, and OpenRouter is not set up ([openrouter] api_key in config.toml)."
+        elif asked and not rulebook.accounts:
+            why_not = "No rule matched this line, and there are no accounts for Jev to choose from."
+        elif asked and not jev_allowed:
+            _note_error(store, row["id"], "Not sent to Jev: OpenRouter failed earlier in this run.")
+            return PENDING
+        groups: dict[tuple, list[Line]] = {}
+        for item in asked:
+            groups.setdefault(same_question(item), []).append(item)
+        level = _min_confidence(store) if groups and not why_not else None
+        for items in groups.values():
+            cont, reason, jev_said = None, why_not, {}
+            if not why_not:
+                request = jev_line_request(invoice, items[0], rulebook, self.cfg.jev_model)
+                if not fits(request):
+                    reason = "This line and the list of accounts do not fit in one request to Jev."
+                else:
+                    try:
+                        answer = self._ask_jev(store, row, request, rulebook, tally, line=items[0].number)
+                    except _JevCouldNotDecide as exc:
+                        reason = f"Jev could not decide this line: {exc}"
+                    else:
+                        cont, reason, jev_said = _judged(answer, level)
+            for item in items:
+                entries[item.number] = _line_entry(item.number, cont, "jev" if cont else None, reason, **jev_said)
+        return self._record_lines(store, row, invoice, [entries[item.number] for item in invoice.lines])
+
+    def _record_lines(self, store: Store, row: dict, invoice: Invoice, entries: list[dict]) -> str:
+        """Record each line's account. The invoice is ready for SAGA once every line has one;
+        until then it waits for a person. Its own `cont` and the fields beside it are those of
+        its largest line, so whatever reads one account per invoice keeps working."""
+        largest = deciding_line(invoice).number
+        head = next(entry for entry in entries if entry["line"] == largest)
+        for entry in entries:
+            if entry["method"] == FOLLOWS:
+                entry["cont"] = head["cont"]
+        left = [entry for entry in entries if not entry["cont"]]
+        subject = subject_of(invoice)
+        common = {
+            "line_accounts": json.dumps(entries, ensure_ascii=False),
+            "rule_subject": subject.to_json() if subject else None,
+            "suggested_cont": head["suggested_cont"],
+            "confidence": head["confidence"],
+            "confidence_threshold": head["confidence_threshold"],
+            "classification_error": None,
+        }
+        details = {"id": row["id"], "cui": row["cui"], "invoice_number": row.get("invoice_number"),
+                   "supplier": row.get("supplier_name"), "lines": len(entries)}
+        if left:
+            reason = _lines_left(left)
+            store.set_classification(
+                row["id"], classification_status=REVIEW, cont=None, classification_method=None,
+                classification_reason=reason, classified_at=None, **common,
+            )
+            journal.record(
+                "accounts", "account.to_review", f"Message {row['id']} needs a person: {reason}",
+                level="warning", **details, reason=reason, lines_left=len(left),
+            )
+            return REVIEW
+        reason = _lines_summary(entries)
+        forgotten = {"suggestion_dismissed_for": None} if head["cont"] != row.get("cont") else {}
+        store.set_classification(
+            row["id"], classification_status=CLASSIFIED, cont=head["cont"],
+            classification_method=head["method"], classification_reason=reason,
+            classified_at=self._now().isoformat(), **common, **forgotten,
+        )
+        methods = [entry["method"] for entry in entries]
+        journal.record(
+            "accounts", "account.by_lines", f"Message {row['id']} booked line by line: {reason}",
+            **details, cont=head["cont"], accounts=sorted({entry["cont"] for entry in entries}),
+            by_rules=methods.count("rules"), by_jev=methods.count("jev"),
+            by_person=methods.count("human") + methods.count("jev_accepted"), following=methods.count(FOLLOWS),
+        )
+        return CLASSIFIED
+
+    def _ask_jev(
+        self, store: Store, row: dict, request: dict, rulebook: Rulebook, tally: dict, line: int | None = None,
+    ):
         """Ask Jev, storing every request and reply.
 
         Raises jev_error when OpenRouter as a whole is failing, and _JevCouldNotDecide when
@@ -1645,12 +1769,13 @@ class Service:
                 error=error,
             )
             tally["jev_calls"] += 1
+            about = f"message {row['id']}" + (f", line {line}" if line is not None else "")
             journal.record(
                 "jev", "jev.answered" if answer is not None else "jev.failed",
-                f"Jev answered for message {row['id']}." if answer is not None
-                else f"Jev gave no usable answer for message {row['id']}: {error}",
+                f"Jev answered for {about}." if answer is not None
+                else f"Jev gave no usable answer for {about}: {error}",
                 level="info" if answer is not None else "warning",
-                id=row["id"], invoice_number=row.get("invoice_number"), status=call.status,
+                id=row["id"], invoice_number=row.get("invoice_number"), line=line, status=call.status,
                 cost_usd=call.cost_usd, error=error, duration_ms=call.duration_ms,
             )
             tally["jev_cost_usd"] += call.cost_usd or 0
@@ -1683,6 +1808,7 @@ class Service:
             classification_reason=reason,
             classified_at=self._now().isoformat(),
             classification_error=None,
+            line_accounts=None,
             # Kept so rules can be tried on this invoice later without its XML.
             rule_subject=subject.to_json() if subject else None,
             **forgotten,
@@ -1706,6 +1832,7 @@ class Service:
             classification_reason=reason,
             classified_at=None,
             classification_error=None,
+            line_accounts=None,
             **jev_said,
         )
         journal.record(
@@ -1851,6 +1978,8 @@ class Service:
         for key in ("xml_path", "saga_xml_path"):
             if shown.get(key):
                 shown[key] = str(self.cfg.data_dir / shown[key])
+        if "line_accounts" in shown:
+            shown["line_accounts"] = _stored_lines(shown)
         shown["total_with_vat"] = _plain(total_with_vat_of(shown))
         return shown
 
@@ -2132,6 +2261,7 @@ def _rulebook_for(store: Store, cui: str) -> Rulebook:
             for rule in applicable
         ),
         instructions=store.get_setting(JEV_INSTRUCTIONS) or "",
+        line_instructions=store.get_setting(JEV_LINE_INSTRUCTIONS) or "",
     )
 
 
@@ -2269,6 +2399,95 @@ def _evidence(rule: Rule, classified: list[tuple[str, Subject]]) -> dict:
     """How a rule would have done on invoices that already have an account."""
     by_cont = Counter(cont for cont, subject in classified if rule.matches(subject))
     return {"matches": sum(by_cont.values()), "by_cont": dict(sorted(by_cont.items()))}
+
+
+FOLLOWS = "follows"  # a line that takes the account of the invoice's largest line
+
+
+def _line_entry(
+    number: int, cont: str | None = None, method: str | None = None, reason: str | None = None,
+    rule: str | None = None, suggested_cont: str | None = None, confidence: float | None = None,
+    confidence_threshold: float | None = None,
+) -> dict:
+    """One line's account as it is stored and shown: who chose it, why, what Jev said."""
+    return {
+        "line": number, "cont": cont, "method": method, "rule": rule, "reason": reason or "",
+        "suggested_cont": suggested_cont, "confidence": confidence, "confidence_threshold": confidence_threshold,
+    }
+
+
+def _stored_lines(row: dict) -> list[dict] | None:
+    """The line accounts kept on a row; None for an invoice with one account."""
+    stored = row.get("line_accounts")
+    if stored is None or isinstance(stored, list):
+        return stored
+    try:
+        entries = json.loads(stored)
+    except ValueError:
+        log.warning("The line accounts of message %s cannot be read; it counts as one account.", row.get("id"))
+        return None
+    return entries if isinstance(entries, list) else None
+
+
+def _judged(answer: JevAnswer, level: float) -> tuple[str | None, str, dict]:
+    """Jev's answer weighed against the level: the account, or None and why not."""
+    said = {"suggested_cont": answer.choice, "confidence": answer.confidence, "confidence_threshold": level}
+    if answer.refused:
+        return None, "Jev declined to answer.", said
+    if answer.choice is None:
+        return None, "Jev found that none of the accounts fits.", said
+    if answer.confidence is None:
+        return None, f"Jev suggested {answer.choice} without a confidence figure.", said
+    if answer.confidence < level:
+        return None, (
+            f"Jev suggested {answer.choice} with confidence {answer.confidence:.2f}, below the level of {level:.2f}."
+        ), said
+    return answer.choice, f"Jev chose {answer.choice} with confidence {answer.confidence:.2f}.", said
+
+
+def _choose_on_lines(entries: list[dict], cont: str | None, accept: bool, line: int | None) -> None:
+    """A person's choice on an invoice decided line by line, made on `entries` in place."""
+    if line is not None:
+        chosen = [entry for entry in entries if entry["line"] == line]
+        if not chosen:
+            raise EfacturaError(INVALID_INPUT, f"The invoice has no line {line}.")
+    elif accept:
+        chosen = [entry for entry in entries if not entry["cont"] and entry["suggested_cont"]]
+    else:
+        chosen = entries
+    for entry in chosen:
+        if not accept:
+            entry.update(cont=cont, method="human", reason="Set by a person.")
+        elif entry["suggested_cont"]:
+            entry.update(cont=entry["suggested_cont"], method="jev_accepted", reason="Jev's suggestion, accepted by a person.")
+        else:
+            raise EfacturaError(INVALID_INPUT, f"Jev suggested no account for line {entry['line']}; give a cont.")
+    if accept and not chosen:
+        raise EfacturaError(INVALID_INPUT, "Jev suggested no account for the lines left; give a cont.")
+
+
+def _lines_left(left: list[dict]) -> str:
+    """Why an invoice decided line by line waits for a person. Lines that only follow the
+    largest one are not named: they get its account once it has one."""
+    named = [entry for entry in left if entry["method"] != FOLLOWS] or left
+    if len(named) == 1:
+        return f"Line {named[0]['line']} needs a person: {named[0]['reason']}"
+    return f"{len(named)} lines need a person. " + " ".join(
+        f"Line {entry['line']}: {entry['reason']}" for entry in named
+    )
+
+
+def _lines_summary(entries: list[dict]) -> str:
+    """"3 lines: 2 by rules, 1 by Jev." """
+    names = {"rules": "by rules", "jev": "by Jev", "jev_accepted": "by a person", "human": "by a person",
+             FOLLOWS: "as the largest line"}
+    counts: dict[str, int] = {}
+    for entry in entries:
+        name = names.get(entry["method"], "by a person")
+        counts[name] = counts.get(name, 0) + 1
+    return f"{len(entries)} line{'s' if len(entries) != 1 else ''}: " + ", ".join(
+        f"{count} {name}" for name, count in counts.items()
+    ) + "."
 
 
 def _checked_account(cont) -> str:

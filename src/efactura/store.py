@@ -167,6 +167,7 @@ IS_NEW_SQL = (
 
 RULE_FIELDS = ("name", "cont", *rule_examples.CONDITIONS, "client_cui", "enabled")
 JEV_INSTRUCTIONS = "jev_instructions"
+JEV_LINE_INSTRUCTIONS = "jev_line_instructions"  # the question about one line; unset: the default
 _EXAMPLES_ADDED = "examples_added"
 
 # Added to `messages` after the first version; existing databases gain them on opening.
@@ -182,6 +183,9 @@ CLASSIFICATION_COLUMNS = {
     "confidence_threshold": "REAL",   # the level in force when Jev answered
     "classified_at": "TEXT",
     "saga_xml_path": "TEXT",          # relative to the data folder
+    # For an invoice decided line by line: a JSON list, one entry per line, with the line's
+    # account and who chose it. NULL: one account for the whole invoice (`cont`).
+    "line_accounts": "TEXT",
     "classification_error": "TEXT",   # why the last attempt did not finish
 }
 
@@ -652,9 +656,10 @@ class Store:
 
     def client_per_line(self, cui: str) -> bool:
         """Does each line of this company's invoices get its own account? Yes, unless the
-        client was switched to one account per invoice; a company not in the list too."""
+        client was switched to one account per invoice. A company that is not in the client
+        list is classified as before: one account for the whole invoice."""
         row = self._conn.execute("SELECT per_line FROM clients WHERE cui = ?", (cui,)).fetchone()
-        return True if row is None else bool(row["per_line"])
+        return row is not None and bool(row["per_line"])
 
     def set_client_per_line(self, cui: str, per_line: bool) -> bool:
         """Returns whether anything changed."""

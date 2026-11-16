@@ -673,10 +673,11 @@ def test_a_database_from_before_per_line_gets_every_client_classified_line_by_li
     store.close()
 
 
-def test_a_company_that_is_not_in_the_client_list_is_classified_line_by_line_too(tmp_path):
+def test_a_company_that_is_not_in_the_client_list_keeps_one_account_per_invoice(tmp_path):
+    # Such a company is downloaded "as before" (README); it has no switch to turn.
     store = Store(tmp_path / "new.db")
 
-    assert store.client_per_line("12345674") is True
+    assert store.client_per_line("12345674") is False
     store.close()
 
 

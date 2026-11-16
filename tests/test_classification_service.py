@@ -11,7 +11,7 @@ from efactura import auth, service as service_module
 from efactura.auth import Tokens
 from efactura.config import load_config
 from efactura.errors import EfacturaError
-from efactura.rules import Rule, Rulebook
+from efactura.rules import DEFAULT_JEV_LINE_INSTRUCTIONS, Rule, Rulebook
 from efactura.service import Service
 from efactura.store import Store
 
@@ -595,6 +595,7 @@ def test_the_confidence_level_starts_at_eighty_percent(service):
     assert settings == {
         "ok": True, "min_confidence": 0.8, "model": "typesafe/jev-1.14", "jev_configured": True,
         "accounts": BOOK.accounts, "jev_instructions": BOOK.instructions,
+        "jev_line_instructions": DEFAULT_JEV_LINE_INSTRUCTIONS,
     }
 
 
@@ -1238,3 +1239,244 @@ def test_a_chosen_folder_with_romanian_letters_comes_back_intact(monkeypatch):
     monkeypatch.setattr(service_module.subprocess, "run", fake_run)
 
     assert service_module._ask_for_folder("C:/", "Folderul pentru SAGA") == str(service_module.Path(chosen))
+
+
+# --- line by line: each line its own account -----------------------------------------------
+
+
+@pytest.fixture
+def per_line(service):
+    """A client in the list: its invoices are decided line by line until it is switched off."""
+    service.save_client(VALID_CUI, "Alfa Construct SRL")
+    return service
+
+
+def line_accounts(service, message_id="3001"):
+    return service.invoice(message_id)["invoice"]["line_accounts"]
+
+
+def jev_lines_asked(openrouter):
+    return [request["state"]["linia"]["descriere"] for request in openrouter.requests]
+
+
+def test_each_line_gets_its_own_account_when_the_client_classifies_line_by_line(per_line, anaf, openrouter, cfg):
+    openrouter.answer_for("abonament", "626", confidence=0.93)
+    anaf.add("3001", xml=rich_invoice_xml(lines=[
+        line("Motorina Euro 5", "450.00"), line("Abonament telefonie mobila", "200.00"),
+    ]))
+
+    per_line.sync(VALID_CUI)
+
+    row = saved(cfg)
+    assert (row["classification_status"], row["cont"], row["classification_method"]) == ("classified", "6022", "rules")
+    assert line_accounts(per_line) == [
+        {"line": 1, "cont": "6022", "method": "rules", "rule": "combustibil",
+         "reason": 'Rule "combustibil" matched line 1.',
+         "suggested_cont": None, "confidence": None, "confidence_threshold": None},
+        {"line": 2, "cont": "626", "method": "jev", "rule": None,
+         "reason": "Jev chose 626 with confidence 0.93.",
+         "suggested_cont": "626", "confidence": 0.93, "confidence_threshold": 0.8},
+    ]
+    assert jev_lines_asked(openrouter) == ["Abonament telefonie mobila"]  # the rule's line is not asked about
+
+
+def test_a_line_jev_is_unsure_of_is_the_only_one_left_to_a_person(per_line, anaf, openrouter, cfg):
+    openrouter.answer_for("majorari", "628", confidence=0.55)
+    anaf.add("3001", xml=rich_invoice_xml(lines=[
+        line("Motorina Euro 5", "450.00"), line("Majorari de intarziere", "17.17", percent="0", category="E"),
+    ]))
+
+    per_line.sync(VALID_CUI)
+
+    row = saved(cfg)
+    assert (row["classification_status"], row["cont"]) == ("review", None)
+    assert "Line 2 needs a person" in row["classification_reason"] and "0.55" in row["classification_reason"]
+    first, second = line_accounts(per_line)
+    assert (first["cont"], first["method"]) == ("6022", "rules")  # kept
+    assert (second["cont"], second["method"], second["suggested_cont"], second["confidence"]) == (None, None, "628", 0.55)
+    assert not saga_file(cfg).exists()  # nothing goes to SAGA until every line has an account
+
+
+def test_lines_with_the_same_text_are_asked_about_once(per_line, anaf, openrouter):
+    anaf.add("3001", xml=rich_invoice_xml(lines=[
+        line("Ulei motor", "90.00"), line("Motorina Euro 5", "450.00"), line("ULEI  MOTOR", "30.00"),
+    ]))
+
+    per_line.sync(VALID_CUI)
+
+    assert jev_lines_asked(openrouter) == ["Ulei motor"]
+    assert [entry["cont"] for entry in line_accounts(per_line)] == ["628", "6022", "628"]
+
+
+def test_a_discount_takes_the_account_of_the_largest_line_and_is_never_sent_to_jev(per_line, anaf, openrouter, cfg):
+    anaf.add("3001", xml=rich_invoice_xml(lines=[line("Piese de schimb", "900.00"), line("Discount", "-50.00")]))
+
+    per_line.sync(VALID_CUI)
+
+    assert jev_lines_asked(openrouter) == ["Piese de schimb"]
+    discount = line_accounts(per_line)[1]
+    assert (discount["cont"], discount["method"]) == ("628", "follows")
+    assert saved(cfg)["classification_status"] == "classified"
+
+
+def test_a_rule_that_matches_a_discount_wins_over_the_largest_line(per_line, anaf, openrouter, cfg):
+    set_rulebook(cfg.db_path, Rulebook(
+        accounts=BOOK.accounts,
+        rules=(Rule("combustibil", "6022", keywords=("motorina",)), Rule("reduceri", "609", keywords=("discount",))),
+        instructions=BOOK.instructions,
+    ))
+    anaf.add("3001", xml=rich_invoice_xml(lines=[line("Motorina Euro 5", "450.00"), line("Discount fidelitate", "-20.00")]))
+
+    per_line.sync(VALID_CUI)
+
+    assert [(entry["cont"], entry["method"]) for entry in line_accounts(per_line)] == [("6022", "rules"), ("609", "rules")]
+    assert openrouter.requests == []
+
+
+def test_a_client_switched_to_one_account_per_invoice_is_decided_as_before(per_line, anaf, openrouter, cfg):
+    per_line.set_client_per_line(VALID_CUI, False)
+    anaf.add("3001", xml=rich_invoice_xml(lines=[line("Motorina Euro 5", "450.00"), line("Abonament telefonie", "200.00")]))
+
+    per_line.sync(VALID_CUI)
+
+    row = saved(cfg)
+    assert (row["classification_status"], row["cont"], row["classification_method"]) == ("classified", "6022", "rules")
+    assert line_accounts(per_line) is None
+    assert openrouter.requests == []
+    assert conts_in(saga_file(cfg)) == ["6022", "6022"]
+
+
+def test_without_openrouter_the_lines_no_rule_decides_wait_for_a_person(tmp_path, anaf):
+    cfg = write_config(tmp_path, openrouter_key=None)
+    service = Service(cfg, http=anaf.client(), now=lambda: NOW)
+    service.save_client(VALID_CUI, "Alfa Construct SRL")
+    anaf.add("3001", xml=rich_invoice_xml(lines=[line("Motorina Euro 5", "450.00"), line("Piese de schimb", "300.00")]))
+
+    service.sync(VALID_CUI)
+
+    assert saved(cfg)["classification_status"] == "review"
+    first, second = line_accounts(service)
+    assert first["cont"] == "6022"
+    assert second["cont"] is None and "OpenRouter is not set up" in second["reason"]
+
+
+def test_a_line_jev_will_not_answer_goes_to_a_person_with_the_reason(per_line, anaf, openrouter, cfg):
+    openrouter.answer_for("ceva", "", refusal=True)
+    anaf.add("3001", xml=rich_invoice_xml(lines=[line("Motorina Euro 5", "450.00"), line("Ceva necunoscut", "100.00")]))
+
+    per_line.sync(VALID_CUI)
+
+    assert line_accounts(per_line)[1]["reason"] == "Jev declined to answer."
+    assert saved(cfg)["classification_status"] == "review"
+
+
+def test_when_openrouter_fails_the_invoice_waits_whole_for_the_next_run(per_line, anaf, openrouter, cfg):
+    openrouter.valid_keys = {"another-key"}  # the key is refused: no line can be asked about
+    anaf.add("3001", xml=rich_invoice_xml(lines=[line("Motorina Euro 5", "450.00"), line("Piese de schimb", "300.00")]))
+
+    per_line.sync(VALID_CUI)
+
+    row = saved(cfg)
+    assert (row["classification_status"], row["cont"]) == ("pending", None)
+    assert line_accounts(per_line) is None  # nothing half-decided is kept
+    assert "rejected the API key" in row["classification_error"]
+
+
+def test_the_question_about_one_line_can_be_changed(per_line, anaf, openrouter):
+    per_line.set_jev_line_instructions("  Contul acestei linii?  ")
+    anaf.add("3001", xml=rich_invoice_xml(lines=PARTS))
+
+    per_line.sync(VALID_CUI)
+
+    assert openrouter.requests[0]["questions"]["cont"]["instructions"] == "Contul acestei linii?"
+    assert per_line.classification_settings()["jev_line_instructions"] == "Contul acestei linii?"
+    assert error_code(lambda: per_line.set_jev_line_instructions("  ")) == "invalid_input"
+
+
+def test_the_question_about_one_line_starts_as_the_default_one(per_line):
+    assert per_line.classification_settings()["jev_line_instructions"] == DEFAULT_JEV_LINE_INSTRUCTIONS
+
+
+def test_classifying_again_decides_an_invoice_of_one_account_line_by_line(per_line, anaf, openrouter, cfg):
+    per_line.set_client_per_line(VALID_CUI, False)
+    anaf.add("3001", xml=rich_invoice_xml(lines=[line("Motorina Euro 5", "450.00"), line("Abonament telefonie", "200.00")]))
+    per_line.sync(VALID_CUI)
+    per_line.set_client_per_line(VALID_CUI, True)
+
+    assert line_accounts(per_line) is None  # an invoice that has its account keeps it
+    per_line.classify("3001", force=True)
+
+    assert [entry["cont"] for entry in line_accounts(per_line)] == ["6022", "628"]
+
+
+# --- line by line: a person's choice -------------------------------------------------------
+
+
+@pytest.fixture
+def one_line_left(per_line, anaf, openrouter):
+    """3001: line 1 by a rule (6022), line 2 left to a person with Jev's 628 at 0.55."""
+    openrouter.answer_for("majorari", "628", confidence=0.55)
+    anaf.add("3001", xml=rich_invoice_xml(lines=[
+        line("Motorina Euro 5", "450.00"), line("Majorari de intarziere", "17.17", percent="0", category="E"),
+    ]))
+    per_line.sync(VALID_CUI)
+    return per_line
+
+
+def test_a_person_chooses_the_account_of_the_line_left_to_check(one_line_left, cfg):
+    one_line_left.set_cont("3001", cont="626", line=2)
+
+    row = saved(cfg)
+    assert (row["classification_status"], row["cont"]) == ("classified", "6022")
+    first, second = line_accounts(one_line_left)
+    assert (first["cont"], first["method"]) == ("6022", "rules")
+    assert (second["cont"], second["method"], second["reason"]) == ("626", "human", "Set by a person.")
+    assert second["suggested_cont"] == "628"  # what Jev said stays to be seen
+
+
+def test_a_person_accepts_jevs_proposal_for_one_line(one_line_left, cfg):
+    one_line_left.set_cont("3001", accept=True, line=2)
+
+    assert (line_accounts(one_line_left)[1]["cont"], line_accounts(one_line_left)[1]["method"]) == ("628", "jev_accepted")
+    assert saved(cfg)["classification_status"] == "classified"
+
+
+def test_accepting_without_a_line_takes_jevs_proposals_for_every_line_left(one_line_left):
+    one_line_left.set_cont("3001", accept=True)
+
+    assert [(entry["cont"], entry["method"]) for entry in line_accounts(one_line_left)] == [
+        ("6022", "rules"), ("628", "jev_accepted"),
+    ]
+
+
+def test_one_account_can_be_put_on_every_line_at_once(one_line_left, cfg):
+    one_line_left.set_cont("3001", cont="604")
+
+    assert [(entry["cont"], entry["method"]) for entry in line_accounts(one_line_left)] == [("604", "human"), ("604", "human")]
+    assert saved(cfg)["cont"] == "604"
+
+
+def test_a_line_that_is_not_on_the_invoice_is_refused(one_line_left):
+    assert error_code(lambda: one_line_left.set_cont("3001", cont="626", line=9)) == "invalid_input"
+    assert error_code(lambda: one_line_left.set_cont("3001", accept=True, line=1)) == "invalid_input"  # Jev said nothing there
+
+
+def test_choosing_the_largest_lines_account_carries_its_discount_along(per_line, anaf, openrouter, cfg):
+    openrouter.answer_for("piese", "628", confidence=0.4)
+    anaf.add("3001", xml=rich_invoice_xml(lines=[line("Piese de schimb", "900.00"), line("Discount", "-50.00")]))
+    per_line.sync(VALID_CUI)
+    assert [entry["cont"] for entry in line_accounts(per_line)] == [None, None]
+
+    per_line.set_cont("3001", cont="6024", line=1)
+
+    assert [(entry["cont"], entry["method"]) for entry in line_accounts(per_line)] == [("6024", "human"), ("6024", "follows")]
+    assert saved(cfg)["classification_status"] == "classified"
+
+
+def test_a_line_cannot_be_chosen_on_an_invoice_with_one_account(per_line, anaf, cfg):
+    per_line.set_client_per_line(VALID_CUI, False)
+    anaf.add("3001", xml=rich_invoice_xml(lines=FUEL))
+    per_line.sync(VALID_CUI)
+
+    assert error_code(lambda: per_line.set_cont("3001", cont="626", line=1)) == "invalid_input"
+    assert saved(cfg)["cont"] == "6022"

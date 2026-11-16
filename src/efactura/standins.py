@@ -427,7 +427,8 @@ class FakeOpenRouter:
         if self.valid_keys is not None and key not in self.valid_keys:
             return httpx.Response(401, json={"error": {"code": 401, "message": "No auth credentials found"}})
 
-        described = " ".join(item["descriere"] for item in body["state"]["linii"]).lower()
+        lines = body["state"].get("linii") or [body["state"]["linia"]]  # an invoice, or one line of it
+        described = " ".join(item["descriere"] for item in lines).lower()
         for word, status in self.fail_for.items():
             if word.lower() in described:
                 return httpx.Response(
