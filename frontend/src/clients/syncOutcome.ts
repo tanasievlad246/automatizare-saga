@@ -4,16 +4,18 @@ import type { SyncResult } from '../types'
 /**
  * What one client's download brought, in a sentence. It must never read as a success when
  * something was left behind, and it says when more days were searched than were asked for.
- * "New" are the received invoices only: the ones the client issued are counted apart.
+ * Received and issued invoices are named apart when issued ones came.
  */
 export function describeSyncResult(result: SyncResult, askedDays: number | null): string {
   const { received_count: received, issued_count: issued } = result
-  const parts = [
-    received ? countOf(received, 'o factură nouă', 'facturi noi') : issued ? 'nicio factură primită' : 'nimic nou',
-  ]
+  const parts = issued
+    ? [
+        received ? countOf(received, 'o factură primită nouă', 'facturi primite noi') : 'nicio factură primită',
+        countOf(issued, 'o emisă nouă', 'emise noi'),
+      ]
+    : [received ? countOf(received, 'o factură nouă', 'facturi noi') : 'nimic nou']
   const toReview = result.classification?.review ?? 0
   if (toReview) parts.push(`${toReview} de verificat`)
-  if (issued) parts.push(countOf(issued, 'o factură emisă', 'facturi emise'))
   if (result.failed_count) {
     const failed = result.failed_count === 1 ? 'una nu s-a putut descărca' : `${result.failed_count} nu s-au putut descărca`
     parts.push(`${failed} (încercați din nou mai târziu)`)

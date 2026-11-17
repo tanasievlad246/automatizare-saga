@@ -59,6 +59,20 @@ describe('a line of the journal, in Romanian', () => {
     expect(describeEvent(line('settings.jev_line_question', {}))).toBe('A fost schimbată întrebarea pusă lui Jev despre o linie.')
   })
 
+  it('says when a rule, an account or a question is for the invoices a client issued', () => {
+    expect(describeEvent(line('rule.added', { name: 'manoperă', cont: '704', kind: 'issued' })))
+      .toBe('A fost adăugată regula „manoperă” pentru facturile emise, pentru contul 704.')
+    expect(describeEvent(line('rule.changed', { name: 'combustibil', cont: '6022', kind: 'received' })))
+      .toBe('A fost modificată regula „combustibil”, pentru contul 6022.')
+    expect(describeEvent(line('account.saved', { cont: '704', kind: 'issued' })))
+      .toBe('Contul 704 a fost adăugat sau modificat în lista lui Jev pentru facturile emise.')
+    expect(describeEvent(line('account.removed', { cont: '628' }))).toBe('Contul 628 a fost scos din lista lui Jev.')
+    expect(describeEvent(line('settings.jev_issued_question', {})))
+      .toBe('A fost schimbată întrebarea pusă lui Jev despre o factură emisă.')
+    expect(describeEvent(line('settings.jev_issued_line_question', {})))
+      .toBe('A fost schimbată întrebarea pusă lui Jev despre o linie a unei facturi emise.')
+  })
+
   it('tells which line Jev answered about', () => {
     expect(describeEvent(line('jev.answered', { cost_usd: 0.42, line: 2 }, { duration_ms: 820 })).replace(/\s/g, ' '))
       .toBe('Jev a răspuns pentru linia 2 în 0,8 s. Cost: 0,42 $.')

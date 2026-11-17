@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { api } from '../api'
 import { showError } from '../errorMessages'
 import { formatWhen } from '../format'
+import { isIssued, kindsLine } from './issuedInvoices'
 import type { Invoice, SagaState } from '../types'
 import { importedButton, isStale, NOT_UP_TO_DATE, placeLine, readyPlaces } from './sagaFiles'
 
@@ -67,6 +68,7 @@ export function ImportedInSagaCard({ cui, ready, saga }: { cui: string; ready: I
             <li key={path} className="flex flex-col gap-2.5">
               <p className="text-muted-foreground">{placeLine(invoices.length, saga.file_per)}</p>
               <p className="rounded-lg bg-background px-3.5 py-3 font-mono text-[0.88rem] break-all">{path}</p>
+              {kindsOf(invoices) && <p>{kindsOf(invoices)}</p>}
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
                 <Button variant="outline" size="sm" disabled={openFolder.isPending} onClick={() => openFolder.mutate(invoices[0].id)}>
                   Deschide folderul
@@ -105,4 +107,10 @@ export function ImportedInSagaCard({ cui, ready, saga }: { cui: string; ready: I
       )}
     </section>
   )
+}
+
+/** How many of these invoices are received and how many issued, and where SAGA puts each kind. */
+function kindsOf(invoices: Invoice[]): string | null {
+  const issued = invoices.filter(isIssued).length
+  return kindsLine(invoices.length - issued, issued)
 }

@@ -11,10 +11,13 @@ export type Client = {
   cui: string
   name: string
   per_line: boolean // each line of its invoices gets its own account
-  invoices: number
-  new_count: number
-  review_count: number
-  ready_count: number
+  invoices: number // received ones
+  issued_count: number // the ones it issued itself
+  new_count: number // received ones
+  issued_new_count: number
+  review_count: number // of both kinds
+  issued_review_count: number
+  ready_count: number // of both kinds
   last_sync_at: string | null
   enabled: boolean
 }
@@ -164,15 +167,22 @@ export type Rule = {
   supplier_cuis: string[]
   client_cui: string | null
   enabled: boolean
+  direction: InvoiceKind // the invoices it decides
 }
 
 export type RuleFields = Omit<Rule, 'id'>
 
+/** Received by the client, or issued by it: each kind has its own accounts, rules and questions. */
+export type InvoiceKind = 'received' | 'issued'
+
 export type RulesOverview = {
   accounts: Record<string, string>
+  issued_accounts: Record<string, string> // for the invoices a client issued
   rules: Rule[]
   jev_instructions: string // the question about a whole invoice
   jev_line_instructions: string // the question about one line
+  jev_issued_instructions: string // the same two, for the invoices a client issued
+  jev_issued_line_instructions: string
   min_confidence: number
 }
 
@@ -205,6 +215,8 @@ export type JevCall = {
   cui: string | null // missing for a rule test with no client chosen
   client_name: string | null
   supplier_name: string | null
+  customer_name: string | null // for an invoice the client issued
+  message_type: string | null
   invoice_number: string | null
   choice: string | null
   confidence: number | null

@@ -86,6 +86,14 @@ describe('the note on an invoice', () => {
     expect(fileCardNote(invoice('1', FILE), fine('invoice'))).toBeNull()
   })
 
+  it('says where SAGA puts an invoice the client issued', () => {
+    const sold = { message_type: 'FACTURA TRIMISA' }
+    expect(fileCardNote(invoice('1', FILE, sold), fine())).toBe(
+      'Factura este în fișierul clientului, împreună cu celelalte facturi gata de import. În SAGA ajunge în „Ieșiri”:',
+    )
+    expect(fileCardNote(invoice('1', FILE, sold), fine('invoice'))).toBe('În SAGA ajunge în „Ieșiri”.')
+  })
+
   it('warns, whatever else is true, while the client’s folder is not up to date', () => {
     const warning = 'Folderul pentru SAGA al acestui client nu este la zi, așa că fișierul poate să nu arate ce vedeți aici. Deschideți lista de facturi a clientului și apăsați acolo „Încearcă din nou”.'
 

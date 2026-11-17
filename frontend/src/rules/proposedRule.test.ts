@@ -10,7 +10,7 @@ describe('a proposed rule', () => {
   it('becomes a rule for every client, named after its words', () => {
     expect(ruleFromProposal(byWords)).toEqual({
       name: 'ciment, var', cont: '302', keywords: ['ciment', 'var'], supplier_cuis: [],
-      item_codes: [], commodity_prefixes: [], client_cui: null, enabled: true,
+      item_codes: [], commodity_prefixes: [], client_cui: null, enabled: true, direction: 'received',
     })
   })
 

@@ -4,17 +4,20 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { cn } from '@/lib/utils'
 import { formatDate, formatMoney } from '../format'
 import type { Invoice } from '../types'
+import type { Party } from './invoiceList'
 import { InvoiceStateBadges } from './InvoiceStateBadges'
 import { needsAnAccount } from './invoiceState'
 import { listAccount } from './lineAccounts'
 
 /**
- * A client's invoices, one per row, each leading to the invoice itself. While they are
- * still being read it says so, instead of claiming there are none.
+ * A client's invoices, one per row, each leading to the invoice itself: received ones by their
+ * supplier, issued ones by their buyer (`party`). While they are still being read it says so,
+ * instead of claiming there are none.
  */
 export function InvoicesTable({
-  invoices, loading, whenEmpty,
-}: { invoices: Invoice[]; loading: boolean; whenEmpty: string }) {
+  invoices, party = 'supplier', loading, whenEmpty,
+}: { invoices: Invoice[]; party?: Party; loading: boolean; whenEmpty: string }) {
+  const nameOf = (invoice: Invoice) => (party === 'supplier' ? invoice.supplier_name : invoice.customer_name)
   if (loading) {
     return <p role="status" className="rounded-2xl border bg-card px-6 py-8 text-lg text-muted-foreground">Se încarcă facturile…</p>
   }
@@ -26,7 +29,7 @@ export function InvoicesTable({
       <Table className="min-w-[820px]">
         <TableHeader>
           <TableRow>
-            <TableHead>Furnizor</TableHead>
+            <TableHead>{party === 'supplier' ? 'Furnizor' : 'Cumpărător'}</TableHead>
             <TableHead>Factura</TableHead>
             <TableHead>Data</TableHead>
             <TableHead className="text-right">Total</TableHead>
@@ -44,7 +47,7 @@ export function InvoicesTable({
                     last column is scrolled out of a narrow window. */}
                 <TableCell className="font-semibold">
                   <Link to={`/clienti/${invoice.cui}/facturi/${invoice.id}`} className="text-foreground">
-                    {invoice.supplier_name}
+                    {nameOf(invoice)}
                   </Link>
                 </TableCell>
                 <TableCell>{invoice.invoice_number}</TableCell>
@@ -65,7 +68,7 @@ export function InvoicesTable({
                   >
                     <Link
                       to={`/clienti/${invoice.cui}/facturi/${invoice.id}`}
-                      aria-label={`${waiting ? 'Alege contul pentru' : 'Deschide'} factura ${invoice.invoice_number ?? ''} de la ${invoice.supplier_name ?? ''}`}
+                      aria-label={`${waiting ? 'Alege contul pentru' : 'Deschide'} factura ${invoice.invoice_number ?? ''} ${party === 'supplier' ? 'de la' : 'către'} ${nameOf(invoice) ?? ''}`}
                     >
                       {waiting ? 'Alege contul' : 'Deschide'}
                     </Link>

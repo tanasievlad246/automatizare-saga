@@ -121,15 +121,15 @@ describe('what a download brought', () => {
     expect(describeSyncResult({ ...result, window_days: 3 }, null)).not.toContain('am căutat')
   })
 
-  it('does not call an invoice the client issued a new invoice', () => {
+  it('names received and issued invoices apart when issued ones came, then what is to check', () => {
     expect(describeSyncResult({ ...result, new_count: 8, issued_count: 5 }, 5)).toBe(
-      '3 facturi noi, 1 de verificat, 5 facturi emise',
+      '3 facturi primite noi, 5 emise noi, 1 de verificat',
     )
     expect(describeSyncResult({ ...nothing, new_count: 2, issued_count: 2 }, 5)).toBe(
-      'nicio factură primită, 2 facturi emise',
+      'nicio factură primită, 2 emise noi',
     )
     expect(describeSyncResult({ ...nothing, new_count: 1, issued_count: 1 }, 5)).toBe(
-      'nicio factură primită, o factură emisă',
+      'nicio factură primită, o emisă nouă',
     )
   })
 

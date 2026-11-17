@@ -2740,7 +2740,7 @@ def _own_saga_xml(invoice: Invoice | None, row: dict) -> str | None:
     if invoice is None or row["classification_status"] != CLASSIFIED or not row["cont"]:
         return None
     return saga.build_xml(
-        invoice, row["cont"], row["id_solicitare"], row["id"], _line_conts(row)
+        invoice, row["cont"], row["id_solicitare"], row["id"], _line_conts(row), issued=_is_issued(row["message_type"]),
     ).decode(saga.ENCODING)
 
 

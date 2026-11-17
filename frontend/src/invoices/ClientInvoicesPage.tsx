@@ -9,13 +9,14 @@ import { pageOf, rangeLine } from '@/components/paging'
 import { scrollBelowHeader } from '@/components/scrollBelowHeader'
 import { PillTabs } from '@/components/PillTabs'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { api } from '../api'
 import { SyncDialog } from '../clients/SyncDialog'
 import { errorMessage, messageForCode } from '../errorMessages'
 import { formatWhen } from '../format'
 import { placeOf, rememberPlace } from '../listPlace'
 import { useSchedule } from '../schedule/useSchedule'
-import type { Invoice } from '../types'
+import type { Client, Invoice, InvoiceKind } from '../types'
 import { ImportedInSagaCard } from './ImportedInSagaCard'
 import { InvoiceFilters } from './InvoiceFilters'
 import {
@@ -23,10 +24,9 @@ import {
   sortInvoices, writeListState,
 } from './invoiceList'
 import { InvoicesTable } from './InvoicesTable'
-import { IssuedInvoicesCard } from './IssuedInvoicesCard'
 import { needsAnAccount } from './invoiceState'
 import { PerLineSwitch } from './PerLineSwitch'
-import { whenNoneReceived } from './issuedInvoices'
+import { kindFrom, kindTabs, whenNoneIssued, whenNoneReceived } from './issuedInvoices'
 
 // The four ways to look at a client's invoices. The first one that has anything is shown.
 const VIEWS = [
@@ -39,9 +39,9 @@ const VIEWS = [
 const INVOICE_NOUN = { one: 'Factura', many: 'Facturile' }
 
 /**
- * One client's received invoices: what is new, what needs an account, what waits for SAGA; found by
- * name, number, days or account, in the order chosen, a page at a time. Under them, the invoices the
- * client issued, when the person asks to see them.
+ * One client's invoices, received or issued (two tabs, the received ones first): what is new, what
+ * needs an account, what waits for SAGA; found by name, number, days or account, in the order
+ * chosen, a page at a time. Under them, the one file for SAGA with both kinds.
  */
 export function ClientInvoicesPage() {
   const { cui = '' } = useParams()
@@ -49,8 +49,14 @@ export function ClientInvoicesPage() {
   const [syncing, setSyncing] = useState(false)
   const listTop = useRef<HTMLDivElement>(null)
   const client = useQuery({ queryKey: ['clients'], queryFn: api.clients }).data?.clients.find((each) => each.cui === cui)
-  const { data, error, isPending } = useQuery({ queryKey: ['invoices', cui], queryFn: () => api.receivedInvoices(cui) })
-  const descriptions = useQuery({ queryKey: ['rules'], queryFn: api.rules }).data?.accounts ?? {}
+  const kind = kindFrom(search)
+  const party = kind === 'issued' ? 'customer' : 'supplier'
+  const received = useQuery({ queryKey: ['invoices', cui], queryFn: () => api.receivedInvoices(cui) })
+  // Asked for even while the received ones are shown: the file for SAGA holds both kinds.
+  const issued = useQuery({ queryKey: ['invoices', cui, 'issued'], queryFn: () => api.issuedInvoices(cui) })
+  const rules = useQuery({ queryKey: ['rules'], queryFn: api.rules }).data
+  const descriptions = (kind === 'issued' ? rules?.issued_accounts : rules?.accounts) ?? {}
+  const { data, error, isPending } = kind === 'issued' ? issued : received
   const invoices = data?.invoices ?? []
   const automaticDownloadRuns = Boolean(useSchedule().data?.running)
   // Why the button is off, if it is: the client is switched off, or the program is downloading by itself.
@@ -65,12 +71,13 @@ export function ClientInvoicesPage() {
   useEffect(() => rememberPlace(path, search.toString()), [path, search])
 
   const list = readListState(search)
-  const found = filterInvoices(invoices, list, 'supplier')
+  const found = filterInvoices(invoices, list, party)
   const narrowed = filtersOn(list)
   const chosen = search.get('arata') ?? VIEWS.find((view) => found.some(view.includes))?.value ?? 'toate'
   const inView = found.filter(VIEWS.find((view) => view.value === chosen)?.includes ?? (() => true))
-  const page = pageOf(sortInvoices(inView, list.order, 'supplier'), list.page, INVOICES_PER_PAGE)
-  const ready = invoices.filter((invoice) => invoice.classification_status === 'classified' && !invoice.uploaded_to_accounting)
+  const page = pageOf(sortInvoices(inView, list.order, party), list.page, INVOICES_PER_PAGE)
+  const isReady = (invoice: Invoice) => invoice.classification_status === 'classified' && !invoice.uploaded_to_accounting
+  const ready = [...(received.data?.invoices ?? []), ...(issued.data?.invoices ?? [])].filter(isReady)
 
   // The list chosen is written down with every change, so it does not jump to another while the person narrows it.
   const change = (changes: Partial<ListState>) => {
@@ -87,8 +94,10 @@ export function ClientInvoicesPage() {
   const showAll = () => {
     setSearch(clearFilters(search, ''), { replace: true })
     // The button pressed goes away with the filters: the focus goes to the search field.
-    document.getElementById('received-text')?.focus()
+    document.getElementById('list-text')?.focus()
   }
+  // The other kind is another list: it starts whole, at its first page.
+  const chooseKind = (wanted: InvoiceKind) => setSearch(wanted === 'issued' ? { fel: 'emise' } : {}, { replace: true })
   const turnPage = (to: number) => {
     change({ page: to })
     scrollBelowHeader(listTop.current)
@@ -119,6 +128,11 @@ export function ClientInvoicesPage() {
       {client && <PerLineSwitch client={client} />}
       {error && <Notice tone="attention">{errorMessage(error)}</Notice>}
       <div ref={listTop} className="flex flex-col gap-3.5">
+        <KindTabs
+          value={kind}
+          onChange={chooseKind}
+          tabs={kindTabs(received.data?.invoices.length, issued.data?.invoices.length ?? received.data?.issued_count)}
+        />
         <PillTabs
           label="Ce facturi se văd"
           value={chosen}
@@ -131,9 +145,9 @@ export function ClientInvoicesPage() {
         />
         {invoices.length > 0 && (
           <InvoiceFilters
-            id="received"
+            id="list"
             state={list}
-            party="supplier"
+            party={party}
             accounts={accountOptions(invoices, descriptions, list.cont)}
             onChange={change}
             className="rounded-2xl border bg-card px-4.5 py-4"
@@ -157,23 +171,53 @@ export function ClientInvoicesPage() {
       ) : (
         <InvoicesTable
           invoices={page.items}
+          party={party}
           loading={isPending}
           whenEmpty={
             invoices.length === 0
-              ? whenNoneReceived(Boolean(client?.last_sync_at))
+              ? (kind === 'issued' ? whenNoneIssued : whenNoneReceived)(Boolean(client?.last_sync_at))
               : 'Nicio factură în această listă. Alegeți altă listă de mai sus.'
           }
         />
       ))}
       <Pager page={page} label="Paginile listei de facturi" line={rangeLine(page, INVOICE_NOUN, narrowed ? 'găsite' : undefined)} onPage={turnPage} />
-      <ImportedInSagaCard cui={cui} ready={ready} saga={data?.saga} />
-      <IssuedInvoicesCard cui={cui} count={data?.issued_count} />
+      <ImportedInSagaCard cui={cui} ready={ready} saga={received.data?.saga} />
 
       <SyncDialog
-        clients={syncing ? [client ?? { cui, name: `CUI ${cui}`, invoices: 0, new_count: 0, review_count: 0, ready_count: 0, last_sync_at: null, enabled: true, per_line: false }] : null}
+        clients={syncing ? [client ?? unknownClient(cui)] : null}
         someAreOff={false}
         onClose={() => setSyncing(false)}
       />
     </div>
   )
+}
+
+/** The two kinds of invoice, as tabs that stand out from the four lists under them. */
+function KindTabs({ value, onChange, tabs }: { value: InvoiceKind; onChange: (kind: InvoiceKind) => void; tabs: { value: InvoiceKind; label: string }[] }) {
+  return (
+    <div role="group" aria-label="Ce fel de facturi" className="flex flex-wrap gap-1 self-start rounded-xl border bg-card p-1">
+      {tabs.map((tab) => (
+        <button
+          key={tab.value}
+          type="button"
+          aria-pressed={tab.value === value}
+          onClick={() => onChange(tab.value)}
+          className={cn(
+            'min-h-12 rounded-lg px-5 text-lg font-bold outline-none focus-visible:ring-3 focus-visible:ring-ring/50',
+            tab.value === value ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted',
+          )}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/** A client not in the list (anymore): enough to download its invoices. */
+function unknownClient(cui: string): Client {
+  return {
+    cui, name: `CUI ${cui}`, invoices: 0, issued_count: 0, new_count: 0, issued_new_count: 0, review_count: 0,
+    issued_review_count: 0, ready_count: 0, last_sync_at: null, enabled: true, per_line: false,
+  }
 }

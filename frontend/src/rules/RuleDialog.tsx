@@ -10,25 +10,28 @@ import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { api } from '../api'
 import { errorMessage } from '../errorMessages'
-import type { Client, Rule, RuleFields } from '../types'
+import type { Client, InvoiceKind, Rule, RuleFields } from '../types'
 import { reloadWhatARuleChanges } from './proposedRule'
 
-const EMPTY: RuleFields = {
+const empty = (direction: InvoiceKind): RuleFields => ({
   name: '', cont: '', keywords: [], supplier_cuis: [], item_codes: [], commodity_prefixes: [],
-  client_cui: null, enabled: true,
-}
+  client_cui: null, enabled: true, direction,
+})
 
 /**
  * Writing a rule, or changing one. Lists are typed with commas between the entries.
- * A new rule can start from a `draft`, such as a proposed rule the person wants to adjust.
- * `onSaved` is for a caller that must know the rule now exists.
+ * A new rule can start from a `draft`, such as a proposed rule the person wants to adjust;
+ * otherwise it is for the invoices of `kind`. A rule for issued invoices looks at the lines
+ * only: their supplier is always the client. `onSaved` is for a caller that must know the
+ * rule now exists.
  */
 export function RuleDialog({
-  rule, draft, clients, onClose, onSaved,
-}: { rule: Rule | 'new'; draft?: RuleFields; clients: Client[]; onClose: () => void; onSaved?: () => void }) {
+  rule, draft, kind = 'received', clients, onClose, onSaved,
+}: { rule: Rule | 'new'; draft?: RuleFields; kind?: InvoiceKind; clients: Client[]; onClose: () => void; onSaved?: () => void }) {
   const queryClient = useQueryClient()
   const existing = rule === 'new' ? null : rule
-  const [fields, setFields] = useState<RuleFields>(existing ?? draft ?? EMPTY)
+  const [fields, setFields] = useState<RuleFields>(existing ?? draft ?? empty(kind))
+  const forIssued = fields.direction === 'issued'
   const set = (changed: Partial<RuleFields>) => setFields({ ...fields, ...changed })
   // The two code conditions are rarely needed; they stay folded away unless the rule uses them.
   const [codesShown, setCodesShown] = useState(fields.item_codes.length + fields.commodity_prefixes.length > 0)
@@ -52,10 +55,13 @@ export function RuleDialog({
     <Dialog open onOpenChange={(isOpen) => !isOpen && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle className="font-heading text-3xl">{existing ? 'Modifică regula' : 'Adaugă o regulă'}</DialogTitle>
+          <DialogTitle className="font-heading text-3xl">
+            {existing ? 'Modifică regula' : forIssued ? 'Adaugă o regulă pentru facturile emise' : 'Adaugă o regulă'}
+          </DialogTitle>
           <DialogDescription className="text-lg">
-            Regula se potrivește dacă măcar una dintre condiții este adevărată pentru linia cu valoarea cea mai
-            mare a facturii.
+            Regula se potrivește unei linii a {forIssued ? 'unei facturi emise' : 'facturii'} dacă măcar una dintre
+            condiții este adevărată pentru ea. La clienții cu un singur cont pe factură, se uită la linia cu valoarea
+            cea mai mare.
           </DialogDescription>
         </DialogHeader>
         <form
@@ -70,7 +76,7 @@ export function RuleDialog({
               <Input id="rule-name" value={fields.name} onChange={(event) => set({ name: event.target.value })} />
             </Field>
             <Field id="rule-cont" label="Contul">
-              <Input id="rule-cont" placeholder="de exemplu 6022" value={fields.cont} onChange={(event) => set({ cont: event.target.value })} />
+              <Input id="rule-cont" placeholder={forIssued ? 'de exemplu 704' : 'de exemplu 6022'} value={fields.cont} onChange={(event) => set({ cont: event.target.value })} />
             </Field>
           </div>
           <ListField
@@ -80,16 +86,23 @@ export function RuleDialog({
             entries={fields.keywords}
             onChange={(keywords) => set({ keywords })}
           />
-          <ListField
-            id="rule-suppliers"
-            label="CUI-ul furnizorului"
-            hint="Toate facturile de la acești furnizori primesc contul."
-            entries={fields.supplier_cuis}
-            onChange={(supplier_cuis) => set({ supplier_cuis })}
-          />
+          {!forIssued && (
+            <ListField
+              id="rule-suppliers"
+              label="CUI-ul furnizorului"
+              hint="Toate facturile de la acești furnizori primesc contul."
+              entries={fields.supplier_cuis}
+              onChange={(supplier_cuis) => set({ supplier_cuis })}
+            />
+          )}
           {codesShown ? (
             <>
-              <ListField id="rule-item-codes" label="Codul articolului la furnizor" entries={fields.item_codes} onChange={(item_codes) => set({ item_codes })} />
+              <ListField
+                id="rule-item-codes"
+                label={forIssued ? 'Codul articolului' : 'Codul articolului la furnizor'}
+                entries={fields.item_codes}
+                onChange={(item_codes) => set({ item_codes })}
+              />
               <ListField id="rule-commodity" label="Începutul codului CPV sau NC" entries={fields.commodity_prefixes} onChange={(commodity_prefixes) => set({ commodity_prefixes })} />
             </>
           ) : (

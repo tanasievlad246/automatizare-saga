@@ -12,7 +12,7 @@ import { placeOf } from '../listPlace'
 import { ProposedRuleCard } from '../rules/ProposedRuleCard'
 import { AccountCard } from './AccountCard'
 import { InvoiceStateBadges } from './InvoiceStateBadges'
-import { ISSUED_INVOICE, isIssued } from './issuedInvoices'
+import { isIssued } from './issuedInvoices'
 import { LineAccountDialog, type LineTarget } from './LineAccountDialog'
 import { LineAccountsCard } from './LineAccountsCard'
 import { RenderedInvoice } from './RenderedInvoice'
@@ -28,14 +28,14 @@ const WAYS_TO_SEE_IT: { value: Shown; label: string }[] = [
 
 /**
  * One invoice: what it says, the two files behind it, its account and its file for SAGA.
- * An invoice the client issued has no account and nothing for SAGA: only what it says.
+ * An invoice the client issued is shown the same way, with the accounts for issued invoices.
  */
 export function InvoicePage() {
   const { cui = '', id = '' } = useParams()
   const [shown, setShown] = useState<Shown>('factura')
   const [choosing, setChoosing] = useState<number | 'all' | null>(null)
   const { data: view, error } = useQuery({ queryKey: ['invoice', id], queryFn: () => api.invoiceView(id) })
-  const accounts = useQuery({ queryKey: ['rules'], queryFn: api.rules }).data?.accounts ?? {}
+  const rules = useQuery({ queryKey: ['rules'], queryFn: api.rules }).data
   const perLine = useQuery({ queryKey: ['clients'], queryFn: api.clients }).data?.clients.find((each) => each.cui === cui)?.per_line ?? false
 
   const back = (
@@ -56,6 +56,8 @@ export function InvoicePage() {
 
   const { invoice, document } = view
   const issued = isIssued(invoice)
+  // Only the accounts of the invoice's own kind can be chosen.
+  const accounts = (issued ? rules?.issued_accounts : rules?.accounts) ?? {}
   const lineAccounts = invoice.line_accounts
   const chosenLine = typeof choosing === 'number' ? document?.lines.find((line) => line.number === choosing) : undefined
   const chosenEntry = lineAccounts?.find((entry) => entry.line === choosing)
@@ -76,7 +78,7 @@ export function InvoicePage() {
             {formatMoney(invoice.total_with_vat, invoice.currency)}
           </PageTitle>
         </div>
-        <InvoiceStateBadges invoice={invoice} />
+        <InvoiceStateBadges invoice={invoice} showKind />
       </div>
 
       {/* Two columns when there is room for both. Otherwise one, with the account first:
@@ -87,7 +89,7 @@ export function InvoicePage() {
           <div className="border-b px-4 py-3.5">
             <PillTabs
               label="Cum se vede factura"
-              options={issued ? WAYS_TO_SEE_IT.filter((way) => way.value !== 'saga') : WAYS_TO_SEE_IT}
+              options={WAYS_TO_SEE_IT}
               value={shown}
               onChange={setShown}
             />
@@ -96,7 +98,7 @@ export function InvoicePage() {
             (document ? (
               <RenderedInvoice
                 document={document}
-                goesToSaga={!issued}
+                goesToSaga
                 lineColumn={
                   lineAccounts
                     ? {
@@ -125,15 +127,9 @@ export function InvoicePage() {
             />
           )}
         </section>
-        {issued ? (
-          <section aria-label={ISSUED_INVOICE.title} className="flex min-w-0 flex-col gap-2 rounded-2xl border bg-card px-5 pt-4.5 pb-5.5">
-            <h2 className="font-sans text-xl font-bold">{ISSUED_INVOICE.title}</h2>
-            <p className="text-muted-foreground">{ISSUED_INVOICE.text}</p>
-          </section>
-        ) : (
-          <div className="flex min-w-0 flex-col gap-5">
+        <div className="flex min-w-0 flex-col gap-5">
             {lineAccounts ? (
-              <LineAccountsCard invoice={invoice} accounts={accounts} onChooseAll={() => setChoosing('all')} />
+              <LineAccountsCard invoice={invoice} accounts={accounts} issued={issued} onChooseAll={() => setChoosing('all')} />
             ) : (
               <AccountCard
                 invoice={invoice}
@@ -151,8 +147,7 @@ export function InvoicePage() {
               />
             )}
             <SagaFileCard invoice={invoice} saga={view.saga} />
-          </div>
-        )}
+        </div>
         {target && (
           <LineAccountDialog key={String(choosing)} invoice={invoice} target={target} accounts={accounts} onClose={() => setChoosing(null)} />
         )}

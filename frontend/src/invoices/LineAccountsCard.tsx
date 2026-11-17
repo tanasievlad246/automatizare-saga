@@ -12,8 +12,10 @@ import { accountsUsed, linesLeft, linesLeftNote } from './lineAccounts'
  * account is in the table of lines.
  */
 export function LineAccountsCard({
-  invoice, accounts, onChooseAll,
-}: { invoice: Invoice; accounts: Record<string, string>; onChooseAll: () => void }) {
+  invoice, accounts, issued = false, onChooseAll,
+}: { invoice: Invoice; accounts: Record<string, string>; issued?: boolean; onChooseAll: () => void }) {
+  // An invoice the client issued is booked on income accounts.
+  const title = issued ? 'Conturile de venit ale facturii' : 'Conturile facturii'
   const entries = invoice.line_accounts ?? []
   const used = accountsUsed(entries)
   const left = linesLeft(entries)
@@ -26,8 +28,8 @@ export function LineAccountsCard({
     entries.every((entry) => !entry.suggested_cont)
 
   return (
-    <section aria-label="Conturile facturii" className="flex flex-col gap-3 rounded-2xl border bg-card px-5 pt-4.5 pb-5.5">
-      <h2 className="font-sans text-xl font-bold">Conturile facturii</h2>
+    <section aria-label={title} className="flex flex-col gap-3 rounded-2xl border bg-card px-5 pt-4.5 pb-5.5">
+      <h2 className="font-sans text-xl font-bold">{title}</h2>
       {sentTwice && !imported && (
         <Notice tone="attention">
           <p className="font-bold">Factura pare trimisă de două ori</p>

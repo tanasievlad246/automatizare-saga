@@ -19,6 +19,7 @@ import type { Client } from '../types'
 import { AddClientDialog } from './AddClientDialog'
 import { ClientRow } from './ClientRow'
 import { ClientSearchField } from './ClientSearchField'
+import { reviewLink } from './clientCounts'
 import { byName, searchClients, shownLine } from './clientSearch'
 import { ImportClientsDialog } from './ImportClientsDialog'
 import { SyncDialog } from './SyncDialog'
@@ -109,7 +110,7 @@ export function ClientsPage() {
               )}
             </p>
             <Button asChild className="bg-attention-foreground hover:bg-attention-foreground/85">
-              <Link to={`/clienti/${firstWaiting.cui}?arata=de-verificat`}>Vezi facturile de verificat</Link>
+              <Link to={reviewLink(firstWaiting)}>Vezi facturile de verificat</Link>
             </Button>
           </div>
         </Notice>

@@ -103,10 +103,10 @@ class Entry:
 
 def build_xml(
     invoice: Invoice, cont: str, upload_index: str | None, download_id: str | None,
-    line_conts: tuple[tuple[int, str], ...] = (),
+    line_conts: tuple[tuple[int, str], ...] = (), issued: bool = False,
 ) -> bytes:
     """The invoice as a SAGA import file of its own."""
-    return build_file([Entry(invoice, cont, upload_index, download_id, line_conts)])
+    return build_file([Entry(invoice, cont, upload_index, download_id, line_conts, issued)])
 
 
 def build_file(entries: Iterable[Entry]) -> bytes:

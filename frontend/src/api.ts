@@ -1,7 +1,7 @@
 // Every call the page makes to the Python program, in one place.
 
 import type {
-  AppSettings, AuthStatus, BackupStatus, Client, CostGroup, Costs, ImportResult, Invoice, InvoiceView, JevCall, JournalLine,
+  AppSettings, AuthStatus, BackupStatus, Client, CostGroup, Costs, ImportResult, Invoice, InvoiceKind, InvoiceView, JevCall, JournalLine,
   ProposedRules,
   RuleEvidence, RuleFields, RuleTestResult, RulesOverview, SagaFilePer, SagaState, SchedulePeriod, ScheduleStatus, Secret,
   SyncResult, UpdateStatus,
@@ -75,7 +75,6 @@ export const api = {
   setSagaOutput: (changes: { saga_folder?: string; saga_file_per?: SagaFilePer }) =>
     call<AppSettings & { problems: { cui: string }[] }>('PUT', '/settings', changes),
   /** Shows or hides the invoices the clients issued, for every client. */
-  showIssued: (shown: boolean) => call<AppSettings>('PUT', '/settings', { show_issued: shown }),
   /** Brings one client's files for SAGA up to date, after they could not be. */
   writeSagaFiles: (cui: string) => call<{ problems: { cui: string }[] }>('POST', '/saga-files/write', { cui }),
   /** `purpose` says which folder is being picked, so the dialog is titled for it and opens where that folder is. */
@@ -104,7 +103,7 @@ export const api = {
   /** A client's received invoices, with how its files for SAGA stand and how many invoices it issued. */
   receivedInvoices: (cui: string) =>
     call<{ invoices: Invoice[]; saga: SagaState; issued_count: number }>('GET', `/invoices${query({ cui, type: 'primita' })}`),
-  /** The invoices the client issued itself. They get no account and no file for SAGA. */
+  /** The invoices the client issued itself. They get accounts and go to SAGA like the received ones. */
   issuedInvoices: (cui: string) =>
     call<{ invoices: Invoice[] }>('GET', `/invoices${query({ cui, type: 'trimisa' })}`),
   invoiceView: (id: string) => call<InvoiceView>('GET', `/invoices/${id}/view`),
@@ -130,10 +129,16 @@ export const api = {
   /** "Nu acum": no rule is proposed for these invoices again, unless their account changes. */
   turnDownProposal: (invoiceIds: string[]) =>
     call('POST', '/rules/suggestions/dismiss', { invoice_ids: invoiceIds }),
-  saveAccount: (cont: string, description: string) => call('PUT', `/accounts/${cont}`, { description }),
-  deleteAccount: (cont: string) => call('DELETE', `/accounts/${cont}`),
-  setJevSettings: (settings: { min_confidence?: number; jev_instructions?: string; jev_line_instructions?: string }) =>
-    call('PUT', '/classification/settings', settings),
+  saveAccount: (cont: string, description: string, kind: InvoiceKind = 'received') =>
+    call('PUT', `/accounts/${cont}`, { description, kind }),
+  deleteAccount: (cont: string, kind: InvoiceKind = 'received') => call('DELETE', `/accounts/${cont}${query({ kind })}`),
+  setJevSettings: (settings: {
+    min_confidence?: number
+    jev_instructions?: string
+    jev_line_instructions?: string
+    jev_issued_instructions?: string
+    jev_issued_line_instructions?: string
+  }) => call('PUT', '/classification/settings', settings),
 
   costs: (range: CostRange, group: CostGroup) =>
     call<Costs>('GET', `/classification/costs${query({ ...range, group })}`),

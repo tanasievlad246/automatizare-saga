@@ -185,6 +185,10 @@ Nothing is pushed without your word. Each phase gets its own branch, review and 
   - "Clasifică din nou, pe fiecare linie" only for invoices of several lines, and after a confirmation.
   Left as they are: the costs page lists each line's call under the invoice without the line number; a line of the other sign that is not a discount follows the largest line (the README says to write a rule for it); there is no limit on the lines asked about in one invoice; the version is set at release.
 
+- 2026-11-17: phase A was released as 0.9.0; paging, search and order came between as 0.10.0, so phase B is to be 0.11.0.
+- 2026-11-17: the checks on the owner's PC: SAGA took all four files as hoped (accounts per line kept, the issued invoice under "Ieșiri", the mixed file, a second import skipped); Jev answered three questions in one request; the database held no invoice from one client to another, so whether ANAF shares a message id between seller and buyer is still open.
+- 2026-11-17: phase B is built and checked in the browser on the demo: issued invoices classified with their own accounts, rules and questions, Jev told neither party, the parties check, the backlog once, one file for SAGA with both kinds and without the buyer's phone and e-mail, the toggle on a client's screen, the two tabs on the rules screen, counts by kind on the client list, in the download window and the journal.
+
 Calls made while building, beyond the plan (each can be changed):
 
 - **A company not in the client list keeps one account per invoice.** The README already promised such a company is downloaded "as before"; it has no switch to turn. It also keeps every earlier test on the old path, which is the plan's proof that a client switched off works as before.
@@ -195,3 +199,12 @@ Calls made while building, beyond the plan (each can be changed):
 - **A duplicate of a client decided line by line waits with every line open**, so each line can get its own account.
 - **While OpenRouter fails as a whole the invoice waits with the lines decided so far**, and the next run asks only about the others (changed after the review; it first kept nothing).
 - **An invoice of one line is decided whole** (after the review): one line is one account, and the old screens and journal lines say more about it.
+
+Calls made in phase B, beyond the plan (each can be changed):
+
+- **The example income accounts (701, 704, 707) are put into every database once**, an existing one too: without accounts Jev could not decide any issued invoice. Deleted, they do not come back.
+- **The parties check covers a received invoice whose supplier is the client too**: SAGA would file it under "Ieșiri" just the same.
+- **An invoice waiting whose XML cannot be read leaves classification** with the reason, instead of being tried at every download.
+- **Jev is told no party at all for an issued invoice**, not even the client as supplier.
+- **The invoice screen proposes no rule for an issued invoice**, as the list of proposed rules does not; both wait for phase C.
+- **The client list carries `issued_review_count`** so that "Vezi facturile de verificat" opens the list the invoices are in.

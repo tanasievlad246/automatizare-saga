@@ -6,8 +6,9 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { api } from '../api'
 import { showError } from '../errorMessages'
-import { countOf, formatWhen } from '../format'
+import { formatWhen } from '../format'
 import type { Client } from '../types'
+import { newBadges } from './clientCounts'
 
 /**
  * One client on the first screen: the switch, what is new, and the two things to do about it.
@@ -50,15 +51,13 @@ export function ClientRow({ client, blocked, onSync }: { client: Client; blocked
           <p className="font-semibold text-muted-foreground">Oprit: facturile lui nu se descarcă până îl porniți.</p>
         ) : (
           <div className="flex flex-wrap items-center gap-2">
-            {client.new_count > 0 && (
-              <Badge className="bg-fresh text-fresh-foreground">
-                {countOf(client.new_count, 'o factură nouă', 'facturi noi')}
-              </Badge>
-            )}
+            {newBadges(client).map((badge) => (
+              <Badge key={badge} className="bg-fresh text-fresh-foreground">{badge}</Badge>
+            ))}
             {client.review_count > 0 && (
               <Badge className="bg-attention text-attention-foreground">{client.review_count} de verificat</Badge>
             )}
-            {client.new_count === 0 && client.review_count === 0 && (
+            {newBadges(client).length === 0 && client.review_count === 0 && (
               <span className="text-muted-foreground">Nimic nou</span>
             )}
           </div>

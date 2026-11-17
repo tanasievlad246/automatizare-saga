@@ -18,6 +18,7 @@ export function ruleFromProposal(proposal: Proposal): RuleFields {
     commodity_prefixes: [],
     client_cui: null,
     enabled: true,
+    direction: 'received', // proposed rules come from received invoices only, so far
   }
 }
 

@@ -884,8 +884,9 @@ def test_the_client_list_counts_received_and_issued_invoices_apart(store):
 
     (client,) = store.clients()
     assert {key: client[key] for key in (
-        "invoices", "issued_count", "new_count", "issued_new_count", "review_count", "ready_count",
-    )} == {"invoices": 1, "issued_count": 3, "new_count": 1, "issued_new_count": 3, "review_count": 1, "ready_count": 1}
+        "invoices", "issued_count", "new_count", "issued_new_count", "review_count", "issued_review_count", "ready_count",
+    )} == {"invoices": 1, "issued_count": 3, "new_count": 1, "issued_new_count": 3, "review_count": 1,
+           "issued_review_count": 1, "ready_count": 1}
 
 
 def test_an_issued_invoice_of_the_latest_download_that_brought_issued_ones_is_new(store):
@@ -896,3 +897,13 @@ def test_an_issued_invoice_of_the_latest_download_that_brought_issued_ones_is_ne
 
     shown = {row["id"]: row["is_new"] for row in store.list_messages(cui=VALID_CUI)}
     assert shown == {"1": True, "2": True}
+
+
+def test_a_jev_call_about_an_issued_invoice_says_so_and_names_its_buyer(store):
+    store.insert_message(issued_row("1"))
+    store.add_jev_call(message_id="1", cui=VALID_CUI, called_at="2026-11-10T10:00:00", model="m", request_json="{}",
+                       response_json=None, http_status=200, input_tokens=1, output_tokens=1, cost_usd=0.0001,
+                       duration_ms=10, error=None)
+
+    (call,) = store.jev_call_list()
+    assert (call["message_type"], call["customer_name"]) == ("FACTURA TRIMISA", "Beta Instal SRL")

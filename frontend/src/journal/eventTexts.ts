@@ -36,6 +36,8 @@ type Data = Record<string, unknown>
 const text = (value: unknown) => (value === undefined || value === null ? '' : String(value))
 const who = (data: Data) => text(data.client) || `CUI ${text(data.cui)}`
 const invoice = (data: Data) => `Factura ${text(data.invoice_number) || text(data.id)}`
+// A rule or an account for the invoices a client issued says so; one for received invoices says nothing more.
+const forIssued = (data: Data) => (data.kind === 'issued' ? ' pentru facturile emise' : '')
 
 const HOW_A_COPY_WAS_MADE: Record<string, string> = {
   manual: 'la cererea dumneavoastră', auto: 'automat', 'before-restore': 'înaintea restaurării',
@@ -147,12 +149,12 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
     data.decided_by === 'rule' || data.decided_by === 'jev'
       ? `A fost încercată o factură de probă: contul ${text(data.cont)}, ales de ${data.decided_by === 'rule' ? 'o regulă' : 'Jev'}.`
       : 'A fost încercată o factură de probă: nu a primit niciun cont.',
-  'rule.added': (data) => `A fost adăugată regula „${text(data.name)}”, pentru contul ${text(data.cont)}.`,
-  'rule.changed': (data) => `A fost modificată regula „${text(data.name)}”, pentru contul ${text(data.cont)}.`,
+  'rule.added': (data) => `A fost adăugată regula „${text(data.name)}”${forIssued(data)}, pentru contul ${text(data.cont)}.`,
+  'rule.changed': (data) => `A fost modificată regula „${text(data.name)}”${forIssued(data)}, pentru contul ${text(data.cont)}.`,
   'rule.removed': () => 'A fost ștearsă o regulă.',
   'rule.proposal_turned_down': () => 'Ați ales „Nu acum” la o regulă propusă.',
-  'account.saved': (data) => `Contul ${text(data.cont)} a fost adăugat sau modificat în lista lui Jev.`,
-  'account.removed': (data) => `Contul ${text(data.cont)} a fost scos din lista lui Jev.`,
+  'account.saved': (data) => `Contul ${text(data.cont)} a fost adăugat sau modificat în lista lui Jev${forIssued(data)}.`,
+  'account.removed': (data) => `Contul ${text(data.cont)} a fost scos din lista lui Jev${forIssued(data)}.`,
 
   'client.saved': (data) => `Clientul ${who(data)} a fost adăugat sau redenumit.`,
   'client.switched': (data) =>
@@ -183,6 +185,8 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
   'settings.confidence': (data) => `Cât de sigur trebuie să fie Jev: acum ${formatPercent(Number(data.level_set))}.`,
   'settings.jev_question': () => 'A fost schimbată întrebarea pusă lui Jev.',
   'settings.jev_line_question': () => 'A fost schimbată întrebarea pusă lui Jev despre o linie.',
+  'settings.jev_issued_question': () => 'A fost schimbată întrebarea pusă lui Jev despre o factură emisă.',
+  'settings.jev_issued_line_question': () => 'A fost schimbată întrebarea pusă lui Jev despre o linie a unei facturi emise.',
 
   'backup.made': (data) => `A fost făcută o copie de siguranță, ${HOW_A_COPY_WAS_MADE[text(data.kind)] ?? 'automat'}.`,
   // Only a folder known to be missing is named as the cause; anything else is in the technical details.

@@ -670,6 +670,7 @@ class Store:
             f"{count(f'm.{RECEIVED_SQL} AND {IS_NEW_SQL}')} AS new_count, "
             f"{count(f'm.{ISSUED_SQL} AND {IS_NEW_SQL}')} AS issued_new_count, "
             f"{count(waiting('review'))} AS review_count, "
+            f"{count(f'm.{ISSUED_SQL} AND ' + waiting('review'))} AS issued_review_count, "
             f"{count(waiting('classified'))} AS ready_count, "
             "(SELECT MAX(r.started_at) FROM sync_runs r WHERE r.cui = c.cui "
             " AND r.status IN ('ok', 'partial')) AS last_sync_at "
@@ -872,7 +873,7 @@ class Store:
         rows = self._conn.execute(
             "SELECT j.called_at, j.message_id, j.cui, j.model, j.response_json, j.http_status, "
             "j.input_tokens, j.output_tokens, j.cost_usd, j.error, "
-            "m.supplier_name, m.invoice_number, m.classification_status, m.cont, "
+            "m.supplier_name, m.customer_name, m.message_type, m.invoice_number, m.classification_status, m.cont, "
             "(SELECT c.name FROM clients c WHERE c.cui = j.cui) AS client_name "
             f"FROM jev_calls j LEFT JOIN messages m ON m.id = j.message_id{condition} "
             "ORDER BY j.id DESC LIMIT ?",

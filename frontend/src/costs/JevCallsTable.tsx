@@ -2,6 +2,7 @@ import { Link } from 'react-router'
 import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { formatPercent, formatUsd, formatWhen } from '../format'
+import { isIssued } from '../invoices/issuedInvoices'
 import type { JevCall } from '../types'
 
 /** Each question put to Jev: when, about which invoice, what it answered and what that cost. */
@@ -35,7 +36,10 @@ export function JevCallsTable({ calls, loading }: { calls: JevCall[]; loading: b
                   <span className="font-semibold">Probă de reguli</span>
                 ) : (
                   <Link to={`/clienti/${call.cui}/facturi/${call.message_id}`} className="font-semibold">
-                    {call.supplier_name} · {call.invoice_number}
+                    {call.message_type && isIssued({ message_type: call.message_type })
+                      ? `Emisă către ${call.customer_name ?? ''}`
+                      : call.supplier_name}{' '}
+                    · {call.invoice_number}
                   </Link>
                 )}
               </TableCell>

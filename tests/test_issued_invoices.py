@@ -28,12 +28,18 @@ BOOK = Rulebook(
 )
 
 
+BUYER_CONTACT = "<cac:Contact><cbc:Telephone>0722000111</cbc:Telephone><cbc:ElectronicMail>beta@example.com</cbc:ElectronicMail></cac:Contact>"
+
+
 def sold(lines, number="AC-2031", supplier_cui=f"RO{VALID_CUI}", customer_cui=BUYER_CUI):
-    """An invoice the client Alfa Construct issued to Beta Instal."""
-    return rich_invoice_xml(
+    """An invoice the client Alfa Construct issued to Beta Instal, whose phone and e-mail are on it."""
+    xml = rich_invoice_xml(
         lines=lines, number=number, supplier_cui=supplier_cui, supplier_name="Alfa Construct SRL",
         customer_cui=customer_cui, customer_name=BUYER,
-    )
+    ).decode()
+    end = "</cac:Party>\n  </cac:AccountingCustomerParty>"
+    assert xml.count(end) == 1
+    return xml.replace(end, f"{BUYER_CONTACT}{end}").encode()
 
 
 @pytest.fixture
@@ -244,6 +250,14 @@ def test_a_person_chooses_the_account_of_an_issued_invoice(service, anaf, openro
     assert (saved(cfg)["classification_status"], saved(cfg)["cont"]) == ("classified", "706")
 
 
+def test_a_buyers_phone_and_e_mail_are_read_from_the_invoice(service, anaf):
+    anaf.add("3001", tip="FACTURA TRIMISA", xml=sold([line("Manopera", "1500.00")]))
+    service.sync(VALID_CUI)
+
+    buyer = service.invoice_view("3001")["document"]["customer"]
+    assert (buyer["phone"], buyer["email"]) == ("0722000111", "beta@example.com")  # so leaving them out means something
+
+
 def test_one_file_for_saga_holds_the_received_and_the_issued_invoices(service, anaf, cfg):
     anaf.add("3001", xml=rich_invoice_xml(lines=[line("Motorina", "450.00")]))
     anaf.add("3002", tip="FACTURA TRIMISA", xml=sold([line("Manopera", "1500.00")]))
@@ -259,9 +273,7 @@ def test_one_file_for_saga_holds_the_received_and_the_issued_invoices(service, a
 
 
 def test_the_buyers_phone_and_e_mail_stay_out_of_the_file_for_saga(service, anaf, cfg):
-    xml = sold([line("Manopera", "1500.00")]).decode()
-    assert "<cbc:Telephone>" in xml and "<cbc:ElectronicMail>" in xml  # the stand-in invoice has both
-    anaf.add("3001", tip="FACTURA TRIMISA", xml=xml.encode())
+    anaf.add("3001", tip="FACTURA TRIMISA", xml=sold([line("Manopera", "1500.00")]))
 
     service.sync(VALID_CUI)
 
@@ -357,3 +369,12 @@ def test_an_issued_invoices_screen_proposes_no_rule(service, anaf, openrouter):
     service.sync(VALID_CUI)
 
     assert service.invoice_view("3001")["rule_suggestion"] is None
+
+
+def test_an_issued_invoices_own_xml_for_saga_leaves_the_buyers_contact_out_too(service, anaf):
+    anaf.add("3001", tip="FACTURA TRIMISA", xml=sold([line("Manopera", "1500.00")]))
+    service.sync(VALID_CUI)
+
+    shown = ElementTree.fromstring(service.invoice_view("3001")["saga_xml"].encode("utf-8"))
+    antet = shown.find("Factura/Antet")
+    assert (antet.findtext("ClientTelefon"), antet.findtext("ClientMail")) == ("", "")

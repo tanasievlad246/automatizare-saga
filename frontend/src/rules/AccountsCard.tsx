@@ -6,20 +6,26 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { api } from '../api'
+import type { InvoiceKind } from '../types'
 import { showError } from '../errorMessages'
 
 type Account = { cont: string; description: string }
 
-/** The accounts Jev may choose from. The description is what Jev reads, so it matters. */
-export function AccountsCard({ accounts }: { accounts: Record<string, string> }) {
+/**
+ * The accounts Jev may choose from, for one kind of invoice. The description is what Jev
+ * reads, so it matters. The same accounts are the ones a person picks from on an invoice.
+ */
+export function AccountsCard({ accounts, kind = 'received' }: { accounts: Record<string, string>; kind?: InvoiceKind }) {
   const [editing, setEditing] = useState<Account | 'new' | null>(null)
   return (
     <section className="flex flex-col gap-3.5">
       <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
         <div className="min-w-0 flex-[1_1_320px]">
-          <h2 className="text-2xl">Conturile din care alege Jev</h2>
+          <h2 className="text-2xl">{kind === 'issued' ? 'Conturile pentru facturi emise' : 'Conturile din care alege Jev'}</h2>
           <p className="mt-1 text-muted-foreground">
-            Când nicio regulă nu se potrivește, Jev alege unul dintre aceste conturi, după descriere.
+            {kind === 'issued'
+              ? 'Din acestea alege Jev pentru facturile emise de clienți, și tot acestea apar la „Alege contul” pe o factură emisă.'
+              : 'Când nicio regulă nu se potrivește, Jev alege unul dintre aceste conturi, după descriere.'}
           </p>
         </div>
         <Button variant="outline" onClick={() => setEditing('new')}>Adaugă un cont</Button>
@@ -40,12 +46,12 @@ export function AccountsCard({ accounts }: { accounts: Record<string, string> })
           </p>
         )}
       </div>
-      {editing && <AccountDialog account={editing} onClose={() => setEditing(null)} />}
+      {editing && <AccountDialog account={editing} kind={kind} onClose={() => setEditing(null)} />}
     </section>
   )
 }
 
-function AccountDialog({ account, onClose }: { account: Account | 'new'; onClose: () => void }) {
+function AccountDialog({ account, kind, onClose }: { account: Account | 'new'; kind: InvoiceKind; onClose: () => void }) {
   const queryClient = useQueryClient()
   const existing = account === 'new' ? null : account
   const [cont, setCont] = useState(existing?.cont ?? '')
@@ -57,8 +63,8 @@ function AccountDialog({ account, onClose }: { account: Account | 'new'; onClose
     },
     onError: showError,
   }
-  const save = useMutation({ mutationFn: () => api.saveAccount(cont.trim(), description), ...afterChange })
-  const remove = useMutation({ mutationFn: () => api.deleteAccount(cont), ...afterChange })
+  const save = useMutation({ mutationFn: () => api.saveAccount(cont.trim(), description, kind), ...afterChange })
+  const remove = useMutation({ mutationFn: () => api.deleteAccount(cont, kind), ...afterChange })
 
   return (
     <Dialog open onOpenChange={(isOpen) => !isOpen && onClose()}>
@@ -79,7 +85,12 @@ function AccountDialog({ account, onClose }: { account: Account | 'new'; onClose
           {!existing && (
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="account-cont">Contul</Label>
-              <Input id="account-cont" placeholder="de exemplu 302 sau 371.01" value={cont} onChange={(event) => setCont(event.target.value)} />
+              <Input
+                id="account-cont"
+                placeholder={kind === 'issued' ? 'de exemplu 704 sau 707' : 'de exemplu 302 sau 371.01'}
+                value={cont}
+                onChange={(event) => setCont(event.target.value)}
+              />
             </div>
           )}
           <div className="flex flex-col gap-1.5">

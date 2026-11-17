@@ -9,6 +9,7 @@ import { errorMessage, showError } from '../errorMessages'
 import { formatPercent } from '../format'
 import type { Invoice, InvoiceView } from '../types'
 import { AccountChooser, firstPhrase } from './AccountChooser'
+import { misfitReason } from './issuedInvoices'
 
 const WHO_CHOSE: Record<string, (invoice: Invoice) => string> = {
   rules: () => 'Ales de o regulă a dumneavoastră',
@@ -123,7 +124,8 @@ export function AccountCard({
             </>
           ) : (
             <>
-              <p>Programul nu a putut alege singur contul acestei facturi.</p>
+              {/* An invoice whose parties do not fit its kind is held back on purpose; it says why. */}
+              <p>{misfitReason(invoice.classification_reason) ?? 'Programul nu a putut alege singur contul acestei facturi.'}</p>
               <TechnicalDetail text={invoice.classification_reason} />
             </>
           )}
