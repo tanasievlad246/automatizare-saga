@@ -89,7 +89,7 @@
     }
     html {
         /* Everything is sized in rem, so this one value sets the scale of the whole page. */
-        font-size: 17px;
+        font-size: 15px;
         @apply font-sans;
     }
     body {

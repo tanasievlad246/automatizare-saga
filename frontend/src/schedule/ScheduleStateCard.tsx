@@ -22,7 +22,7 @@ export function ScheduleStateCard({ status }: { status: ScheduleStatus }) {
     <div role="status" className={cn('flex items-start gap-3.5 rounded-2xl border px-5.5 py-4.5', TONES[card.tone])}>
       <Icon aria-hidden className={cn('mt-1 size-6 shrink-0', card.tone === 'fresh' && 'animate-spin motion-reduce:animate-none')} />
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-        <p className="text-[19px] font-bold">{card.title}</p>
+        <p className="text-[1.125rem] font-bold">{card.title}</p>
         <p className="text-lg">{card.text}</p>
         {(card.journal || card.clients) && (
           <div className="mt-1 flex flex-wrap gap-x-6">

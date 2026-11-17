@@ -116,13 +116,33 @@ export function TrialInvoiceForm({
           {asking === 'jev_only' ? 'Este întrebat Jev…' : 'Întreabă-l direct pe Jev'}
         </Button>
       </div>
-      <div className="flex flex-col gap-2 text-[0.9rem] text-muted-foreground">
-        <p>
-          <strong className="text-foreground">„Vezi ce cont primește”</strong> face ce face programul cu o factură adevărată: întâi regulile
-          dumneavoastră, iar dacă niciuna nu se potrivește, este întrebat Jev.{' '}
-          <strong className="text-foreground">„Întreabă-l direct pe Jev”</strong> sare peste reguli.
-        </p>
-        <p>Fiecare întrebare pusă lui Jev costă puțin. Costul apare la „Costuri Jev”, ca „probă de reguli”.</p>
+      {/* What each button does, since both can end up asking Jev: the difference is whether the rules come first. */}
+      <div className="flex flex-col gap-3 rounded-xl bg-muted/60 px-4 py-3.5">
+        <dl className="flex flex-col gap-3">
+          <div>
+            <dt className="font-bold">„Vezi ce cont primește”</dt>
+            <dd className="mt-0.5">
+              Face ce face programul cu o factură adevărată. Pentru fiecare linie se încearcă întâi regulile dumneavoastră, iar Jev
+              este întrebat doar despre liniile pe care nu le hotărăște nicio regulă. Dacă regulile hotărăsc toate liniile, Jev nu
+              este întrebat și proba nu costă nimic. Merge și fără cheia OpenRouter.
+            </dd>
+          </div>
+          <div>
+            <dt className="font-bold">„Întreabă-l direct pe Jev”</dt>
+            <dd className="mt-0.5">
+              Sare peste reguli și îl întreabă pe Jev despre fiecare linie. Așa vedeți ce ar alege Jev singur, chiar și acolo unde
+              o regulă se potrivește deja.
+            </dd>
+          </div>
+        </dl>
+        <div className="flex flex-col gap-1.5 border-t pt-3 text-[0.9rem] text-muted-foreground">
+          <p>
+            La amândouă, o reducere sau o linie cu valoarea 0 nu ajunge la Jev: primește contul liniei cu valoarea cea mai mare.
+            Liniile care scriu același lucru sunt trimise o singură dată. Pentru un client cu un singur cont pe factură, Jev este
+            întrebat o singură dată, despre toată factura.
+          </p>
+          <p>Fiecare întrebare pusă lui Jev costă puțin. Costul apare la „Costuri Jev”, ca „probă de reguli”.</p>
+        </div>
       </div>
     </section>
   )
