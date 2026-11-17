@@ -1,6 +1,6 @@
 [project]
 name = "efactura"
-version = "0.10.0"
+version = "0.11.0"
 description = "Fetch ANAF e-Factura invoices, give each an account and write files SAGA can import; with a local screen, commands and a REST API."
 readme = "README.md"
 requires-python = ">=3.11"
