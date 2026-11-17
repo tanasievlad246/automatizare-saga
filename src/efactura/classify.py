@@ -9,11 +9,14 @@ from decimal import Decimal
 
 from .errors import JEV_ERROR, EfacturaError
 from .invoice import Invoice, Line
-from .rules import DEFAULT_JEV_LINE_INSTRUCTIONS, Rule, Rulebook, Subject, normalise
+from .rules import (
+    DEFAULT_JEV_ISSUED_LINE_INSTRUCTIONS, DEFAULT_JEV_LINE_INSTRUCTIONS, Rule, Rulebook, Subject, normalise,
+)
 
 # Jev always picks one of the options it is given, so "none of them" has to be an option.
 NONE_OF_THESE = "altul"
 NONE_OF_THESE_MEANS = "Niciun cont din această listă nu se potrivește cu ceea ce s-a cumpărat."
+NONE_OF_THESE_SOLD_MEANS = "Niciun cont din această listă nu se potrivește cu ceea ce s-a vândut."
 QUESTION = "cont"
 # Above about 32,000 bytes of text Jev switches to a slower, less accurate mode.
 MAX_REQUEST_BYTES = 30_000
@@ -109,12 +112,14 @@ def jev_line_request(invoice: Invoice, item: Line, rulebook: Rulebook, model: st
     """The body for OpenRouter's Decisions API about one line of the invoice.
 
     Only the supplier and that line are sent: not the other lines, not the buyer, no
-    address, bank account or contact.
+    address, bank account or contact. For an invoice the client issued, not even the
+    supplier, which is the client itself.
     """
+    default = DEFAULT_JEV_ISSUED_LINE_INSTRUCTIONS if rulebook.issued else DEFAULT_JEV_LINE_INSTRUCTIONS
     return {
         "model": model,
         "state": {
-            "furnizor": {"nume": invoice.supplier.name, "cui": invoice.supplier.cui},
+            **_parties(invoice, rulebook),
             "factura": {
                 "tip": "nota de credit" if invoice.is_credit_note else "factura",
                 "moneda": invoice.currency,
@@ -124,11 +129,24 @@ def jev_line_request(invoice: Invoice, item: Line, rulebook: Rulebook, model: st
         "questions": {
             QUESTION: {
                 "type": "choice",
-                "instructions": rulebook.line_instructions or DEFAULT_JEV_LINE_INSTRUCTIONS,
-                "criteria": {**rulebook.accounts, NONE_OF_THESE: NONE_OF_THESE_MEANS},
+                "instructions": rulebook.line_instructions or default,
+                "criteria": _criteria(rulebook),
             }
         },
     }
+
+
+def _parties(invoice: Invoice, rulebook: Rulebook) -> dict:
+    """Who Jev is told about: the supplier of a received invoice; nobody for an issued one,
+    whose buyer may be a person and whose supplier is the client."""
+    if rulebook.issued:
+        return {}
+    return {"furnizor": {"nume": invoice.supplier.name, "cui": invoice.supplier.cui}}
+
+
+def _criteria(rulebook: Rulebook) -> dict:
+    """The accounts Jev chooses from, and the way to say none of them fits."""
+    return {**rulebook.accounts, NONE_OF_THESE: NONE_OF_THESE_SOLD_MEANS if rulebook.issued else NONE_OF_THESE_MEANS}
 
 
 def fits(request: dict) -> bool:
@@ -142,14 +160,15 @@ def fits(request: dict) -> bool:
 def jev_request(invoice: Invoice, rulebook: Rulebook, model: str) -> dict:
     """The body for OpenRouter's Decisions API.
 
-    Only what is needed to pick an account is sent: the supplier and the lines. The buyer,
-    addresses, bank accounts and contacts stay here.
+    Only what is needed to pick an account is sent: the supplier and the lines (for an
+    invoice the client issued, the lines alone). The buyer, addresses, bank accounts and
+    contacts stay here.
     """
     heaviest = deciding_line(invoice)
     request = {
         "model": model,
         "state": {
-            "furnizor": {"nume": invoice.supplier.name, "cui": invoice.supplier.cui},
+            **_parties(invoice, rulebook),
             "factura": {
                 "tip": "nota de credit" if invoice.is_credit_note else "factura",
                 "moneda": invoice.currency,
@@ -163,7 +182,7 @@ def jev_request(invoice: Invoice, rulebook: Rulebook, model: str) -> dict:
             QUESTION: {
                 "type": "choice",
                 "instructions": rulebook.instructions,
-                "criteria": {**rulebook.accounts, NONE_OF_THESE: NONE_OF_THESE_MEANS},
+                "criteria": _criteria(rulebook),
             }
         },
     }

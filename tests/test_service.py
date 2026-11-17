@@ -247,7 +247,7 @@ def test_a_download_counts_the_received_and_the_issued_invoices_apart(service, a
     assert (result["new_count"], result["received_count"], result["issued_count"]) == (4, 1, 2)
 
 
-def test_an_issued_invoice_can_be_looked_at_and_has_nothing_for_saga(service, anaf, logged_in):
+def test_an_issued_invoice_can_be_looked_at(service, anaf, logged_in):
     anaf.add("3002", tip="FACTURA TRIMISA", xml=invoice_xml(number="AC-2031"))
     service.sync(VALID_CUI)
 
@@ -255,9 +255,10 @@ def test_an_issued_invoice_can_be_looked_at_and_has_nothing_for_saga(service, an
     view = service.invoice_view("3002")
 
     assert (listed["invoice_number"], listed["customer_name"]) == ("AC-2031", "Client SRL")
-    assert (listed["classification_status"], listed["is_new"]) == (None, False)
+    # Classified like a received one; this one names another supplier than the client, so a person looks.
+    assert (listed["classification_status"], listed["is_new"]) == ("review", True)
     assert view["document"]["number"] == "AC-2031"
-    assert (view["saga_xml"], view["rule_suggestion"], view["jev"]) == (None, None, None)
+    assert (view["saga_xml"], view["rule_suggestion"]) == (None, None)
 
 
 def test_one_clients_list_says_how_many_invoices_the_client_issued(service, anaf, logged_in):
@@ -887,12 +888,12 @@ def test_a_later_download_that_brings_nothing_leaves_the_new_ones_new(service, a
     assert [e["is_new"] for e in service.invoices()["invoices"]] == [True]
 
 
-def test_only_received_invoices_are_ever_new(service, anaf, logged_in):
+def test_an_issued_invoice_can_be_new_but_an_error_notice_never(service, anaf, logged_in):
     anaf.add("3001", tip="FACTURA TRIMISA")
     anaf.add("3002", tip="ERORI FACTURA", xml=ANAF_ERROR_NOTICE.encode())
     service.sync(VALID_CUI)
 
-    assert [e["is_new"] for e in service.invoices()["invoices"]] == [False, False]
+    assert [e["is_new"] for e in service.invoices()["invoices"]] == [True, False]
 
 
 def test_each_company_has_its_own_latest_download(service, anaf, logged_in):

@@ -94,12 +94,17 @@ TODAY = {
     ],
 }
 # What a client issued itself: (buyer name, buyer CUI, invoice number, lines) per client. ANAF
-# lists these too; the program keeps them and shows them only when asked to.
+# lists these too; they get income accounts like the received ones get theirs: one by Jev,
+# one with a line Jev is unsure of, one by a rule and Jev, line by line.
 ISSUED = {
     "12345674": [
         ("Gama Imobiliare SA", "31557788", "AC-2029", [line("Reparații acoperiș", "600.00")]),
-        ("Primăria Comunei Valea Mare", "4553380", "AC-2030", [line("Lucrări de zidărie", "10000.00")]),
-        ("Beta Instal SRL", "27745431", "AC-2031", [line("Manoperă instalații", "2000.00")]),
+        ("Primăria Comunei Valea Mare", "4553380", "AC-2030", [
+            line("Lucrări de zidărie", "10000.00"), line("Cărămidă plină", "1900.00", quantity="950", unit="H87", price="2.00"),
+        ]),
+        ("Beta Instal SRL", "27745431", "AC-2031", [
+            line("Manoperă instalații", "1500.00"), line("Țeavă PPR 25 mm", "500.00", quantity="40", unit="MTR", price="12.50"),
+        ]),
     ],
 }
 BUYERS = [(name, cui) for name, cui, _, _ in ISSUED["12345674"]]
@@ -114,6 +119,10 @@ JEV_ANSWERS = {
     "hârtie": {"choice": "302", "confidence": 0.91},
     "pungi": {"choice": "302", "confidence": 0.93},
     "revizie": {"choice": "628", "confidence": 0.88},
+    # What a client sold: income accounts.
+    "reparații": {"choice": "704", "confidence": 0.9},
+    "cărămidă": {"choice": "707", "confidence": 0.55, "probabilities_extra": {"704": 0.3}},
+    "țeavă": {"choice": "707", "confidence": 0.91},
     # Jev declines: the invoice goes to a person.
     "nimic": {"choice": "", "refusal": True},
 }
@@ -169,6 +178,7 @@ def build(folder: Path, now: datetime | None = None) -> Config:
     setup.save_account("302", "Materiale consumabile: papetărie, ambalaje, materiale de construcții folosite în lucrări.")
     setup.save_account("611", "Întreținere și reparații: revizii, reparații la utilaje și vehicule.")
     setup.save_rule(name="chirie birou", cont="612", supplier_cuis=["11112222"], client_cui="12345674")
+    setup.save_rule(name="manoperă", cont="704", keywords=["manoperă", "montaj*", "lucrări"], direction="issued")
 
     message_id = 3000
     issued_id = FIRST_ISSUED_ID

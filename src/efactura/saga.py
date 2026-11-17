@@ -86,7 +86,8 @@ class Entry:
     from `line_conts` (line number, account); a line not named there, and a discount or
     charge on the whole invoice, on `cont`.
 
-    `upload_index` and `download_id` are ANAF's ids for the e-Factura (SPV).
+    `upload_index` and `download_id` are ANAF's ids for the e-Factura (SPV). `issued`: an
+    invoice the client issued itself; SAGA files it under "Ieșiri" by its supplier.
     """
 
     invoice: Invoice
@@ -94,6 +95,7 @@ class Entry:
     upload_index: str | None
     download_id: str | None  # also the id of the message the invoice came in
     line_conts: tuple[tuple[int, str], ...] = ()
+    issued: bool = False
 
     def cont_for(self, line: int | None) -> str:
         return dict(self.line_conts).get(line, self.cont) if line is not None else self.cont
@@ -163,7 +165,8 @@ def _add_factura(root: ElementTree.Element, entry: Entry) -> None:
     antet = ElementTree.SubElement(factura, "Antet")
     for tag, value in (
         *_party_tags("Furnizor", invoice.supplier, extra_after_iban=True),
-        *_party_tags("Client", invoice.customer, extra_after_iban=False),
+        # The buyer of a sale may be a person: its phone and e-mail stay out of the file.
+        *_party_tags("Client", invoice.customer, extra_after_iban=False, contact=not entry.issued),
         ("FacturaNumar", invoice.number),
         ("FacturaData", _date(invoice.issue_date, DATE_FORMAT)),
         ("FacturaScadenta", _date(invoice.due_date, DATE_FORMAT)),
@@ -197,16 +200,18 @@ def _add_factura(root: ElementTree.Element, entry: Entry) -> None:
             ElementTree.SubElement(linie, tag).text = value
 
 
-def _party_tags(prefix: str, party: Party, extra_after_iban: bool) -> list[tuple[str, str | None]]:
-    """SAGA orders the supplier's and the client's fields differently."""
+def _party_tags(prefix: str, party: Party, extra_after_iban: bool, contact: bool = True) -> list[tuple[str, str | None]]:
+    """SAGA orders the supplier's and the client's fields differently. Without `contact`,
+    the phone and the e-mail are left empty."""
     code = party.vat_id or party.cui
+    phone, email = (party.phone, party.email) if contact else (None, None)
     if extra_after_iban:
         return [
             (f"{prefix}Nume", party.name), (f"{prefix}CIF", code),
             (f"{prefix}NrRegCom", party.registration), (f"{prefix}Capital", None),
             (f"{prefix}Tara", party.country), (f"{prefix}Localitate", party.city),
             (f"{prefix}Judet", party.county), (f"{prefix}Adresa", party.address),
-            (f"{prefix}Telefon", party.phone), (f"{prefix}Mail", party.email),
+            (f"{prefix}Telefon", phone), (f"{prefix}Mail", email),
             (f"{prefix}Banca", party.bank), (f"{prefix}IBAN", party.iban),
             (f"{prefix}InformatiiSuplimentare", None),
         ]
@@ -216,7 +221,7 @@ def _party_tags(prefix: str, party: Party, extra_after_iban: bool) -> list[tuple
         (f"{prefix}Judet", party.county), (f"{prefix}Tara", party.country),
         (f"{prefix}Localitate", party.city), (f"{prefix}Adresa", party.address),
         (f"{prefix}Banca", party.bank), (f"{prefix}IBAN", party.iban),
-        (f"{prefix}Telefon", party.phone), (f"{prefix}Mail", party.email),
+        (f"{prefix}Telefon", phone), (f"{prefix}Mail", email),
     ]
 
 

@@ -781,3 +781,118 @@ def test_a_saga_problem_is_kept_per_client_until_cleared(store):
     store.set_saga_problem(VALID_CUI, None, "2026-11-11T10:00:00+02:00")
 
     assert store.saga_problem(VALID_CUI) is None
+
+
+# --- issued invoices in the process ------------------------------------------------------
+
+
+def issued_row(message_id, **overrides):
+    return make_row(id=message_id, message_type="FACTURA TRIMISA", supplier_cui=VALID_CUI,
+                    customer_cui="87654321", customer_name="Beta Instal SRL", **overrides)
+
+
+def test_issued_invoices_have_a_list_of_accounts_of_their_own(store):
+    store.save_account("704", "Servicii prestate.", kind="issued")
+
+    assert store.accounts(kind="issued")["704"] == "Servicii prestate."
+    assert "704" not in store.accounts()
+    store.delete_account("704", kind="issued")
+    assert "704" not in store.accounts(kind="issued")
+
+
+def test_a_new_database_starts_with_example_accounts_for_issued_invoices(store):
+    assert list(store.accounts(kind="issued")) == ["701", "704", "707"]
+
+
+def test_deleted_example_accounts_for_issued_invoices_do_not_come_back(tmp_path):
+    path = tmp_path / "data" / "efactura.db"
+    store = Store(path)
+    for cont in ("701", "704", "707"):
+        store.delete_account(cont, kind="issued")
+    store.close()
+
+    store = Store(path)
+    assert store.accounts(kind="issued") == {}
+    store.close()
+
+
+def test_a_rule_is_for_received_invoices_unless_it_says_issued(store):
+    received = store.add_rule(name="a", cont="628", keywords=["a"], client_cui=None, enabled=True)
+    issued = store.add_rule(name="b", cont="704", keywords=["b"], client_cui=None, enabled=True, direction="issued")
+
+    kinds = {rule["id"]: rule["direction"] for rule in store.rules()}
+    assert (kinds[received], kinds[issued]) == ("received", "issued")
+
+
+def test_a_rule_moves_only_among_the_rules_of_its_kind(store):
+    first = store.add_rule(name="r1", cont="628", keywords=["a"], client_cui=None, enabled=True)
+    sold = store.add_rule(name="i1", cont="704", keywords=["b"], client_cui=None, enabled=True, direction="issued")
+    second = store.add_rule(name="r2", cont="626", keywords=["c"], client_cui=None, enabled=True)
+
+    store.move_rule(second, up=True)  # passes over the issued one, before the received one above it
+
+    received = [rule["id"] for rule in store.rules() if rule["direction"] == "received"]
+    assert received[-2:] == [second, first]
+    store.move_rule(sold, up=True)  # first among the issued ones already: it stays
+    assert [rule["id"] for rule in store.rules() if rule["direction"] == "issued"] == [sold]
+
+
+def test_issued_invoices_saved_before_they_were_classified_start_waiting_once(tmp_path):
+    path = tmp_path / "data" / "efactura.db"
+    store = Store(path)
+    store.insert_message(issued_row("1"))
+    store.insert_message(issued_row("2", invoice_number=None))  # ANAF's file could not be read as an invoice
+    store.insert_message(issued_row("3"))
+    store.set_uploaded(["3"], True, "2026-11-10T10:00:00")  # SAGA has it already
+    store.insert_message(make_row(id="4"))  # a received one saved without classification stays so
+    store.delete_setting("issued_backlog_added")  # as in a database of 0.10.0
+    store.close()
+
+    store = Store(path)
+    assert {i: store.get_message(i)["classification_status"] for i in "1234"} == {
+        "1": "pending", "2": None, "3": None, "4": None,
+    }
+    store.insert_message(issued_row("5"))
+    store.close()
+
+    store = Store(path)  # only once: an issued invoice saved outside classification later stays outside
+    assert store.get_message("5")["classification_status"] is None
+    store.close()
+
+
+def test_proposed_rules_rest_on_received_invoices_only(store):
+    subject = '{"supplier_cui": "87654321", "description": "Manopera"}'
+    for message_id, row in (("1", make_row(id="1")), ("2", issued_row("2"))):
+        store.insert_message(row)
+        store.set_classification(message_id, classification_status="classified", cont="704",
+                                 classification_method="jev", classified_at="2026-11-10T10:00:00",
+                                 rule_subject=subject)
+
+    assert [row["id"] for row in store.decided_without_rule()] == ["1"]
+    assert len(store.classified_subjects()) == 1
+
+
+def test_the_client_list_counts_received_and_issued_invoices_apart(store):
+    store.save_client(VALID_CUI, "Alfa Construct SRL", "2026-11-01T09:00:00")
+    run = store.start_run(VALID_CUI, 3, "2026-11-10T09:00:00")
+    store.insert_message(make_row(id="1", sync_run_id=run))
+    store.insert_message(issued_row("2", sync_run_id=run))
+    store.insert_message(issued_row("3", sync_run_id=run))
+    store.set_classification("3", classification_status="review")
+    store.insert_message(issued_row("4", sync_run_id=run))
+    store.set_classification("4", classification_status="classified", cont="704")
+
+    (client,) = store.clients()
+    assert {key: client[key] for key in (
+        "invoices", "issued_count", "new_count", "issued_new_count", "review_count", "ready_count",
+    )} == {"invoices": 1, "issued_count": 3, "new_count": 1, "issued_new_count": 3, "review_count": 1, "ready_count": 1}
+
+
+def test_an_issued_invoice_of_the_latest_download_that_brought_issued_ones_is_new(store):
+    first = store.start_run(VALID_CUI, 3, "2026-11-09T09:00:00")
+    store.insert_message(issued_row("1", sync_run_id=first))
+    second = store.start_run(VALID_CUI, 3, "2026-11-10T09:00:00")
+    store.insert_message(make_row(id="2", sync_run_id=second))  # this download brought no issued invoice
+
+    shown = {row["id"]: row["is_new"] for row in store.list_messages(cui=VALID_CUI)}
+    assert shown == {"1": True, "2": True}

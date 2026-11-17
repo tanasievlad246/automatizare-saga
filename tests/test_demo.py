@@ -91,7 +91,12 @@ def test_the_demo_has_invoices_a_client_issued(cfg):
     assert [each["customer_name"] for each in issued] == [
         "Gama Imobiliare SA", "Primăria Comunei Valea Mare", "Beta Instal SRL",
     ]
-    assert all(each["classification_status"] is None and not each["is_new"] for each in issued)
+    decided = {each["invoice_number"]: (each["classification_status"], each["cont"]) for each in issued}
+    assert decided == {"AC-2029": ("classified", "704"), "AC-2030": ("review", None), "AC-2031": ("classified", "704")}
+    assert all(each["is_new"] for each in issued)
+    lines = {each["invoice_number"]: each["line_accounts"] for each in issued}
+    assert [(entry["cont"], entry["method"]) for entry in lines["AC-2031"]] == [("704", "rules"), ("707", "jev")]
+    assert [entry["cont"] for entry in lines["AC-2030"]] == ["704", None]  # Jev is unsure of the bricks
 
 
 def test_the_demo_has_invoices_that_ask_for_another_sum_than_they_are_worth(cfg):

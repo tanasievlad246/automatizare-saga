@@ -128,10 +128,13 @@ class SettingsRequest(BaseModel):
     min_confidence: float | None = None
     jev_instructions: str | None = None
     jev_line_instructions: str | None = None  # the question about one line
+    jev_issued_instructions: str | None = None  # the two questions about the invoices a client issued
+    jev_issued_line_instructions: str | None = None
 
 
 class AccountRequest(BaseModel):
     description: str = ""
+    kind: str = "received"  # or "issued": the list of accounts for the invoices a client issued
 
 
 class RuleRequest(BaseModel):
@@ -143,6 +146,7 @@ class RuleRequest(BaseModel):
     supplier_cuis: list[str] = []
     client_cui: Union[str, int, None] = None
     enabled: bool = True
+    direction: str | None = None  # received or issued; left out when a rule is replaced: it keeps its own
 
 
 class RulePreviewRequest(BaseModel):
@@ -484,9 +488,11 @@ def create_app(
         "/classification/settings", dependencies=documented_key, summary="Change the confidence level"
     )
     def change_classification_settings(body: SettingsRequest):
-        if body.min_confidence is None and body.jev_instructions is None and body.jev_line_instructions is None:
+        if all(value is None for value in body.model_dump().values()):
             raise EfacturaError(
-                INVALID_INPUT, "Give min_confidence, jev_instructions, jev_line_instructions, or several."
+                INVALID_INPUT,
+                "Give min_confidence, jev_instructions, jev_line_instructions, jev_issued_instructions, "
+                "jev_issued_line_instructions, or several.",
             )
 
         def change(service: Service) -> dict:
@@ -496,6 +502,10 @@ def create_app(
                 service.set_jev_instructions(body.jev_instructions)
             if body.jev_line_instructions is not None:
                 service.set_jev_line_instructions(body.jev_line_instructions)
+            if body.jev_issued_instructions is not None:
+                service.set_jev_issued_instructions(body.jev_issued_instructions)
+            if body.jev_issued_line_instructions is not None:
+                service.set_jev_issued_line_instructions(body.jev_issued_line_instructions)
             return service.classification_settings()
 
         return call(change)
@@ -536,11 +546,11 @@ def create_app(
 
     @router.put("/accounts/{cont}", dependencies=documented_key, summary="Add or describe an account")
     def save_account(cont: str, body: AccountRequest):
-        return call(lambda s: s.save_account(cont, body.description))
+        return call(lambda s: s.save_account(cont, body.description, body.kind))
 
     @router.delete("/accounts/{cont}", dependencies=documented_key, summary="Remove an account")
-    def delete_account(cont: str):
-        return call(lambda s: s.delete_account(cont))
+    def delete_account(cont: str, kind: str = Query("received", description="received or issued")):
+        return call(lambda s: s.delete_account(cont, kind))
 
     @router.post("/rules", dependencies=documented_key, summary="Add a rule")
     def add_rule(body: RuleRequest):

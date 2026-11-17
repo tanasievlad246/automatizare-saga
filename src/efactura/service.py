@@ -67,8 +67,14 @@ from .invoice import (
     parse_invoice,
     parse_invoice_fields,
 )
-from .rules import CONDITIONS, DEFAULT_JEV_LINE_INSTRUCTIONS, Rule, Rulebook, Subject, any_of
-from .store import JEV_INSTRUCTIONS, JEV_LINE_INSTRUCTIONS, RULE_TEST, Store
+from .rules import (
+    CONDITIONS, DEFAULT_JEV_ISSUED_INSTRUCTIONS, DEFAULT_JEV_ISSUED_LINE_INSTRUCTIONS, DEFAULT_JEV_LINE_INSTRUCTIONS,
+    Rule, Rulebook, Subject, any_of,
+)
+from .store import (
+    ISSUED as ISSUED_KIND, JEV_INSTRUCTIONS, JEV_ISSUED_INSTRUCTIONS, JEV_ISSUED_LINE_INSTRUCTIONS,
+    JEV_LINE_INSTRUCTIONS, KINDS, RECEIVED as RECEIVED_KIND, RULE_TEST, Store,
+)
 from .suggestions import propose, ticked_words, words_of
 
 log = logging.getLogger(__name__)
@@ -96,7 +102,8 @@ MAX_NETWORK_FAILURES = 3
 _UNSAFE_IN_FILE_NAME = re.compile(r"[^A-Za-z0-9_-]")
 
 # --- classification ---
-RECEIVED = TYPE_PREFIXES["primita"]  # only received invoices get an account
+RECEIVED = TYPE_PREFIXES["primita"]
+ISSUED = TYPE_PREFIXES["trimisa"]  # the invoices a client issued itself; these get an account too
 PENDING, CLASSIFIED, REVIEW = "pending", "classified", "review"
 STATUSES = (PENDING, CLASSIFIED, REVIEW)
 # Jev answers below this confidence go to a person. Kept in the database (table settings)
@@ -554,7 +561,7 @@ class Service:
                     # Only a message saved here, now, ever enters classification.
                     "classification_status": (
                         PENDING
-                        if classify and _is_received(message_type)
+                        if classify and _gets_an_account(message_type)
                         and parse_invoice(extracted.xml) is not None
                         else None
                     ),
@@ -674,7 +681,7 @@ class Service:
                 for row in rows
             ]
             level = _min_confidence(store)
-            accounts = store.accounts()
+            accounts, issued_accounts = store.accounts(), store.accounts(ISSUED_KIND)
         finally:
             store.close()
         return {
@@ -682,6 +689,7 @@ class Service:
             "count": len(invoices),
             "min_confidence": level,
             "accounts": accounts,
+            "issued_accounts": issued_accounts,  # for the invoices a client issued
             "invoices": invoices,
         }
 
@@ -741,9 +749,32 @@ class Service:
                 "accounts": store.accounts(),
                 "jev_instructions": store.get_setting(JEV_INSTRUCTIONS) or "",
                 "jev_line_instructions": store.get_setting(JEV_LINE_INSTRUCTIONS) or DEFAULT_JEV_LINE_INSTRUCTIONS,
+                **_issued_questions(store),
             }
         finally:
             store.close()
+
+    def set_jev_issued_instructions(self, text: str) -> dict:
+        """The question Jev is asked about a whole invoice the client issued."""
+        return self._set_question(JEV_ISSUED_INSTRUCTIONS, text, "settings.jev_issued_question",
+                                  "The question put to Jev about an issued invoice was changed.")
+
+    def set_jev_issued_line_instructions(self, text: str) -> dict:
+        """The question Jev is asked about one line of an invoice the client issued."""
+        return self._set_question(JEV_ISSUED_LINE_INSTRUCTIONS, text, "settings.jev_issued_line_question",
+                                  "The question put to Jev about one line of an issued invoice was changed.")
+
+    def _set_question(self, key: str, text: str, event: str, message: str) -> dict:
+        text = str(text or "").strip()
+        if not text:
+            raise EfacturaError(INVALID_INPUT, "The question for Jev cannot be empty.")
+        store = self._open_store()
+        try:
+            store.set_setting(key, text)
+            journal.record("settings", event, message)
+        finally:
+            store.close()
+        return self.classification_settings()
 
     def set_jev_line_instructions(self, text: str) -> dict:
         """The question Jev is asked about one line, for the clients whose invoices are
@@ -1098,30 +1129,39 @@ class Service:
             return {
                 "ok": True,
                 "accounts": store.accounts(),
+                "issued_accounts": store.accounts(ISSUED_KIND),
                 "rules": store.rules(),
                 "jev_instructions": store.get_setting(JEV_INSTRUCTIONS) or "",
                 "jev_line_instructions": store.get_setting(JEV_LINE_INSTRUCTIONS) or DEFAULT_JEV_LINE_INSTRUCTIONS,
+                **_issued_questions(store),
                 "min_confidence": _min_confidence(store),
             }
         finally:
             store.close()
 
-    def save_account(self, cont: str, description: str = "") -> dict:
-        """Add an account Jev may choose, or change its description."""
-        cont = _checked_account(cont)
+    def save_account(self, cont: str, description: str = "", kind: str = RECEIVED_KIND) -> dict:
+        """Add an account Jev may choose, or change its description, in the list for one kind
+        of invoice: received, or issued by the client."""
+        cont, kind = _checked_account(cont), _checked_kind(kind)
         store = self._open_store()
         try:
-            store.save_account(cont, str(description or "").strip())
-            journal.record("rules", "account.saved", f"Account {cont} saved in Jev's list.", cont=cont)
+            store.save_account(cont, str(description or "").strip(), kind)
+            journal.record(
+                "rules", "account.saved", f"Account {cont} saved in Jev's list{_for_kind(kind)}.", cont=cont, kind=kind,
+            )
         finally:
             store.close()
         return self.rules_overview()
 
-    def delete_account(self, cont: str) -> dict:
+    def delete_account(self, cont: str, kind: str = RECEIVED_KIND) -> dict:
+        kind = _checked_kind(kind)
         store = self._open_store()
         try:
-            store.delete_account(str(cont).strip())
-            journal.record("rules", "account.removed", f"Account {cont} removed from Jev's list.", cont=str(cont).strip())
+            store.delete_account(str(cont).strip(), kind)
+            journal.record(
+                "rules", "account.removed", f"Account {cont} removed from Jev's list{_for_kind(kind)}.",
+                cont=str(cont).strip(), kind=kind,
+            )
         finally:
             store.close()
         return self.rules_overview()
@@ -1138,8 +1178,11 @@ class Service:
         supplier_cuis=(),
         client_cui: str | None = None,
         enabled: bool = True,
+        direction: str | None = None,
     ) -> dict:
-        """Add a rule (rule_id None) or replace one. `client_cui` None: for every client."""
+        """Add a rule (rule_id None) or replace one. `client_cui` None: for every client.
+        `direction` says which invoices it decides, received (to begin with) or issued; a
+        rule replaced without it keeps its own."""
         tidy = _rule_from(
             str(name or "").strip(), _checked_account(cont),
             keywords=keywords, item_codes=item_codes,
@@ -1159,8 +1202,19 @@ class Service:
             "client_cui": normalize_cui(client_cui) if client_cui else None,
             "enabled": bool(enabled),
         }
+        if direction is not None:
+            fields["direction"] = _checked_kind(direction)
         store = self._open_store()
         try:
+            kind = fields.get("direction")
+            if kind is None:
+                kept = next((rule["direction"] for rule in store.rules() if rule["id"] == rule_id), RECEIVED_KIND)
+                kind = kept
+            if kind == ISSUED_KIND and tidy.supplier_cuis:
+                raise EfacturaError(
+                    INVALID_INPUT,
+                    "A rule for issued invoices cannot name a supplier: the supplier is always the client itself.",
+                )
             if rule_id is None:
                 store.add_rule(**fields)
             else:
@@ -1168,7 +1222,7 @@ class Service:
             journal.record(
                 "rules", "rule.added" if rule_id is None else "rule.changed",
                 f"Rule {tidy.name!r} for {tidy.cont} {'added' if rule_id is None else 'changed'}.",
-                name=tidy.name, cont=tidy.cont, rule_id=rule_id, client=fields["client_cui"],
+                name=tidy.name, cont=tidy.cont, rule_id=rule_id, client=fields["client_cui"], kind=kind,
                 looks_for=", ".join((*tidy.keywords, *tidy.supplier_cuis, *tidy.item_codes, *tidy.commodity_prefixes)),
             )
         finally:
@@ -1282,7 +1336,10 @@ class Service:
         return (self._now() - timedelta(days=RECENT_DAYS)).isoformat()
 
     def _rule_suggestion(self, store: Store, row: dict) -> dict | None:
-        """The rule to propose on one invoice's screen, however old the invoice is."""
+        """The rule to propose on one invoice's screen, however old the invoice is. Proposed
+        rules are for received invoices only, so far."""
+        if not _is_received(row["message_type"]):
+            return None
         if row["classification_status"] != CLASSIFIED or row["classification_method"] == "rules":
             return None
         state = store.suggestion_state(row["id"])
@@ -1529,6 +1586,11 @@ class Service:
             try:
                 status = self._classify_one(store, message_id, tally, jev_allowed=not jev_down)
             except EfacturaError as exc:
+                if exc.code == NOT_CLASSIFIABLE:
+                    # Waiting again would change nothing: it leaves classification, with why.
+                    store.set_classification(message_id, classification_status=None, classification_error=exc.message)
+                    log.warning("Message %s left out of classification: %s", message_id, exc.message)
+                    continue
                 # OpenRouter itself is failing (connection, key, credit, rate limit), so
                 # the invoices after this one are not sent in this run either.
                 jev_down = jev_down or exc.code == JEV_ERROR
@@ -1557,10 +1619,10 @@ class Service:
         row = store.get_message(message_id, include_xml=True)
         if row is None:
             raise EfacturaError(NOT_FOUND, f"No saved message with id: {message_id}")
-        if not _is_received(row["message_type"]):
+        if not _gets_an_account(row["message_type"]):
             raise EfacturaError(
                 NOT_CLASSIFIABLE,
-                f"Only received invoices are classified; this message is: {row['message_type']}.",
+                f"Only invoices, received or issued, are classified; this message is: {row['message_type']}.",
             )
         invoice = parse_invoice(row["invoice_xml"] or "")
         if invoice is None:
@@ -1595,7 +1657,8 @@ class Service:
         if invoice is None:
             raise EfacturaError(NOT_CLASSIFIABLE, "The saved XML cannot be read as an invoice.")
 
-        rulebook = _rulebook_for(store, row["cui"])
+        issued = _is_issued(row["message_type"])
+        rulebook = _rulebook_for(store, row["cui"], issued=issued)
         # One line is one account either way: such an invoice is decided, shown and booked whole.
         per_line = store.client_per_line(row["cui"]) and len(invoice.lines) > 1
         earlier = _same_invoice_saved_before(store, row)
@@ -1612,6 +1675,11 @@ class Service:
                 ]
                 return self._record_lines(store, row, invoice, open_lines, why=why)
             return self._to_review(store, row, why)
+        misfit = _parties_misfit(row["cui"], invoice, issued)
+        if misfit:
+            # SAGA files an invoice by its supplier: one whose parties do not fit its kind
+            # would land on the wrong side, so a person looks at it first.
+            return self._to_review(store, row, misfit)
 
         if per_line:
             return self._classify_lines(store, row, invoice, rulebook, tally, jev_allowed)
@@ -1939,7 +2007,10 @@ class Service:
             if invoice is None:  # it was read when it was given its account
                 log.warning("Message %s has an account but its invoice cannot be read", row["id"])
                 continue
-            waiting.append(saga.Entry(invoice, row["cont"], row["id_solicitare"], row["id"], _line_conts(row)))
+            waiting.append(saga.Entry(
+                invoice, row["cont"], row["id_solicitare"], row["id"], _line_conts(row),
+                issued=_is_issued(row["message_type"]),
+            ))
         saga_dir = self._saga_dir(store)
         folder = saga_dir / cui
         known = store.saga_ledger(cui)
@@ -2279,26 +2350,90 @@ def _is_received(message_type: str | None) -> bool:
     return (message_type or "").upper().startswith(RECEIVED)
 
 
+def _is_issued(message_type: str | None) -> bool:
+    return (message_type or "").upper().startswith(ISSUED)
+
+
+def _gets_an_account(message_type: str | None) -> bool:
+    """An invoice the client received, or one it issued: both are classified."""
+    return _is_received(message_type) or _is_issued(message_type)
+
+
 def _new_tally() -> dict:
     return {"jev_calls": 0, "jev_cost_usd": 0}
 
 
-def _rulebook_for(store: Store, cui: str) -> Rulebook:
-    """The accounts and the rules that apply to one client: its own rules first, then the
-    ones shared by every client, each group in the order set on the rules screen."""
+def _rulebook_for(store: Store, cui: str, issued: bool = False) -> Rulebook:
+    """The accounts and the rules that apply to one client's invoices of one kind (received,
+    or issued by the client): its own rules first, then the ones shared by every client,
+    each group in the order set on the rules screen."""
+    kind = ISSUED_KIND if issued else RECEIVED_KIND
     applicable = [
-        rule for rule in store.rules() if rule["enabled"] and rule["client_cui"] in (None, cui)
+        rule for rule in store.rules()
+        if rule["enabled"] and rule["client_cui"] in (None, cui) and rule["direction"] == kind
     ]
     applicable.sort(key=lambda rule: rule["client_cui"] is None)  # stable: keeps the order
+    if issued:
+        instructions = store.get_setting(JEV_ISSUED_INSTRUCTIONS) or DEFAULT_JEV_ISSUED_INSTRUCTIONS
+        line_instructions = store.get_setting(JEV_ISSUED_LINE_INSTRUCTIONS) or ""
+    else:
+        instructions = store.get_setting(JEV_INSTRUCTIONS) or ""
+        line_instructions = store.get_setting(JEV_LINE_INSTRUCTIONS) or ""
     return Rulebook(
-        accounts=store.accounts(),
+        accounts=store.accounts(kind),
         rules=tuple(
             Rule(rule["name"], rule["cont"], **{name: rule[name] for name in CONDITIONS})
             for rule in applicable
         ),
-        instructions=store.get_setting(JEV_INSTRUCTIONS) or "",
-        line_instructions=store.get_setting(JEV_LINE_INSTRUCTIONS) or "",
+        instructions=instructions,
+        line_instructions=line_instructions,
+        issued=issued,
     )
+
+
+def _issued_questions(store: Store) -> dict:
+    """The two questions put to Jev about the invoices a client issued, as they are in force."""
+    return {
+        "jev_issued_instructions": store.get_setting(JEV_ISSUED_INSTRUCTIONS) or DEFAULT_JEV_ISSUED_INSTRUCTIONS,
+        "jev_issued_line_instructions": (
+            store.get_setting(JEV_ISSUED_LINE_INSTRUCTIONS) or DEFAULT_JEV_ISSUED_LINE_INSTRUCTIONS
+        ),
+    }
+
+
+def _checked_kind(kind) -> str:
+    if kind not in KINDS:
+        raise EfacturaError(INVALID_INPUT, f"The kind of invoice must be one of: {', '.join(KINDS)}.")
+    return kind
+
+
+def _for_kind(kind: str) -> str:
+    return " for issued invoices" if kind == ISSUED_KIND else ""
+
+
+def _cui_digits(cui: str | None) -> str:
+    """A fiscal code as compared: its digits, without "RO" or spaces."""
+    return re.sub(r"\D", "", cui or "")
+
+
+def _parties_misfit(cui: str, invoice: Invoice, issued: bool) -> str | None:
+    """Why the parties of an invoice do not fit its kind for this client, or None. SAGA
+    files an invoice whose supplier is the company under "Ieșiri", any other under "Intrări"."""
+    client = _cui_digits(cui)
+    supplier, customer = _cui_digits(invoice.supplier.cui), _cui_digits(invoice.customer.cui)
+    if supplier == client and customer == client:
+        return "The client invoiced itself. Decide whether this invoice has to be booked, and how."
+    if issued and supplier != client:
+        return (
+            "The supplier on this issued invoice is not the client, so SAGA would not file it among "
+            "the sales. Check that it belongs to this client."
+        )
+    if not issued and supplier == client:
+        return (
+            "The client is the supplier of this received invoice, so SAGA would file it among the "
+            "sales. Check that it belongs to this client."
+        )
+    return None
 
 
 def _trial_number(value, what: str, number: int) -> Decimal | None:

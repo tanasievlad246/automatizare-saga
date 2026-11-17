@@ -11,7 +11,9 @@ from efactura import auth, journal, saga, service as service_module
 from efactura.auth import Tokens
 from efactura.config import load_config
 from efactura.errors import EfacturaError
-from efactura.rules import DEFAULT_JEV_LINE_INSTRUCTIONS, Rule, Rulebook
+from efactura.rules import (
+    DEFAULT_JEV_ISSUED_INSTRUCTIONS, DEFAULT_JEV_ISSUED_LINE_INSTRUCTIONS, DEFAULT_JEV_LINE_INSTRUCTIONS, Rule, Rulebook,
+)
 from efactura.service import Service
 from efactura.store import Store
 
@@ -342,15 +344,14 @@ def test_waiting_invoices_are_classified_by_the_next_sync(service, anaf, cfg, op
 # --- what is never classified ----------------------------------------------------------
 
 
-def test_sent_invoices_error_notices_and_buyer_messages_are_left_alone(service, anaf, cfg):
-    anaf.add("3001", tip="FACTURA TRIMISA", xml=rich_invoice_xml(lines=FUEL))
+def test_error_notices_and_buyer_messages_are_left_alone(service, anaf, cfg):
     anaf.add("3002", tip="ERORI FACTURA", xml=ANAF_ERROR_NOTICE.encode())
     anaf.add("3003", tip="MESAJ CUMPARATOR PRIMIT / MESAJ CUMPARATOR TRANSMIS", xml=b"<mesaj/>")
 
     result = service.sync(VALID_CUI)
 
-    assert [entry["classification_status"] for entry in result["new"]] == [None, None, None]
-    assert result["classification"]["skipped"] == 3
+    assert [entry["classification_status"] for entry in result["new"]] == [None, None]
+    assert result["classification"]["skipped"] == 2
     assert not cfg.saga_dir.exists()
 
 
@@ -438,8 +439,8 @@ def test_classify_by_id_of_an_unknown_message_is_not_found(service):
     assert error_code(lambda: service.classify("nope")) == "not_found"
 
 
-def test_classify_by_id_refuses_what_is_not_a_received_invoice(service, anaf):
-    anaf.add("3001", tip="FACTURA TRIMISA", xml=rich_invoice_xml(lines=FUEL))
+def test_classify_by_id_refuses_what_is_not_an_invoice(service, anaf):
+    anaf.add("3001", tip="ERORI FACTURA", xml=ANAF_ERROR_NOTICE.encode())
     anaf.add("3002", xml=b"<ceva-necunoscut/>")
     service.sync(VALID_CUI)
 
@@ -596,6 +597,8 @@ def test_the_confidence_level_starts_at_eighty_percent(service):
         "ok": True, "min_confidence": 0.8, "model": "typesafe/jev-1.14", "jev_configured": True,
         "accounts": BOOK.accounts, "jev_instructions": BOOK.instructions,
         "jev_line_instructions": DEFAULT_JEV_LINE_INSTRUCTIONS,
+        "jev_issued_instructions": DEFAULT_JEV_ISSUED_INSTRUCTIONS,
+        "jev_issued_line_instructions": DEFAULT_JEV_ISSUED_LINE_INSTRUCTIONS,
     }
 
 

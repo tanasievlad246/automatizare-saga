@@ -130,6 +130,31 @@ def test_the_question_for_jev_can_be_changed_with_or_without_the_level(api):
     assert nothing.status_code == 400
 
 
+def test_the_accounts_rules_and_questions_for_issued_invoices_go_over_the_api(api):
+    added = api.put("/accounts/706", json={"description": "Chirii.", "kind": "issued"})
+    rule = api.post("/rules", json={"name": "chirie", "cont": "706", "keywords": ["chirie"], "direction": "issued"})
+    questions = api.put("/classification/settings", json={
+        "jev_issued_instructions": "Ce s-a vandut?", "jev_issued_line_instructions": "Ce s-a vandut pe linie?",
+    })
+    removed = api.delete("/accounts/706", params={"kind": "issued"})
+
+    assert added.json()["issued_accounts"]["706"] == "Chirii."
+    assert "706" not in added.json()["accounts"]
+    assert rule.json()["rules"][-1]["direction"] == "issued"
+    assert (questions.json()["jev_issued_instructions"], questions.json()["jev_issued_line_instructions"]) == (
+        "Ce s-a vandut?", "Ce s-a vandut pe linie?",
+    )
+    assert "706" not in removed.json()["issued_accounts"]
+    overview = api.get("/rules").json()
+    assert overview["jev_issued_instructions"] == "Ce s-a vandut?"
+
+
+def test_an_unknown_kind_of_invoice_is_refused_over_the_api(api):
+    assert api.put("/accounts/706", json={"description": "x", "kind": "both"}).status_code == 400
+    assert api.delete("/accounts/706", params={"kind": "both"}).status_code == 400
+    assert api.post("/rules", json={"name": "x", "cont": "706", "keywords": ["x"], "direction": "both"}).status_code == 400
+
+
 # --- proposed rules ------------------------------------------------------------------------
 
 

@@ -195,7 +195,9 @@ def test_the_client_list_counts_invoices_and_remembers_the_last_download(service
 
     alfa, beta = service.clients()["clients"]
 
-    assert (alfa["invoices"], alfa["new_count"], alfa["review_count"], alfa["ready_count"]) == (2, 2, 1, 1)
+    assert (alfa["invoices"], alfa["new_count"], alfa["ready_count"]) == (2, 2, 1)
+    # The issued one is counted apart, and is to check too: its supplier is not the client.
+    assert (alfa["issued_count"], alfa["issued_new_count"], alfa["review_count"]) == (1, 1, 2)
     assert alfa["last_sync_at"] == NOW.isoformat()
     assert (beta["invoices"], beta["new_count"], beta["last_sync_at"]) == (0, 0, None)
 

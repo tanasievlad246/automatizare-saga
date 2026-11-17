@@ -94,6 +94,12 @@ CREATE TABLE IF NOT EXISTS accounts (
     description TEXT NOT NULL DEFAULT ''
 );
 
+-- The same, for the invoices a client issued itself: income accounts (701, 704, 707...).
+CREATE TABLE IF NOT EXISTS issued_accounts (
+    cont        TEXT PRIMARY KEY,
+    description TEXT NOT NULL DEFAULT ''
+);
+
 -- Classification rules, checked in `position` order. The four condition columns hold
 -- JSON lists; a line matches when any entry of any list matches (see rules.py).
 CREATE TABLE IF NOT EXISTS rules (
@@ -106,7 +112,8 @@ CREATE TABLE IF NOT EXISTS rules (
     commodity_prefixes TEXT NOT NULL DEFAULT '[]',
     supplier_cuis      TEXT NOT NULL DEFAULT '[]',
     client_cui         TEXT,                        -- NULL: the rule is for every client
-    enabled            INTEGER NOT NULL DEFAULT 1
+    enabled            INTEGER NOT NULL DEFAULT 1,
+    direction          TEXT NOT NULL DEFAULT 'received'  -- received | issued: the invoices it decides
 );
 
 -- The journal: what the program did, line by line (see journal.py). `trace` ties together
@@ -152,23 +159,35 @@ CREATE TABLE IF NOT EXISTS saga_problems (
 
 RECEIVED_SQL = "message_type LIKE 'FACTURA PRIMITA%'"
 ISSUED_SQL = "message_type LIKE 'FACTURA TRIMISA%'"  # the invoices a client issued itself
-# "New" on screen: a received invoice brought in by that client's latest sync that brought
-# any, and not yet marked as uploaded to accounting. `m` is the messages row being judged;
-# the query must also join LATEST_RUN_JOIN, which works out each client's latest run once
-# (asking again for every row made a long list take minutes).
+# "New" on screen: an invoice brought in by that client's latest sync that brought any of
+# its kind (received or issued), and not yet marked as uploaded to accounting. `m` is the
+# messages row being judged; the query must also join LATEST_RUN_JOIN, which works out each
+# client's latest runs once (asking again for every row made a long list take minutes).
 LATEST_RUN_JOIN = (
-    "LEFT JOIN (SELECT cui AS latest_cui, MAX(sync_run_id) AS latest_run FROM messages "
-    f"WHERE {RECEIVED_SQL} GROUP BY cui) ON latest_cui = "
+    "LEFT JOIN (SELECT cui AS latest_cui, "
+    f"MAX(CASE WHEN {RECEIVED_SQL} THEN sync_run_id END) AS latest_run, "
+    f"MAX(CASE WHEN {ISSUED_SQL} THEN sync_run_id END) AS latest_issued_run "
+    "FROM messages GROUP BY cui) ON latest_cui = "
 )
 IS_NEW_SQL = (
-    f"(m.{RECEIVED_SQL} AND m.uploaded_to_accounting = 0 AND m.sync_run_id IS NOT NULL "
-    "AND m.sync_run_id = latest_run)"
+    "(m.uploaded_to_accounting = 0 AND m.sync_run_id IS NOT NULL AND ("
+    f"(m.{RECEIVED_SQL} AND m.sync_run_id = latest_run) OR "
+    f"(m.{ISSUED_SQL} AND m.sync_run_id = latest_issued_run)))"
 )
 
-RULE_FIELDS = ("name", "cont", *rule_examples.CONDITIONS, "client_cui", "enabled")
+RULE_FIELDS = ("name", "cont", *rule_examples.CONDITIONS, "client_cui", "enabled", "direction")
+RECEIVED, ISSUED = "received", "issued"  # the two kinds of invoice: a rule and an account list are for one
+KINDS = (RECEIVED, ISSUED)
 JEV_INSTRUCTIONS = "jev_instructions"
 JEV_LINE_INSTRUCTIONS = "jev_line_instructions"  # the question about one line; unset: the default
+# The two questions for the invoices a client issued; unset: the default ones.
+JEV_ISSUED_INSTRUCTIONS = "jev_issued_instructions"
+JEV_ISSUED_LINE_INSTRUCTIONS = "jev_issued_line_instructions"
 _EXAMPLES_ADDED = "examples_added"
+_ISSUED_EXAMPLES_ADDED = "issued_examples_added"
+# Set once the issued invoices saved before they were classified have been put to wait.
+ISSUED_BACKLOG = "issued_backlog_added"
+_ACCOUNT_TABLES = {RECEIVED: "accounts", ISSUED: "issued_accounts"}
 
 # Added to `messages` after the first version; existing databases gain them on opening.
 CLASSIFICATION_COLUMNS = {
@@ -279,6 +298,10 @@ class Store:
             # switched off; the clients of an earlier version start with it on as well.
             if "per_line" not in of_clients:
                 self._conn.execute("ALTER TABLE clients ADD COLUMN per_line INTEGER NOT NULL DEFAULT 1")
+            # Every rule of an earlier version was for received invoices.
+            of_rules = {row["name"] for row in self._conn.execute("PRAGMA table_info(rules)")}
+            if "direction" not in of_rules:
+                self._conn.execute("ALTER TABLE rules ADD COLUMN direction TEXT NOT NULL DEFAULT 'received'")
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_messages_classification "
                 "ON messages (cui, classification_status)"
@@ -296,10 +319,28 @@ class Store:
                 "SELECT 1 FROM settings WHERE key = ?", (_EXAMPLES_ADDED,)
             ).fetchone():
                 self._add_examples()
+            if not self._has_setting(_ISSUED_EXAMPLES_ADDED):
+                self._conn.executemany(
+                    "INSERT OR IGNORE INTO issued_accounts (cont, description) VALUES (?, ?)",
+                    rule_examples.EXAMPLE_ISSUED_ACCOUNTS.items(),
+                )
+                self._conn.execute("INSERT INTO settings (key, value) VALUES (?, '1')", (_ISSUED_EXAMPLES_ADDED,))
+            if not self._has_setting(ISSUED_BACKLOG):
+                # Once: the invoices a client issued were saved and never classified before. Those
+                # that could be read and that SAGA has not got yet wait for the client's next download.
+                self._conn.execute(
+                    f"UPDATE messages SET classification_status = 'pending' WHERE {ISSUED_SQL} "
+                    "AND classification_status IS NULL AND uploaded_to_accounting = 0 "
+                    "AND invoice_number IS NOT NULL"
+                )
+                self._conn.execute("INSERT INTO settings (key, value) VALUES (?, '1')", (ISSUED_BACKLOG,))
             self._conn.execute("COMMIT")
         except BaseException:
             self._conn.execute("ROLLBACK")
             raise
+
+    def _has_setting(self, key: str) -> bool:
+        return self._conn.execute("SELECT 1 FROM settings WHERE key = ?", (key,)).fetchone() is not None
 
     def _add_examples(self) -> None:
         """Once per database: example accounts and rules, and the question for Jev. The
@@ -434,7 +475,7 @@ class Store:
         """This company's invoices that have an account and are not yet marked as imported,
         the one that has waited longest first. Each comes with its XML."""
         rows = self._conn.execute(
-            "SELECT id, id_solicitare, cont, line_accounts, invoice_xml FROM messages "
+            "SELECT id, message_type, id_solicitare, cont, line_accounts, invoice_xml FROM messages "
             "WHERE cui = ? AND classification_status = 'classified' AND cont IS NOT NULL "
             "AND uploaded_to_accounting = 0 ORDER BY first_seen_at, id",
             (cui,),
@@ -549,7 +590,7 @@ class Store:
         recent, params = ("AND classified_at >= ?", [since]) if since else ("", [])
         rows = self._conn.execute(
             "SELECT id, cui, cont, supplier_name, rule_subject FROM messages "
-            f"WHERE classification_status = 'classified' AND {NOT_BY_RULE_SQL} "
+            f"WHERE {RECEIVED_SQL} AND classification_status = 'classified' AND {NOT_BY_RULE_SQL} "
             "AND rule_subject IS NOT NULL "
             "AND (suggestion_dismissed_for IS NULL OR suggestion_dismissed_for != cont) "
             f"{recent} ORDER BY classified_at DESC, id",
@@ -562,7 +603,8 @@ class Store:
     ) -> list[tuple[str, str]]:
         """The account and the stored subject of every invoice that has an account: what a
         rule is tried on to see how it would have done."""
-        where, params = ["classification_status = 'classified'", "rule_subject IS NOT NULL"], []
+        # Received invoices only: proposed rules and the rule test are about those, so far.
+        where, params = [RECEIVED_SQL, "classification_status = 'classified'", "rule_subject IS NOT NULL"], []
         if since:
             where.append("classified_at >= ?")
             params.append(since)
@@ -624,7 +666,9 @@ class Store:
         rows = self._conn.execute(
             "SELECT c.cui, c.name, c.added_at, c.enabled, c.per_line, "
             f"{count('m.' + RECEIVED_SQL)} AS invoices, "
-            f"{count(IS_NEW_SQL)} AS new_count, "
+            f"{count('m.' + ISSUED_SQL)} AS issued_count, "
+            f"{count(f'm.{RECEIVED_SQL} AND {IS_NEW_SQL}')} AS new_count, "
+            f"{count(f'm.{ISSUED_SQL} AND {IS_NEW_SQL}')} AS issued_new_count, "
             f"{count(waiting('review'))} AS review_count, "
             f"{count(waiting('classified'))} AS ready_count, "
             "(SELECT MAX(r.started_at) FROM sync_runs r WHERE r.cui = c.cui "
@@ -702,21 +746,22 @@ class Store:
 
     # --- accounts and rules ---------------------------------------------------
 
-    def accounts(self) -> dict[str, str]:
-        rows = self._conn.execute("SELECT cont, description FROM accounts ORDER BY cont")
+    def accounts(self, kind: str = RECEIVED) -> dict[str, str]:
+        """The accounts for one kind of invoice: received, or issued by the client."""
+        rows = self._conn.execute(f"SELECT cont, description FROM {_ACCOUNT_TABLES[kind]} ORDER BY cont")
         return {row["cont"]: row["description"] for row in rows}
 
-    def save_account(self, cont: str, description: str) -> None:
+    def save_account(self, cont: str, description: str, kind: str = RECEIVED) -> None:
         with self._conn:
             self._conn.execute(
-                "INSERT INTO accounts (cont, description) VALUES (?, ?) "
+                f"INSERT INTO {_ACCOUNT_TABLES[kind]} (cont, description) VALUES (?, ?) "
                 "ON CONFLICT(cont) DO UPDATE SET description = excluded.description",
                 (cont, description),
             )
 
-    def delete_account(self, cont: str) -> None:
+    def delete_account(self, cont: str, kind: str = RECEIVED) -> None:
         with self._conn:
-            cursor = self._conn.execute("DELETE FROM accounts WHERE cont = ?", (cont,))
+            cursor = self._conn.execute(f"DELETE FROM {_ACCOUNT_TABLES[kind]} WHERE cont = ?", (cont,))
         if cursor.rowcount == 0:
             raise EfacturaError(NOT_FOUND, f"No account {cont} in the list.")
 
@@ -761,13 +806,17 @@ class Store:
             raise EfacturaError(NOT_FOUND, f"No rule with id {rule_id}.")
 
     def move_rule(self, rule_id: int, up: bool) -> None:
-        """Swap the rule with its neighbour in the checking order; at the end it stays."""
-        ids = [row["id"] for row in self._conn.execute("SELECT id FROM rules ORDER BY position, id")]
+        """Swap the rule with its neighbour of the same kind (received or issued) in the
+        checking order; at the end of its kind it stays."""
+        rows = list(self._conn.execute("SELECT id, direction FROM rules ORDER BY position, id"))
+        ids = [row["id"] for row in rows]
         if rule_id not in ids:
             raise EfacturaError(NOT_FOUND, f"No rule with id {rule_id}.")
         here = ids.index(rule_id)
-        there = here - 1 if up else here + 1
-        if 0 <= there < len(ids):
+        kin = [index for index, row in enumerate(rows) if row["direction"] == rows[here]["direction"]]
+        place = kin.index(here) + (-1 if up else 1)
+        if 0 <= place < len(kin):
+            there = kin[place]
             ids[here], ids[there] = ids[there], ids[here]
         with self._conn:
             self._conn.executemany(

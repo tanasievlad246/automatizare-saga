@@ -113,6 +113,8 @@ class Rulebook:
     rules: tuple[Rule, ...]  # in the order they are checked
     instructions: str  # the question put to Jev about a whole invoice
     line_instructions: str = ""  # the question about one line; empty: the default one
+    # For the invoices the client issued: Jev is told neither party, and asked what was sold.
+    issued: bool = False
 
     def rule_for(self, subject: Subject) -> Rule | None:
         # Most invoices match no rule at all. One look settles that, instead of one per rule.
@@ -156,6 +158,13 @@ EXAMPLE_ACCOUNTS = {
     "628": "Alte servicii prestate de terți care nu au un cont propriu în această listă.",
 }
 
+# For the invoices a client issued itself: what it sold.
+EXAMPLE_ISSUED_ACCOUNTS = {
+    "701": "Vânzarea produselor finite, făcute de client.",
+    "704": "Servicii prestate și lucrări executate.",
+    "707": "Vânzarea mărfurilor cumpărate pentru a fi revândute.",
+}
+
 EXAMPLE_RULES = (
     {"name": "combustibil", "cont": "6022", "keywords": ["motorina", "benzina", "gpl auto"]},
     {"name": "telecom", "cont": "626", "keywords": ["abonament telefon*", "internet"]},
@@ -174,4 +183,19 @@ DEFAULT_JEV_LINE_INSTRUCTIONS = (
     "Hotărăște după ce s-a cumpărat pe linie (descrierea, codurile și unitatea de măsură); "
     "numele furnizorului este doar context. Dacă niciun cont din listă nu se potrivește cu "
     "ceea ce s-a cumpărat pe această linie, alege varianta care spune acest lucru."
+)
+
+DEFAULT_JEV_ISSUED_INSTRUCTIONS = (
+    "Pe ce cont de venituri se înregistrează această factură emisă de client? "
+    "Toate liniile facturii primesc același cont. Hotărăște după linia cu valoarea cea mai "
+    "mare (numărul ei este în linia_cu_valoarea_cea_mai_mare); celelalte linii sunt doar context. "
+    "Dacă niciun cont din listă nu se potrivește cu ceea ce s-a vândut, alege varianta care "
+    "spune acest lucru."
+)
+
+DEFAULT_JEV_ISSUED_LINE_INSTRUCTIONS = (
+    "Pe ce cont de venituri se înregistrează această linie a unei facturi emise de client? "
+    "Hotărăște după ce s-a vândut pe linie (descrierea, codurile și unitatea de măsură). "
+    "Dacă niciun cont din listă nu se potrivește cu ceea ce s-a vândut pe această linie, "
+    "alege varianta care spune acest lucru."
 )
