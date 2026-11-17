@@ -41,7 +41,9 @@ export type Invoice = {
   invoice_number: string | null
   invoice_issue_date: string | null
   supplier_name: string | null
+  supplier_cui: string | null
   customer_name: string | null
+  customer_cui: string | null
   currency: string | null
   total_with_vat: string | null // what the invoice is worth: this is the "Total" of every list
   total_payable: string | null // what is left to pay: more with an earlier balance, less with an advance

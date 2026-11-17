@@ -8,6 +8,7 @@ import { PillTabs } from '@/components/PillTabs'
 import { api } from '../api'
 import { errorMessage } from '../errorMessages'
 import { formatDate, formatMoney } from '../format'
+import { placeOf } from '../listPlace'
 import { ProposedRuleCard } from '../rules/ProposedRuleCard'
 import { AccountCard } from './AccountCard'
 import { InvoiceStateBadges } from './InvoiceStateBadges'
@@ -38,7 +39,7 @@ export function InvoicePage() {
   const perLine = useQuery({ queryKey: ['clients'], queryFn: api.clients }).data?.clients.find((each) => each.cui === cui)?.per_line ?? false
 
   const back = (
-    <Link to={`/clienti/${cui}`} className="inline-flex min-h-11 items-center gap-1.5 self-start font-semibold no-underline">
+    <Link to={placeOf(`/clienti/${cui}`)} className="inline-flex min-h-11 items-center gap-1.5 self-start font-semibold no-underline">
       <ChevronLeft aria-hidden className="size-5" />
       Facturile clientului {view?.client_name ?? `cu CUI ${cui}`}
     </Link>

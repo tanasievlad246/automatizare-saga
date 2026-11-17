@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { searchClients, shownLine } from './clientSearch'
+import { byName, searchClients, shownLine } from './clientSearch'
 
 const ALFA = { name: 'Alfa Construct SRL', cui: '12345674' }
 const BRUTARIA = { name: 'Brutăria Soarelui SRL', cui: '14399840' }
@@ -72,5 +72,13 @@ describe('the line under the search field', () => {
 
   it('says nothing while every client is seen', () => {
     expect(shownLine(14, 14)).toBeNull()
+  })
+})
+
+describe('the order of the client list', () => {
+  it('goes by name as Romanian is ordered, so a name with Ș, Ț, Ă or Î is not put after Z', () => {
+    const listed = [{ name: 'Zeta SRL', cui: '1' }, { name: 'Țesătoria SRL', cui: '2' }, { name: 'Ăla Bun SRL', cui: '3' }, { name: 'beta SRL', cui: '4' }]
+    expect(byName(listed).map((client) => client.name)).toEqual(['Ăla Bun SRL', 'beta SRL', 'Țesătoria SRL', 'Zeta SRL'])
+    expect(listed[0].name).toBe('Zeta SRL') // the list given is left as it was
   })
 })

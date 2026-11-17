@@ -27,8 +27,10 @@ const queryClient = new QueryClient({
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      {/* Addresses after "#" never reach the server, so the page works from one file. */}
-      <HashRouter>
+      {/* Addresses after "#" never reach the server, so the page works from one file.
+          The address changes at once, not a moment later: the fields above the lists show what
+          the address holds, and a date typed by hand would be wiped while the address lagged. */}
+      <HashRouter useTransitions={false}>
         <Routes>
           <Route element={<AppShell />}>
             <Route index element={<ClientsPage />} />

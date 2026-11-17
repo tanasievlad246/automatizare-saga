@@ -1,23 +1,31 @@
 import { useQuery } from '@tanstack/react-query'
 import { Download } from 'lucide-react'
-import { useRef, useState } from 'react'
-import { Link } from 'react-router'
+import { useEffect, useRef, useState } from 'react'
+import { Link, useSearchParams } from 'react-router'
 import { Notice } from '@/components/Notice'
 import { PageTitle } from '@/components/PageTitle'
+import { Pager } from '@/components/Pager'
+import { pageFrom, pageOf, rangeLine } from '@/components/paging'
+import { scrollBelowHeader } from '@/components/scrollBelowHeader'
 import { Button } from '@/components/ui/button'
 import { api } from '../api'
 import { errorMessage } from '../errorMessages'
 import { countOf } from '../format'
+import { rememberPlace } from '../listPlace'
+import { searchWords } from '../textSearch'
 import { runningLine } from '../schedule/scheduleTexts'
 import { useSchedule } from '../schedule/useSchedule'
 import type { Client } from '../types'
 import { AddClientDialog } from './AddClientDialog'
 import { ClientRow } from './ClientRow'
 import { ClientSearchField } from './ClientSearchField'
-import { searchClients, shownLine } from './clientSearch'
+import { byName, searchClients, shownLine } from './clientSearch'
 import { ImportClientsDialog } from './ImportClientsDialog'
 import { SyncDialog } from './SyncDialog'
 import { switchedOffLine, switchedOn } from './switchedOff'
+
+/** How many clients one page holds. */
+const CLIENTS_PER_PAGE = 20
 
 /** The first screen: every client, what is new for each, and the button that downloads. */
 export function ClientsPage() {
@@ -30,11 +38,24 @@ export function ClientsPage() {
   const [importing, setImporting] = useState(false)
   const [adding, setAdding] = useState(false)
   // What is typed in the search field narrows the rows shown, nothing else: the counts and the
-  // download for all clients are still about every client.
-  const [typed, setTyped] = useState('')
+  // download for all clients are still about every client. The search and the page are kept in
+  // the address, so "‹ Toți clienții" on a client's screen comes back to them.
+  const [search, setSearch] = useSearchParams()
+  const typed = search.get('cauta') ?? ''
+  const setTyped = (text: string) => setSearch(text ? { cauta: text } : {}, { replace: true }) // a new search starts at its first page
+  useEffect(() => rememberPlace('/', search.toString()), [search])
   const searchField = useRef<HTMLInputElement>(null)
-  const found = searchClients(clients, typed)
+  const listTop = useRef<HTMLDivElement>(null)
+  const found = searchClients(byName(clients), typed)
   const seen = shownLine(found.length, clients.length)
+  const page = pageOf(found, pageFrom(search.get('pagina')), CLIENTS_PER_PAGE)
+  const turnPage = (to: number) => {
+    const next = new URLSearchParams(search)
+    if (to === 1) next.delete('pagina')
+    else next.set('pagina', String(to))
+    setSearch(next, { replace: true })
+    scrollBelowHeader(listTop.current)
+  }
   const showAll = () => {
     setTyped('')
     // The button pressed goes away with the search: the focus goes back to the field.
@@ -103,7 +124,7 @@ export function ClientsPage() {
       )}
 
       {clients.length > 0 && (
-        <div className="flex flex-col gap-3">
+        <div ref={listTop} className="flex flex-col gap-3">
           <ClientSearchField ref={searchField} value={typed} onChange={setTyped} />
           {found.length === 0 ? (
             <div className="rounded-2xl border bg-card px-6 py-5.5">
@@ -122,9 +143,15 @@ export function ClientsPage() {
               </div>
             )
           )}
-          {found.map((client) => (
+          {page.items.map((client) => (
             <ClientRow key={client.cui} client={client} blocked={running !== null} onSync={() => setClientsToSync([client])} />
           ))}
+          <Pager
+            page={page}
+            label="Paginile listei de clienți"
+            line={rangeLine(page, { one: 'Clientul', many: 'Clienții' }, searchWords(typed).length ? 'găsiți' : undefined)}
+            onPage={turnPage}
+          />
         </div>
       )}
 

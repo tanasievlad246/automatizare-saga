@@ -14,25 +14,6 @@ export function issuedSummary(count: number): string {
     : `Programul a descărcat și ${countOf(count, 'o factură emisă', 'facturi emise')} de acest client. Ele nu primesc cont și nu se scriu pentru SAGA; le puteți doar vedea.`
 }
 
-/** How many issued invoices are listed at first. A client can have thousands; that many rows stall the page. */
-export const MOST_ISSUED_SHOWN = 200
-
-/** The newest on top: by the date on the invoice, then by ANAF's number for it. One without a date goes last. */
-export function newestFirst(invoices: Invoice[]): Invoice[] {
-  return [...invoices].sort(
-    (one, other) =>
-      (other.invoice_issue_date ?? '').localeCompare(one.invoice_issue_date ?? '') ||
-      other.id.localeCompare(one.id, undefined, { numeric: true }),
-  )
-}
-
-/** Said under the list while it holds only the newest; null when all of them are on screen. */
-export function notAllShown(total: number): string | null {
-  return total > MOST_ISSUED_SHOWN
-    ? `Se văd cele mai noi ${MOST_ISSUED_SHOWN} din ${countOf(total, 'o factură emisă', 'facturi emise')}.`
-    : null
-}
-
 /** What stands in place of the received invoices when a client has none. */
 export function whenNoneReceived(everDownloaded: boolean): string {
   return everDownloaded
