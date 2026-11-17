@@ -1,5 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { Notice } from '@/components/Notice'
+import { WaitingSpinner } from '@/components/WaitingSpinner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { api } from '../api'
@@ -62,9 +63,9 @@ export function UpdateDialog({ status, onClose }: { status: UpdateStatus; onClos
                 Nu închideți această pagină. Durează de obicei un minut.
               </DialogDescription>
             </DialogHeader>
-            <p className="text-muted-foreground">Această fereastră se schimbă singură când programul este gata.</p>
-            <div aria-hidden className="h-2.5 overflow-hidden rounded-full bg-muted">
-              <div className="h-full w-2/5 animate-pulse rounded-full bg-primary" />
+            <div className="flex items-center gap-4">
+              <WaitingSpinner />
+              <p className="text-muted-foreground">Această fereastră se schimbă singură când programul este gata.</p>
             </div>
           </>
         )}

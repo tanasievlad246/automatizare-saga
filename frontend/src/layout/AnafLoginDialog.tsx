@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { ErrorNotice } from '@/components/ErrorNotice'
 import { Notice } from '@/components/Notice'
+import { WaitingSpinner } from '@/components/WaitingSpinner'
 import { ApiError, api } from '../api'
 import { errorDetail, showError } from '../errorMessages'
 import { nextView, openingView } from './certificateLogin'
@@ -125,11 +126,11 @@ export function AnafLoginDialog({ open, onClose }: { open: boolean; onClose: () 
                 Alegeți certificatul în fereastra Windows, apoi scrieți PIN-ul.
               </DialogDescription>
             </DialogHeader>
-            <p className="text-muted-foreground">
-              Fereastra poate fi în spatele browserului. Dacă nu o vedeți, uitați-vă în bara de jos a ecranului.
-            </p>
-            <div aria-hidden className="h-2.5 overflow-hidden rounded-full bg-muted">
-              <div className="h-full w-2/5 animate-pulse rounded-full bg-primary" />
+            <div className="flex items-center gap-4">
+              <WaitingSpinner />
+              <p className="text-muted-foreground">
+                Fereastra poate fi în spatele browserului. Dacă nu o vedeți, uitați-vă în bara de jos a ecranului.
+              </p>
             </div>
             <Button size="lg" variant="outline" className="w-fit justify-self-start" onClick={() => go({ type: 'giveUp' })}>
               Renunță
