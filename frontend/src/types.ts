@@ -134,6 +134,7 @@ export type InvoiceView = {
 export type RuleSuggestion = {
   cont: string
   line: string // the invoice's largest line, where the words come from
+  from_line?: number // in "Testează regulile": the number of the line the words come from
   words: string[]
   ticked: string[] // the words to start with
   supplier_cui: string | null
@@ -306,17 +307,76 @@ export type TrialJev = {
   duration_ms: number | null
   error: string | null
   http_status: number | null // what OpenRouter answered; null when it was not reached
+  // What left the program: the question, and the invoice or line it was about, as sent.
+  sent: { question: string; state: JevState }
+}
+
+/** What Jev is told about a trial invoice (`linii`) or about one of its lines (`linia`). */
+export type JevState = {
+  furnizor?: { nume: string | null; cui: string | null } // null when the trial left them blank
+  factura: { tip: string; moneda: string; total_fara_tva?: string | null }
+  linia?: JevLine
+  linii?: JevLine[]
+  linia_cu_valoarea_cea_mai_mare?: number | null
+  linii_omise?: number
+}
+export type JevLine = {
+  nr: number; descriere: string; cod_furnizor?: string; coduri_clasificare?: string[]; um?: string
+  cantitate?: string; valoare_fara_tva?: string; cota_tva?: string
+}
+
+/** The rule that decided, which of its conditions the line meets, and what else would have matched. */
+export type TrialRule = {
+  name: string
+  line: number
+  condition: 'supplier_cui' | 'seller_code' | 'barcode' | 'commodity_code' | 'keyword' | null
+  found: string | null // the CUI, the code on the line, or the keyword as the rule has it
+  prefix: string | null // for a classification code: the start the rule names
+  client_only: boolean
+  also: string[] // rules further down the list that match too
+}
+
+export type TrialWhyNot =
+  | 'no_lines' | 'no_key' | 'no_accounts' | 'jev_failed' | 'jev_declined' | 'below_threshold'
+  | 'lines_left' // line by line: the largest line has its account, another line waits
+  | 'not_asked' // line by line: not sent, as OpenRouter failed as a whole on an earlier line
+  | null
+
+/** One line of the trial invoice, and how it was decided. */
+export type TrialLineAnswer = {
+  line: number
+  description: string
+  value: string
+  decided_by: 'rule' | 'jev' | 'follows' | 'nobody'
+  cont: string | null
+  account_description: string | null
+  rule: TrialRule | null
+  jev: TrialJev | null // missing too when Jev failed because the request was too large to send
+  why_not: TrialWhyNot
+  reason: string // the program's English line
+  follows: number | null // the largest line, whose account a discount takes
+  same_as: number | null // the earlier line that says the same; Jev was asked once, about that one
 }
 
 export type RuleTestResult = {
+  per_line: boolean // each line on its own; otherwise one account, by the largest line
+  lines: TrialLineAnswer[] // every line; for one account per invoice, only the line that decides
+  // The invoice as the program keeps it: line by line, the largest line's, with an account
+  // only once every line has one.
   decided_by: 'rule' | 'jev' | 'nobody'
   cont: string | null
   account_description: string | null
   deciding_line: string | null
-  rule: { name: string; line: number } | null
-  jev: TrialJev | null // missing too when Jev failed because the request was too large to send
-  why_not: 'no_lines' | 'no_key' | 'no_accounts' | 'jev_failed' | 'jev_declined' | 'below_threshold' | null
+  rule: TrialRule | null
+  jev: TrialJev | null
+  why_not: TrialWhyNot
   reason: string // the program's English line
+  waiting?: number // line by line: how many lines have no account
+  accounts: Record<string, string> // what Jev chose from: account -> what belongs on it
+  jev_calls: number
+  cost_usd: number | null
+  // OpenRouter failed as a whole (key, credit, rate limit, no connection) and nothing more was sent.
+  jev_stopped?: { line: number; http_status: number | null; error: string } | null
   suggestion: RuleSuggestion | null
 }
 

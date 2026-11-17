@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from functools import cached_property
 
 CONDITIONS = ("keywords", "item_codes", "commodity_prefixes", "supplier_cuis")
@@ -66,6 +66,15 @@ class Subject:
 
 
 @dataclass(frozen=True)
+class RuleMatch:
+    """Which condition of a rule a line meets, and with what."""
+
+    condition: str  # supplier_cui, seller_code, barcode, commodity_code or keyword
+    found: str  # the supplier's CUI, the code on the line, or the keyword as the rule has it
+    prefix: str | None = None  # for a classification code: the start of it the rule names
+
+
+@dataclass(frozen=True)
 class Rule:
     name: str
     cont: str
@@ -73,6 +82,9 @@ class Rule:
     item_codes: tuple[str, ...] = ()
     commodity_prefixes: tuple[str, ...] = ()
     supplier_cuis: tuple[str, ...] = ()
+    # The client the rule is for; None: every client. Only said, never matched on: the
+    # rulebook of a client already holds just the rules that apply to it.
+    client_cui: str | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         # A lone string is one entry, not its letters; an empty entry would match every line.
@@ -94,6 +106,24 @@ class Rule:
         if any(code.startswith(self.commodity_prefixes) for code in subject.commodity_codes):
             return True
         return bool(self._any_keyword and self._any_keyword.search(subject.text))
+
+    def match(self, subject: Subject) -> RuleMatch | None:
+        """Why the rule matches: the first condition that holds, checked in the order
+        `matches` checks them; None when it does not match."""
+        if self.supplier_cuis and subject.supplier_cui in self.supplier_cuis:
+            return RuleMatch("supplier_cui", subject.supplier_cui)
+        for condition, code in (("seller_code", subject.seller_code), ("barcode", subject.barcode)):
+            if self.item_codes and code in self.item_codes:
+                return RuleMatch(condition, code)
+        for code in subject.commodity_codes:
+            prefix = next((prefix for prefix in self.commodity_prefixes if code.startswith(prefix)), None)
+            if prefix is not None:
+                return RuleMatch("commodity_code", code, prefix)
+        keyword = next((
+            keyword for keyword in self.keywords
+            if re.search(rf"(?<!\w){_keyword_regex(keyword)}", subject.text)
+        ), None)
+        return RuleMatch("keyword", keyword) if keyword is not None else None
 
     @cached_property
     def _any_keyword(self) -> re.Pattern | None:
@@ -121,6 +151,12 @@ class Rulebook:
         if not self._rules_together.matches(subject):
             return None
         return next((rule for rule in self.rules if rule.matches(subject)), None)
+
+    def rules_for(self, subject: Subject) -> list[Rule]:
+        """Every rule that matches, in the order they are checked: the first decides."""
+        if not self._rules_together.matches(subject):
+            return []
+        return [rule for rule in self.rules if rule.matches(subject)]
 
     @cached_property
     def _rules_together(self) -> Rule:

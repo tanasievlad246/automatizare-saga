@@ -3,7 +3,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import type { Client, TrialAsk, TrialInvoice, TrialLine } from '../../types'
-import { EMPTY, changeLine } from './trialInvoice'
+import { EMPTY, changeLine, clientNote } from './trialInvoice'
 
 /** Where the trial invoice starts from: one of the four choices the person is given. */
 export type StartFrom = 'empty' | 'saved' | 'materiale' | 'combustibil'
@@ -61,7 +61,7 @@ export function TrialInvoiceForm({
               <NativeSelectOption key={client.cui} value={client.cui}>{client.name}</NativeSelectOption>
             ))}
           </NativeSelect>
-          <p className="text-[0.9rem] text-muted-foreground">Unele reguli sunt doar pentru un client.</p>
+          <p className="text-[0.9rem] text-muted-foreground">{clientNote(clients.find((client) => client.cui === trial.clientCui))}</p>
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="trial-supplier">Furnizorul</Label>
@@ -104,7 +104,7 @@ export function TrialInvoiceForm({
         )}
       </div>
 
-      <Button variant="link" className="self-start px-0" aria-expanded={codesShown} onClick={() => onCodesShown(!codesShown)}>
+      <Button variant="link" className="h-auto min-h-11 shrink self-start whitespace-normal px-0 text-left" aria-expanded={codesShown} onClick={() => onCodesShown(!codesShown)}>
         {codesShown ? '⌄' : '›'} Coduri de pe factură (codul furnizorului, cod de bare, cod CPV sau NC)
       </Button>
 

@@ -60,8 +60,200 @@ def test_a_rule_that_fits_decides_and_jev_is_not_asked(desk, openrouter):
     result = desk.test_rules(lines=MOTORINA, supplier_name="Rompetrol", supplier_cui="1860712")
 
     assert (result["decided_by"], result["cont"], result["account_description"]) == ("rule", "6022", "Combustibil")
-    assert result["rule"] == {"name": "combustibil", "line": 1} and result["deciding_line"] == "Motorina Euro 5"
+    assert result["rule"] == {
+        "name": "combustibil", "line": 1, "condition": "keyword", "found": "motorina", "prefix": None,
+        "client_only": False, "also": [],
+    }
+    assert result["deciding_line"] == "Motorina Euro 5"
     assert result["jev"] is None and result["suggestion"] is None and openrouter.requests == []
+    # One line is one account, as for any client: the answer is that line.
+    assert result["per_line"] is False and [entry["line"] for entry in result["lines"]] == [1]
+
+
+# --- line by line, as the program decides a client's invoices since 0.9.0 -------------
+
+FOUR_LINES = [
+    {"description": "Motorina Euro 5", "quantity": "100", "unit_price": "7,20"},  # 720, the largest
+    {"description": "Ciment Portland 40 kg", "quantity": "20", "unit_price": "28,50"},  # 570
+    {"description": "Consultanta tehnica", "quantity": "1", "unit_price": "400"},
+    {"description": "Discount comercial", "quantity": "1", "unit_price": "-50"},
+]
+
+
+def test_without_a_client_each_line_is_decided_on_its_own_and_says_why(desk, openrouter):
+    result = desk.test_rules(lines=FOUR_LINES, supplier_name="Dedeman SRL", supplier_cui="2816464")
+
+    assert result["per_line"] is True
+    by_line = {entry["line"]: entry for entry in result["lines"]}
+    assert [(entry["decided_by"], entry["cont"]) for entry in result["lines"]] == [
+        ("rule", "6022"), ("jev", "302"), ("nobody", None), ("follows", "6022"),
+    ]
+    assert (by_line[1]["rule"]["name"], by_line[1]["rule"]["found"]) == ("combustibil", "motorina")
+    assert (by_line[1]["description"], by_line[1]["value"]) == ("Motorina Euro 5", "720.00")
+    assert (by_line[2]["jev"]["choice"], by_line[2]["jev"]["confidence"], by_line[2]["account_description"]) == (
+        "302", 0.93, "Materiale consumabile")
+    assert (by_line[3]["why_not"], by_line[3]["jev"]["choice"]) == ("below_threshold", "628")
+    assert (by_line[4]["follows"], by_line[4]["jev"], by_line[4]["account_description"]) == (1, None, "Combustibil")
+    # Jev is asked about the two lines no rule decided, once each, with the question for one line.
+    assert [request["state"]["linia"]["descriere"] for request in openrouter.requests] == [
+        "Ciment Portland 40 kg", "Consultanta tehnica"]
+    assert (result["waiting"], result["jev_calls"], result["cost_usd"]) == (1, 2, pytest.approx(0.00004))
+    # The invoice as a whole, as the program keeps it: its largest line's, and an account only
+    # once every line has one.
+    assert (result["decided_by"], result["cont"], result["why_not"]) == ("nobody", None, "lines_left")
+    assert result["accounts"]["302"] == "Materiale consumabile"
+
+
+def test_a_client_with_one_account_per_invoice_is_tried_the_old_way(desk, openrouter):
+    desk.save_client(VALID_CUI, "Alfa Construct SRL")
+    desk.set_client_per_line(VALID_CUI, False)
+
+    result = desk.test_rules(lines=FOUR_LINES, client_cui=VALID_CUI)
+
+    assert result["per_line"] is False and (result["decided_by"], result["cont"]) == ("rule", "6022")
+    assert [entry["line"] for entry in result["lines"]] == [1] and openrouter.requests == []
+
+
+def test_a_client_switched_to_line_by_line_is_tried_line_by_line(desk):
+    desk.save_client(VALID_CUI, "Alfa Construct SRL")
+
+    assert desk.test_rules(lines=FOUR_LINES, client_cui=VALID_CUI)["per_line"] is True
+
+
+def test_lines_that_say_the_same_thing_put_one_question_to_jev(desk, openrouter):
+    twice = [CIMENT[0], {**CIMENT[0], "quantity": "3"}]
+
+    result = desk.test_rules(lines=twice)
+
+    assert len(openrouter.requests) == 1 and result["jev_calls"] == 1
+    assert [(entry["cont"], entry["same_as"]) for entry in result["lines"]] == [("302", None), ("302", 1)]
+    (call,) = desk.jev_calls()["calls"]
+    assert call["message_id"] == RULE_TEST
+
+
+def test_what_jev_was_sent_comes_back_with_its_answer(desk):
+    result = desk.test_rules(lines=FOUR_LINES, supplier_name="Dedeman SRL", supplier_cui="2816464")
+
+    sent = result["lines"][1]["jev"]["sent"]
+    assert sent["question"].startswith("Pe ce cont contabil se înregistrează această linie")
+    assert sent["state"]["furnizor"] == {"nume": "Dedeman SRL", "cui": "2816464"}
+    assert (sent["state"]["linia"]["descriere"], sent["state"]["linia"]["valoare_fara_tva"]) == ("Ciment Portland 40 kg", "570.00")
+    # The whole-invoice question, for a client with one account per invoice, comes back the same way.
+    whole = desk.test_rules(lines=CIMENT)["jev"]["sent"]
+    assert whole["question"] == "Alege contul facturii." and whole["state"]["linii"][0]["descriere"] == "Ciment Portland 40 kg"
+
+
+def test_the_ways_jev_can_leave_a_line_without_an_account_can_be_told_apart(desk, openrouter):
+    openrouter.answer_for("nimic", "altul", confidence=0.72, probabilities_extra={"628": 0.18})
+    openrouter.answer_for("refuz", "", refusal=True)
+    openrouter.answer_for("nesigur", "628", confidence=None)
+    lines = [{"description": f"{word} de facturat", "quantity": "1", "unit_price": "10"} for word in ("nimic", "refuz", "nesigur")]
+
+    none_fits, refused, unsure = desk.test_rules(lines=lines)["lines"]
+
+    assert none_fits["why_not"] == "jev_declined" and none_fits["jev"]["choice"] is None
+    assert none_fits["jev"]["probabilities"] == {"altul": 0.72, "628": 0.18}
+    assert refused["jev"]["refused"] is True and refused["jev"]["probabilities"] == {}
+    assert (unsure["jev"]["choice"], unsure["jev"]["confidence"], unsure["why_not"]) == ("628", None, "jev_declined")
+
+
+def test_a_rule_says_which_condition_matched_and_what_else_would_have(desk):
+    desk.save_client(VALID_CUI, "Alfa Construct SRL")
+    desk.save_rule(name="Dedeman", cont="371", supplier_cuis=["2816464"])
+    desk.save_rule(name="ciment", cont="302", item_codes=["10023"], client_cui=VALID_CUI)
+    desk.save_rule(name="carburanti", cont="6022", commodity_prefixes=["2710"])
+    lines = [
+        {"description": "Ciment", "quantity": "1", "unit_price": "100", "seller_code": "10023"},
+        {"description": "Aditiv", "quantity": "1", "unit_price": "50", "commodity_codes": ["27101943"]},
+    ]
+
+    first, second = desk.test_rules(lines=lines, client_cui=VALID_CUI, supplier_cui="2816464")["lines"]
+
+    # The client's own rules are checked first.
+    assert {key: first["rule"][key] for key in ("name", "condition", "found", "client_only", "also")} == {
+        "name": "ciment", "condition": "seller_code", "found": "10023", "client_only": True, "also": ["Dedeman"]}
+    assert (second["rule"]["name"], second["rule"]["condition"]) == ("Dedeman", "supplier_cui")
+    assert second["rule"]["also"] == ["carburanti"]
+
+
+def test_without_a_key_the_lines_a_rule_decides_still_get_their_account(tmp_path):
+    no_key = Service(settings(tmp_path, key=""), http=FakeAnaf().client(), now=lambda: NOW)
+    set_rulebook(no_key.cfg.db_path, Rulebook(
+        accounts={"6022": "Combustibil"}, rules=(Rule("combustibil", "6022", keywords=("motorina",)),), instructions="."))
+
+    fuel, cement, *_ = no_key.test_rules(lines=FOUR_LINES)["lines"]
+
+    assert (fuel["decided_by"], fuel["cont"]) == ("rule", "6022")
+    assert (cement["decided_by"], cement["why_not"], cement["jev"]) == ("nobody", "no_key", None)
+
+
+def test_asking_jev_directly_skips_the_rules_on_every_line_but_a_discount_still_follows(desk, openrouter):
+    result = desk.test_rules(lines=FOUR_LINES, ask="jev_only")
+
+    assert [entry["decided_by"] for entry in result["lines"]] == ["jev", "jev", "nobody", "follows"]
+    assert len(openrouter.requests) == 3 and result["lines"][3]["cont"] == "628"  # the default answer, on line 1
+
+
+def test_a_line_jev_cannot_answer_is_told_and_the_others_keep_theirs(desk, openrouter):
+    openrouter.fail_for = {"consultanta": 500}
+
+    result = desk.test_rules(lines=FOUR_LINES)
+
+    assert [entry["why_not"] for entry in result["lines"]] == [None, None, "jev_failed", None]
+    assert result["lines"][2]["jev"]["http_status"] == 500 and result["lines"][1]["cont"] == "302"
+
+
+THREE_ITEMS = [{"description": f"Articol {word}", "quantity": "1", "unit_price": "10"} for word in ("unu", "doi", "trei")]
+
+
+@pytest.mark.parametrize("failure", [401, 402, 429, 503, "unreachable"])
+def test_once_openrouter_fails_as_a_whole_the_lines_left_are_not_sent(desk, openrouter, failure):
+    # As the program does: it stops at such a failure and the invoice waits to be tried again.
+    openrouter.fail_with = [failure]
+
+    result = desk.test_rules(lines=THREE_ITEMS)
+
+    assert len(openrouter.requests) == 1 and result["jev_calls"] == 1
+    assert [entry["why_not"] for entry in result["lines"]] == ["jev_failed", "not_asked", "not_asked"]
+    assert [entry["jev"] is None for entry in result["lines"]] == [False, True, True]
+    assert result["jev_stopped"] == {"line": 1, "http_status": None if failure == "unreachable" else failure,
+                                     "error": result["lines"][0]["jev"]["error"]}
+
+
+def test_a_failure_about_one_line_alone_does_not_stop_the_others(desk, openrouter):
+    openrouter.fail_for = {"unu": 400}
+
+    result = desk.test_rules(lines=THREE_ITEMS)
+
+    assert [entry["why_not"] for entry in result["lines"]] == ["jev_failed", None, None]
+    assert result["jev_calls"] == 3 and result["jev_stopped"] is None
+
+
+def test_with_the_rules_skipped_the_reason_does_not_speak_of_rules(tmp_path):
+    no_key = Service(settings(tmp_path, key=""), http=FakeAnaf().client(), now=lambda: NOW)
+    set_rulebook(no_key.cfg.db_path, Rulebook(accounts={"302": "Materiale"}, rules=(), instructions="."))
+
+    by_line = no_key.test_rules(lines=THREE_ITEMS, ask="jev_only")["lines"][0]["reason"]
+    whole = no_key.test_rules(lines=CIMENT, ask="jev_only")["reason"]
+
+    assert by_line.startswith("The rules were skipped, and OpenRouter is not set up")
+    assert whole.startswith("The rules were skipped, and OpenRouter is not set up")
+
+
+def test_the_rule_proposed_comes_from_a_line_jev_gave_an_account(desk):
+    result = desk.test_rules(lines=FOUR_LINES, supplier_name="Dedeman SRL", supplier_cui="2816464")
+
+    # Of the two lines Jev answered, the larger: "Ciment" (570), not "Consultanta" (400).
+    assert (result["suggestion"]["cont"], result["suggestion"]["line"], result["suggestion"]["from_line"]) == (
+        "302", "Ciment Portland 40 kg", 2)
+
+
+def test_a_trial_line_by_line_is_one_line_in_the_journal(cfg, desk):
+    desk.test_rules(lines=FOUR_LINES)
+
+    (tested,) = [line for line in journal.events(cfg.db_path)["events"] if line["event"] == "rule.tested"]
+    assert tested["data"]["asked_jev"] is True and tested["data"]["cost_usd"] == pytest.approx(0.00004)
+    assert "4 lines" in tested["message"]
 
 
 def test_with_no_rule_fitting_jev_is_asked_and_its_account_stands(desk, openrouter):
@@ -121,9 +313,11 @@ def test_a_value_carried_with_a_line_is_its_value_and_decides_which_line_counts(
         {"description": "Motorina Euro 5", "quantity": "1", "unit_price": "600", "value": "600.00"},
     ]
     api = TestClient(create_app(cfg, service_factory=lambda cfg: desk))
+    desk.save_client(VALID_CUI, "Alfa Construct SRL")
+    desk.set_client_per_line(VALID_CUI, False)  # one account per invoice: decided by its largest line
 
-    desk.test_rules(lines=lines, ask="jev_only")
-    reply = api.post("/rules/test", headers=KEY, json={"lines": lines}).json()  # the route closes the service
+    desk.test_rules(lines=lines, ask="jev_only", client_cui=VALID_CUI)
+    reply = api.post("/rules/test", headers=KEY, json={"lines": lines, "client_cui": VALID_CUI}).json()  # the route closes the service
 
     assert (reply["decided_by"], reply["deciding_line"], reply["rule"]["line"]) == ("rule", "Motorina Euro 5", 2)
     asked = openrouter.requests[-1]["state"]

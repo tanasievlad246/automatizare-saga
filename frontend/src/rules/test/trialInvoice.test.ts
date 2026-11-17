@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError } from '../../api'
 import { errorMessage } from '../../errorMessages'
-import { EMPTY, EXAMPLES, REFUSED_HERE, changeLine, fromDocument, hasCodes, toRequest } from './trialInvoice'
+import { EMPTY, EXAMPLES, REFUSED_HERE, changeLine, clientNote, fromDocument, hasCodes, linesRead, toRequest } from './trialInvoice'
 
 const line = (description: string, quantity: string, unitPrice: string) =>
   ({ description, quantity, unitPrice, sellerCode: '', barcode: '', commodityCodes: '', unit: null, vatPercent: null, value: null })
@@ -88,5 +88,21 @@ describe('a trial invoice', () => {
   it('has two examples, each with something on it', () => {
     expect(EXAMPLES.materiale.lines.length).toBeGreaterThan(0)
     expect(EXAMPLES.combustibil.lines[0].description).toMatch(/motorin/i)
+  })
+})
+
+describe('the note under the client', () => {
+  it('says how the chosen client is decided, line by line or by its largest line', () => {
+    expect(clientNote(undefined)).toBe('Fără client, fiecare linie se hotărăște separat, ca la un client nou, și se încearcă doar regulile pentru toți clienții.')
+    expect(clientNote({ name: 'Alfa Construct SRL', per_line: true })).toBe('Alfa Construct SRL are câte un cont pe fiecare linie, deci fiecare linie se hotărăște separat.')
+    expect(clientNote({ name: 'Alfa Construct SRL', per_line: false })).toBe('Alfa Construct SRL are un singur cont pe factură: se hotărăște după linia cu valoarea cea mai mare.')
+  })
+})
+
+describe('the lines the program reads', () => {
+  it('counts only the rows with words on them, as the program drops the others', () => {
+    const trial = { ...EMPTY, lines: [line('Ciment', '1', '2'), line('  ', '3', '4'), line('Motorina', '', '')] }
+
+    expect(linesRead(trial)).toBe(2)
   })
 })

@@ -125,6 +125,8 @@ JEV_ANSWERS = {
     "țeavă": {"choice": "707", "confidence": 0.91},
     # Jev declines: the invoice goes to a person.
     "nimic": {"choice": "", "refusal": True},
+    # Jev finds that none of the accounts fits ("altul"), as "Testează regulile" can show.
+    "cadou": {"choice": "altul", "confidence": 0.72, "probabilities_extra": {"628": 0.18, "302": 0.06}},
 }
 # A word in the invoice line that makes the call itself fail, with this status.
 JEV_FAILS = {"eroare": 500}

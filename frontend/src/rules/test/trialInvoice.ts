@@ -39,6 +39,19 @@ const orNull = (text: string) => (text.trim() === '' ? null : text.trim())
  */
 export const REFUSED_HERE = { invalid_input: 'Cantitatea și prețul se scriu ca numere, de exemplu 20 și 28,50.' }
 
+/** Under the client: how the trial invoice will be decided for it. */
+export function clientNote(client: { name: string; per_line: boolean } | undefined): string {
+  if (!client) return 'Fără client, fiecare linie se hotărăște separat, ca la un client nou, și se încearcă doar regulile pentru toți clienții.'
+  return client.per_line
+    ? `${client.name} are câte un cont pe fiecare linie, deci fiecare linie se hotărăște separat.`
+    : `${client.name} are un singur cont pe factură: se hotărăște după linia cu valoarea cea mai mare.`
+}
+
+/** How many lines the program reads from the trial invoice: a row without words is dropped. */
+export function linesRead(trial: TrialInvoice): number {
+  return trial.lines.filter((row) => !blank(row.description)).length
+}
+
 /** The JSON of `POST /rules/test`. Rows nothing was written on are left out. */
 export function toRequest(trial: TrialInvoice, ask: TrialAsk) {
   const written = trial.lines.filter((row) => !(blank(row.description) && blank(row.quantity) && blank(row.unitPrice)))

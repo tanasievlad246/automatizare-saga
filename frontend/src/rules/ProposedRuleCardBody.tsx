@@ -111,8 +111,8 @@ export function ProposedRuleCardBody({
               ))}
             </div>
             <p className="text-[0.9rem] text-muted-foreground">
-              Regula se potrivește dacă apare oricare dintre cuvintele bifate. Sunt de pe linia cu valoarea cea
-              mai mare a facturii: „{suggestion.line}”.
+              Regula se potrivește dacă apare oricare dintre cuvintele bifate. Sunt de pe{' '}
+              {suggestion.from_line != null ? `linia ${suggestion.from_line}` : 'linia cu valoarea cea mai mare'} a facturii: „{suggestion.line}”.
             </p>
           </div>
         )}

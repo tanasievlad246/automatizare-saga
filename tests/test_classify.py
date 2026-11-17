@@ -111,6 +111,55 @@ def test_a_keyword_that_starts_another_does_not_hide_it():
     assert not rule.matches(Subject(None, "Gazon"))
 
 
+@pytest.mark.parametrize("subject, said", [
+    (Subject("11112222", "Altceva"), ("supplier_cui", "11112222", None)),
+    (Subject("87654321", "Cartus", seller_code="TN-2420"), ("seller_code", "TN-2420", None)),
+    (Subject("87654321", "Cartus", barcode="TN-2420"), ("barcode", "TN-2420", None)),
+    (Subject("87654321", "Hartie", commodity_codes=("12", "30197630")), ("commodity_code", "30197630", "3019")),
+    (Subject("87654321", "MOTORINĂ Euro 5"), ("keyword", "motorina", None)),
+    (Subject("87654321", "Abonament telefonie"), ("keyword", "abonament telefon*", None)),
+])
+def test_a_rule_says_which_of_its_conditions_the_line_meets(subject, said):
+    rule = BOOK.rule_for(subject)
+
+    found = rule.match(subject)
+
+    assert (found.condition, found.found, found.prefix) == said
+
+
+def test_a_rule_says_why_exactly_when_it_matches():
+    rule = Rule("r", "628", keywords=("gaz", "transport*"), item_codes=("A-1",), commodity_prefixes=("09",), supplier_cuis=("1",))
+    for subject in (
+        Subject("1", "x"), Subject("2", "Gaze naturale"), Subject("2", "gaz"), Subject("2", "Transportul"),
+        Subject("2", "x", seller_code="A-1"), Subject("2", "x", commodity_codes=("0913",)), Subject("2", "Gazon"),
+    ):
+        assert (rule.match(subject) is not None) == rule.matches(subject)
+
+
+def test_of_the_supplier_and_a_keyword_the_supplier_is_named_as_the_matching_checks_it_first():
+    rule = Rule("r", "628", keywords=("motorina",), supplier_cuis=("1",))
+
+    assert rule.match(Subject("1", "Motorina")).condition == "supplier_cui"
+
+
+def test_every_rule_that_fits_a_line_is_listed_in_the_order_they_are_checked():
+    book = Rulebook(
+        accounts={}, instructions="",
+        rules=(Rule("a", "111", keywords=("toner",)), Rule("x", "333", keywords=("hartie",)), Rule("b", "222", item_codes=("T-1",))),
+    )
+
+    assert [rule.name for rule in book.rules_for(Subject(None, "Toner negru", seller_code="T-1"))] == ["a", "b"]
+    assert book.rules_for(Subject(None, "Altceva")) == []
+    assert book.rules_for(Subject(None, "Toner"))[0] == book.rule_for(Subject(None, "Toner"))
+
+
+def test_a_rule_knows_whether_it_is_for_one_client_and_compares_as_before():
+    own = Rule("chirie", "612", keywords=("chirie",), client_cui="12345674")
+
+    assert own.client_cui == "12345674" and Rule("chirie", "612", keywords=("chirie",)).client_cui is None
+    assert own == Rule("chirie", "612", keywords=("chirie",))
+
+
 def test_a_subject_survives_being_stored_as_text():
     subject = Subject("11112222", "Motorină Euro 5", "M-1", None, ("09134200", "2710"))
 

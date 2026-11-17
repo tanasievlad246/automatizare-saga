@@ -26,6 +26,7 @@ import httpx
 from . import __version__, auth, certificate_login, jev, journal, saga, schedule
 from .anaf import TYPE_PREFIXES, AnafService, normalize_cui, parse_created_at, type_slug
 from .classify import (
+    QUESTION,
     JevAnswer,
     decide_by_rules,
     deciding_line,
@@ -33,6 +34,7 @@ from .classify import (
     follows_largest,
     jev_line_request,
     jev_request,
+    line_subject,
     read_jev_answer,
     rules_by_line,
     same_question,
@@ -1373,79 +1375,153 @@ class Service:
         ask: str = "rules_then_jev",
     ) -> dict:
         """Classify a made-up invoice the way a received one is, and save nothing but what
-        asking Jev cost. The order of the checks is that of _classify_one."""
+        asking Jev cost. The order of the checks is that of _classify_one: line by line, as
+        for a client with an account per line (and with no client chosen, as for a new one),
+        or by the largest line for a client with one account per invoice."""
         if ask not in TRIAL_ASKS:
             raise EfacturaError(INVALID_INPUT, f"ask must be one of: {', '.join(TRIAL_ASKS)}.")
         client = normalize_cui(client_cui) if client_cui else None
         invoice = _trial_invoice(lines, supplier_name, supplier_cui, currency, credit_note)
-        subject = subject_of(invoice)
         store = self._open_store()
         try:
             # The rules for every client, plus those of the chosen one.
             rulebook = _rulebook_for(store, client)
-            result = self._try_rules_then_jev(store, invoice, rulebook, client, ask == "jev_only")
-            cont = result["cont"] or (result["jev"] or {}).get("choice")
-            if cont and subject and not rulebook.rule_for(subject) and propose(subject, cont):
-                result["suggestion"] = _suggestion_dict(subject, cont, invoice.supplier.name)
+            level = _min_confidence(store)
+            per_line = (client is None or store.client_per_line(client)) and len(invoice.lines) > 1
+            trial = _Trial(store, rulebook, client, level, ask == "jev_only")
+            if per_line:
+                result = self._try_lines(trial, invoice)
+            else:
+                result = self._try_rules_then_jev(trial, invoice)
         finally:
             store.close()
-        asked = result["jev"] is not None
+        result.update(
+            per_line=per_line, accounts=rulebook.accounts, jev_calls=trial.calls,
+            cost_usd=trial.cost_usd if trial.calls else None, jev_stopped=trial.stopped,
+            suggestion=_trial_suggestion(invoice, rulebook, result["lines"]),
+        )
         journal.record(
             "rules", "rule.tested", f"Rules tried on a trial invoice: {result['reason']}",
-            decided_by=result["decided_by"], cont=result["cont"], asked_jev=asked,
-            cost_usd=result["jev"]["cost_usd"] if asked else None,
+            decided_by=result["decided_by"], cont=result["cont"], asked_jev=trial.calls > 0,
+            cost_usd=result["cost_usd"],
         )
         return {"ok": True, **result}
 
-    def _try_rules_then_jev(
-        self, store: Store, invoice: Invoice, rulebook: Rulebook, client: str | None, jev_only: bool
-    ) -> dict:
+    def _try_rules_then_jev(self, trial: "_Trial", invoice: Invoice) -> dict:
+        """One account for the whole trial invoice, decided by its largest line."""
         heaviest = deciding_line(invoice)
+        entry = _trial_line(heaviest) if heaviest else {}
         result = {
             "decided_by": "nobody", "cont": None, "account_description": None,
             "deciding_line": heaviest.description if heaviest else None,
-            "rule": None, "jev": None, "why_not": None, "reason": "", "suggestion": None,
+            "rule": None, "jev": None, "why_not": None, "reason": "",
         }
 
-        def decided(by: str, cont: str, reason: str) -> dict:
-            return {
-                **result, "decided_by": by, "cont": cont, "reason": reason,
-                "account_description": rulebook.accounts.get(cont) or None,
-            }
+        def answer(**said) -> dict:
+            said = {**result, **said}
+            if said["cont"]:
+                said["account_description"] = trial.rulebook.accounts.get(said["cont"]) or None
+            line = {**entry, **{key: said[key] for key in _TRIAL_LINE_SAYS}}
+            return {**said, "lines": [line] if heaviest else []}
 
-        def left(why: str, reason: str, **more) -> dict:
-            return {**result, "why_not": why, "reason": reason, **more}
-
-        decision = None if jev_only else decide_by_rules(invoice, rulebook)
-        if decision:
-            reason = f'Rule "{decision.rule}" matched line {decision.line}, the largest on the invoice.'
-            return {**decided("rule", decision.cont, reason), "rule": {"name": decision.rule, "line": decision.line}}
+        subject = subject_of(invoice)
+        matching = [] if trial.jev_only or subject is None else trial.rulebook.rules_for(subject)
+        if matching:
+            rule = matching[0]
+            reason = f'Rule "{rule.name}" matched line {heaviest.number}, the largest on the invoice.'
+            return answer(decided_by="rule", cont=rule.cont, reason=reason, rule=_rule_said(matching, subject, heaviest.number))
         if not invoice.lines:
-            return left("no_lines", "The invoice has no lines to decide from.")
-        if not self.cfg.openrouter_api_key:
-            return left(
-                "no_key",
-                "No rule matched, and OpenRouter is not set up ([openrouter] api_key in config.toml).",
-            )
-        if not rulebook.accounts:
-            return left("no_accounts", "No rule matched, and there are no accounts for Jev to choose from.")
+            return answer(why_not="no_lines", reason="The invoice has no lines to decide from.")
+        cannot = self._why_jev_cannot_be_asked(trial.rulebook)
+        if cannot:
+            return answer(why_not=cannot[0], reason=f"{trial.not_matched}, and {cannot[1]}")
 
-        request = jev_request(invoice, rulebook, self.cfg.jev_model)
+        request = jev_request(invoice, trial.rulebook, self.cfg.jev_model)
         if not request["state"]["linii"]:
-            return left(
-                "jev_failed", "The invoice and the list of accounts do not fit in one request to Jev."
-            )
-        # One attempt, whatever it costs: the person is waiting, and every attempt is paid for.
+            return answer(why_not="jev_failed", reason="The invoice and the list of accounts do not fit in one request to Jev.")
+        cont, why_not, reason, said = self._trial_ask(trial, request, "invoice", heaviest.number)
+        return answer(decided_by="jev" if cont else "nobody", cont=cont, why_not=why_not, reason=reason, jev=said)
+
+    def _try_lines(self, trial: "_Trial", invoice: Invoice) -> dict:
+        """Each line of the trial invoice on its own, as _classify_lines decides a real one:
+        the rules first; a discount or a line worth nothing takes the account of the largest
+        line; Jev for the rest, one question per distinct line. The invoice has more than one line."""
+        largest = deciding_line(invoice)
+        entries: dict[int, dict] = {}
+        for item in invoice.lines:
+            subject = line_subject(invoice, item)
+            matching = [] if trial.jev_only else trial.rulebook.rules_for(subject)
+            if matching:
+                entries[item.number] = _trial_line(
+                    item, decided_by="rule", cont=matching[0].cont, rule=_rule_said(matching, subject, item.number),
+                    reason=f'Rule "{matching[0].name}" matched line {item.number}.',
+                )
+            elif follows_largest(invoice, item):
+                entries[item.number] = _trial_line(
+                    item, decided_by="follows", follows=largest.number,
+                    reason=f"Takes the account of line {largest.number}, the largest on the invoice.",
+                )
+        groups: dict[tuple, list[Line]] = {}
+        for item in invoice.lines:
+            if item.number not in entries:
+                groups.setdefault(same_question(item), []).append(item)
+        cannot = self._why_jev_cannot_be_asked(trial.rulebook) if groups else None
+        for items in groups.values():
+            first = items[0]
+            if cannot:
+                said = {"why_not": cannot[0], "reason": f"{trial.not_matched}{'' if trial.jev_only else ' this line'}, and {cannot[1]}"}
+            elif trial.stopped:
+                said = {"why_not": "not_asked", "reason": f"Not sent to Jev: OpenRouter failed on line {trial.stopped['line']}."}
+            else:
+                request = jev_line_request(invoice, first, trial.rulebook, self.cfg.jev_model)
+                if fits(request):
+                    cont, why_not, reason, jev_said = self._trial_ask(trial, request, "line", first.number)
+                    said = {"decided_by": "jev" if cont else "nobody", "cont": cont, "why_not": why_not, "reason": reason, "jev": jev_said}
+                else:
+                    said = {"why_not": "jev_failed", "reason": "This line and the list of accounts do not fit in one request to Jev."}
+            for item in items:
+                entries[item.number] = _trial_line(item, same_as=first.number if item is not first else None, **said)
+
+        head = entries[largest.number]
+        for entry in entries.values():
+            if entry["decided_by"] == "follows":
+                entry["cont"] = head["cont"]
+        lines = [entries[item.number] for item in invoice.lines]
+        for entry in lines:
+            entry["account_description"] = trial.rulebook.accounts.get(entry["cont"]) or None if entry["cont"] else None
+        waiting = sum(1 for entry in lines if not entry["cont"])
+        whole = {key: head[key] for key in _TRIAL_LINE_SAYS}
+        if waiting:  # as the program keeps an invoice: an account only once every line has one
+            whole.update(decided_by="nobody", cont=None, account_description=None, why_not=head["why_not"] or "lines_left")
+        return {
+            **whole, "deciding_line": largest.description, "lines": lines, "waiting": waiting,
+            "reason": _trial_lines_summary(lines),
+        }
+
+    def _why_jev_cannot_be_asked(self, rulebook: Rulebook) -> tuple[str, str] | None:
+        if not self.cfg.openrouter_api_key:
+            return "no_key", "OpenRouter is not set up ([openrouter] api_key in config.toml)."
+        if not rulebook.accounts:
+            return "no_accounts", "there are no accounts for Jev to choose from."
+        return None
+
+    def _trial_ask(
+        self, trial: "_Trial", request: dict, about: str, line: int,
+    ) -> tuple[str | None, str | None, str, dict]:
+        """Ask Jev once about a trial invoice or one of its lines, and keep only what it cost.
+        One attempt, whatever it costs: the person is waiting, and every attempt is paid for.
+        Returns the account (None when there is none), why not, the reason, and what Jev said
+        and was sent."""
         call = jev.ask(self._http, self.cfg.openrouter_api_key, request)
         answer, error = None, call.error
         if call.ok:
             try:
-                answer = read_jev_answer(call.response, rulebook)
+                answer = read_jev_answer(call.response, trial.rulebook)
             except EfacturaError as exc:
                 error = exc.message
-        store.add_jev_call(
+        trial.store.add_jev_call(
             message_id=RULE_TEST,
-            cui=client,
+            cui=trial.client,
             called_at=self._now().isoformat(),
             model=call.model or self.cfg.jev_model,
             request_json=json.dumps(request, ensure_ascii=False),
@@ -1457,11 +1533,12 @@ class Service:
             duration_ms=call.duration_ms,
             error=error,
         )
-        level = _min_confidence(store)
+        trial.calls += 1
+        trial.cost_usd += call.cost_usd or 0
         said = {
             "choice": answer.choice if answer else None,
             "confidence": answer.confidence if answer else None,
-            "threshold": level,
+            "threshold": trial.level,
             "refused": answer.refused if answer else False,
             "probabilities": dict(answer.probabilities) if answer else {},
             "cost_usd": call.cost_usd,
@@ -1470,26 +1547,18 @@ class Service:
             # None when OpenRouter was not reached. A refused key or an empty account (401,
             # 402, 403) is not helped by waiting, and the screen says so.
             "http_status": call.status,
+            # What left the program: the question and what it was asked about.
+            "sent": {"question": request["questions"][QUESTION]["instructions"], "state": request["state"]},
         }
         if answer is None:
-            return left("jev_failed", f"Jev could not decide this invoice: {said['error']}", jev=said)
-        if answer.refused:
-            return left("jev_declined", "Jev declined to answer.", jev=said)
-        if answer.choice is None:
-            return left("jev_declined", "Jev found that none of the accounts fits.", jev=said)
-        if answer.confidence is None:
-            return left(
-                "jev_declined", f"Jev suggested {answer.choice} without a confidence figure.", jev=said
-            )
-        if answer.confidence < level:
-            return left(
-                "below_threshold",
-                f"Jev suggested {answer.choice} with confidence {answer.confidence:.2f}, "
-                f"below the level of {level:.2f}.",
-                jev=said,
-            )
-        reason = f"Jev chose {answer.choice} with confidence {answer.confidence:.2f}."
-        return {**decided("jev", answer.choice, reason), "jev": said}
+            if call.service_wide:
+                trial.stopped = {"line": line, "http_status": call.status, "error": said["error"]}
+            return None, "jev_failed", f"Jev could not decide this {about}: {said['error']}", said
+        cont, reason, _ = _judged(answer, trial.level)
+        if cont:
+            return cont, None, reason, said
+        below = not answer.refused and answer.choice is not None and answer.confidence is not None
+        return None, "below_threshold" if below else "jev_declined", reason, said
 
     def costs(
         self, since: str | None = None, cui: str | None = None, until: str | None = None,
@@ -2384,7 +2453,7 @@ def _rulebook_for(store: Store, cui: str, issued: bool = False) -> Rulebook:
     return Rulebook(
         accounts=store.accounts(kind),
         rules=tuple(
-            Rule(rule["name"], rule["cont"], **{name: rule[name] for name in CONDITIONS})
+            Rule(rule["name"], rule["cont"], **{name: rule[name] for name in CONDITIONS}, client_cui=rule["client_cui"])
             for rule in applicable
         ),
         instructions=instructions,
@@ -2534,6 +2603,81 @@ def _trial_invoice(
         lines=tuple(built), adjustments=(),
         total_without_vat=sum((item.value for item in built), Decimal(0)), total_vat=None, total_payable=None,
     )
+
+
+@dataclass
+class _Trial:
+    """What one try of the rules works with, and what asking Jev has cost so far."""
+
+    store: Store
+    rulebook: Rulebook
+    client: str | None
+    level: float
+    jev_only: bool
+    calls: int = 0
+    cost_usd: float = 0.0
+    # Set once OpenRouter failed as a whole (no connection, key, credit, rate limit, server
+    # trouble): as in _classify_lines, nothing more is sent. The line, the status, the error.
+    stopped: dict | None = None
+
+    @property
+    def not_matched(self) -> str:
+        return "The rules were skipped" if self.jev_only else "No rule matched"
+
+
+# What a trial says about one line, and about the invoice as a whole.
+_TRIAL_LINE_SAYS = ("decided_by", "cont", "account_description", "rule", "jev", "why_not", "reason")
+
+
+def _trial_line(item: Line, **said) -> dict:
+    """One line of a trial invoice: what it is, and how it was decided."""
+    return {
+        "line": item.number, "description": item.description, "value": format(item.value, "f"),
+        "decided_by": "nobody", "cont": None, "account_description": None, "rule": None, "jev": None,
+        "why_not": None, "reason": "",
+        "follows": None,  # the largest line, whose account a discount takes
+        "same_as": None,  # the earlier line that says the same: Jev was asked once, about that one
+        **said,
+    }
+
+
+def _rule_said(matching: list[Rule], subject: Subject, number: int) -> dict:
+    """The rule that decided a line, which of its conditions the line meets, and the
+    rules further down the list that would have matched too."""
+    rule = matching[0]
+    found = rule.match(subject)
+    return {
+        "name": rule.name, "line": number,
+        "condition": found.condition if found else None,
+        "found": found.found if found else None,
+        "prefix": found.prefix if found else None,
+        "client_only": rule.client_cui is not None,
+        "also": [other.name for other in matching[1:]],
+    }
+
+
+def _trial_suggestion(invoice: Invoice, rulebook: Rulebook, lines: list[dict]) -> dict | None:
+    """The rule worth creating: from the largest line Jev named an account for, sure enough
+    or not, when no rule fits that line yet."""
+    by_number = {item.number: item for item in invoice.lines}
+    answered = [entry for entry in lines if entry["jev"] and entry["jev"]["choice"] and entry["same_as"] is None]
+    for entry in sorted(answered, key=lambda entry: abs(by_number[entry["line"]].value), reverse=True):
+        subject = line_subject(invoice, by_number[entry["line"]])
+        cont = entry["cont"] or entry["jev"]["choice"]
+        if not rulebook.rule_for(subject) and propose(subject, cont):
+            return {**_suggestion_dict(subject, cont, invoice.supplier.name), "from_line": entry["line"]}
+    return None
+
+
+def _trial_lines_summary(lines: list[dict]) -> str:
+    """For the journal: "4 lines: 1 by rules, 1 by Jev, 1 following the largest line, 1 left to check."."""
+    counts = (
+        (sum(entry["decided_by"] == "rule" for entry in lines), "by rules"),
+        (sum(entry["decided_by"] == "jev" for entry in lines), "by Jev"),
+        (sum(entry["decided_by"] == "follows" and bool(entry["cont"]) for entry in lines), "following the largest line"),
+        (sum(not entry["cont"] for entry in lines), "left to check"),
+    )
+    return f"{len(lines)} lines: " + ", ".join(f"{count} {what}" for count, what in counts if count) + "."
 
 
 def _suggestion_dict(subject: Subject, cont: str, supplier_name: str | None) -> dict:
