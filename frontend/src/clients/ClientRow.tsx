@@ -8,7 +8,7 @@ import { api } from '../api'
 import { showError } from '../errorMessages'
 import { formatWhen } from '../format'
 import type { Client } from '../types'
-import { newBadges } from './clientCounts'
+import { countsLine, newBadges } from './clientCounts'
 
 /**
  * One client on the first screen: the switch, what is new, and the two things to do about it.
@@ -45,7 +45,7 @@ export function ClientRow({ client, blocked, onSync }: { client: Client; blocked
       <div className="flex min-w-0 flex-[1_1_320px] flex-col gap-1.5">
         <div className={`text-xl font-bold ${off ? 'text-muted-foreground' : ''}`}>{client.name}</div>
         <div className="text-muted-foreground">
-          CUI {client.cui} · Ultima descărcare: {formatWhen(client.last_sync_at)}
+          CUI {client.cui}{countsLine(client) && ` · ${countsLine(client)}`} · Ultima descărcare: {formatWhen(client.last_sync_at)}
         </div>
         {off ? (
           <p className="font-semibold text-muted-foreground">Oprit: facturile lui nu se descarcă până îl porniți.</p>

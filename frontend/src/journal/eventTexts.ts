@@ -1,6 +1,7 @@
 // The program writes each kind of event with a code and an English line. Here the codes it
 // is known to write become Romanian sentences; anything else keeps the English line.
 
+import { newInvoices } from '../newInvoices'
 import { countOf, formatPercent, formatUsd } from '../format'
 import { describePeriod, describeWhen } from '../schedule/scheduleTexts'
 import type { JournalLine, SchedulePeriod } from '../types'
@@ -38,6 +39,7 @@ const who = (data: Data) => text(data.client) || `CUI ${text(data.cui)}`
 const invoice = (data: Data) => `Factura ${text(data.invoice_number) || text(data.id)}`
 // A rule or an account for the invoices a client issued says so; one for received invoices says nothing more.
 const forIssued = (data: Data) => (data.kind === 'issued' ? ' pentru facturile emise' : '')
+const issuedNote = (data: Data) => (data.kind === 'issued' ? ' (facturi emise)' : '')
 
 const HOW_A_COPY_WAS_MADE: Record<string, string> = {
   manual: 'la cererea dumneavoastră', auto: 'automat', 'before-restore': 'înaintea restaurării',
@@ -62,13 +64,9 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
   },
   'sync.finished': (data) => {
     // Lines written before the issued invoices were counted apart carry only `new`.
-    const received = Number(data.received ?? data.new)
-    const issued = Number(data.issued) ? `, ${countOf(Number(data.issued), 'o factură emisă', 'facturi emise')}` : ''
-    const fresh = received
-      ? countOf(received, 'o factură nouă', 'facturi noi')
-      : issued ? 'nicio factură primită' : 'nicio factură nouă'
+    const came = newInvoices(Number(data.received ?? data.new), Number(data.issued) || 0)
     const failed = Number(data.failed) ? countOf(Number(data.failed), 'una nereușită', 'nereușite') : 'niciuna nereușită'
-    return `Descărcarea pentru ${who(data)} s-a terminat: ${fresh}${issued}, ${failed}.`
+    return `Descărcarea pentru ${who(data)} s-a terminat: ${[...(came.length ? came : ['nicio factură nouă']), failed].join(', ')}.`
   },
   'sync.failed': (data) => `Descărcarea pentru ${who(data)} nu a reușit.`,
   'sync.message_failed': () => 'Un mesaj de la ANAF nu a putut fi salvat. Se încearcă din nou la următoarea descărcare.',
@@ -83,12 +81,10 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
     `Descărcarea automată a început.${Number(data.attempt) > 1 ? ` Este încercarea ${text(data.attempt)} din 4.` : ''}`,
   'sync.auto_finished': (data) => {
     // Lines written before the issued invoices were counted apart carry only `new`.
-    const received = Number(data.received ?? data.new)
     const found = [
-      received > 0 && countOf(received, 'o factură nouă', 'facturi noi'),
-      Number(data.review) > 0 && `${text(data.review)} de verificat`,
-      Number(data.issued) > 0 && countOf(Number(data.issued), 'o factură emisă', 'facturi emise'),
-    ].filter(Boolean) as string[]
+      ...newInvoices(Number(data.received ?? data.new), Number(data.issued) || 0),
+      ...(Number(data.review) > 0 ? [`${text(data.review)} de verificat`] : []),
+    ]
     switch (data.status) {
       case 'ok':
         return `Descărcarea automată s-a terminat: ${found.length ? found.join(', ') : 'nimic nou'}.`
@@ -149,8 +145,8 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
     data.decided_by === 'rule' || data.decided_by === 'jev'
       ? `A fost încercată o factură de probă: contul ${text(data.cont)}, ales de ${data.decided_by === 'rule' ? 'o regulă' : 'Jev'}.`
       : 'A fost încercată o factură de probă: nu a primit niciun cont.',
-  'rule.added': (data) => `A fost adăugată regula „${text(data.name)}”${forIssued(data)}, pentru contul ${text(data.cont)}.`,
-  'rule.changed': (data) => `A fost modificată regula „${text(data.name)}”${forIssued(data)}, pentru contul ${text(data.cont)}.`,
+  'rule.added': (data) => `A fost adăugată regula „${text(data.name)}”${issuedNote(data)}, pentru contul ${text(data.cont)}.`,
+  'rule.changed': (data) => `A fost modificată regula „${text(data.name)}”${issuedNote(data)}, pentru contul ${text(data.cont)}.`,
   'rule.removed': () => 'A fost ștearsă o regulă.',
   'rule.proposal_turned_down': () => 'Ați ales „Nu acum” la o regulă propusă.',
   'account.saved': (data) => `Contul ${text(data.cont)} a fost adăugat sau modificat în lista lui Jev${forIssued(data)}.`,
@@ -176,7 +172,9 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
       ? 'De acum, fiecare factură gata de import are fișierul ei pentru SAGA.'
       : 'De acum, facturile gata de import ale fiecărui client se scriu într-un singur fișier pentru SAGA.',
   'settings.show_issued': (data) =>
-    data.shown
+    data.no_effect
+      ? 'A fost schimbată setarea veche „Arată facturile emise”. Ea nu mai schimbă nimic: facturile emise au fila lor.'
+      : data.shown
       ? 'De acum, facturile emise de clienți se văd pe ecranul fiecărui client.'
       : 'De acum, facturile emise de clienți nu se mai văd pe ecran.',
   'saga.files_failed': (data) =>

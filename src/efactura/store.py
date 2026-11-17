@@ -408,6 +408,10 @@ class Store:
         where, params = [], []
         if only_new:
             where.append(IS_NEW_SQL)
+            if not type_prefix:
+                # "New" alone keeps the meaning it always had for other programs: received
+                # invoices. The new issued ones are asked for with their type.
+                where.append(f"m.{RECEIVED_SQL}")
         if classification:
             where.append("classification_status = ?")
             params.append(classification)

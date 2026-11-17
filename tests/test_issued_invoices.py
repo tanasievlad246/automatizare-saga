@@ -158,7 +158,9 @@ def test_each_line_of_an_issued_invoice_gets_its_own_account(service, anaf, open
     assert [(entry["cont"], entry["method"]) for entry in accounts] == [("704", "rules"), ("707", "jev")]
     (asked,) = openrouter.requests
     assert asked["questions"]["cont"]["instructions"] == DEFAULT_JEV_ISSUED_LINE_INSTRUCTIONS
-    assert "furnizor" not in asked["state"]
+    sent = json.dumps(asked, ensure_ascii=False)
+    for party in (BUYER, BUYER_CUI, "Alfa Construct", VALID_CUI):
+        assert party not in sent
 
 
 def test_the_questions_for_issued_invoices_can_be_changed(service, anaf, openrouter):
@@ -185,7 +187,8 @@ def test_an_issued_invoice_whose_supplier_is_not_the_client_goes_to_a_person(ser
 
     row = saved(cfg)
     assert row["classification_status"] == "review"
-    assert "not the client" in row["classification_reason"]
+    # The page says it in Romanian by this start: frontend/src/invoices/issuedInvoices.ts.
+    assert row["classification_reason"].startswith("The supplier on this issued invoice is not the client")
     assert openrouter.requests == []
 
 
@@ -197,7 +200,19 @@ def test_an_invoice_a_client_issued_to_itself_goes_to_a_person(service, anaf, op
 
     for message_id in ("3001", "3002"):
         row = saved(cfg, message_id)
-        assert (row["classification_status"], "invoiced itself" in row["classification_reason"]) == ("review", True)
+        assert row["classification_status"] == "review"
+        assert row["classification_reason"].startswith("The client invoiced itself")  # as the page reads it
+
+
+def test_a_received_invoice_whose_supplier_is_the_client_goes_to_a_person(service, anaf, openrouter, cfg):
+    anaf.add("3001", xml=sold([line("Manopera", "100.00")]))  # listed as received, though the client sold it
+
+    service.sync(VALID_CUI)
+
+    row = saved(cfg)
+    assert row["classification_status"] == "review"
+    assert row["classification_reason"].startswith("The client is the supplier of this received invoice")
+    assert openrouter.requests == []
 
 
 def test_without_accounts_for_issued_invoices_jev_is_not_asked(service, anaf, openrouter, cfg):
@@ -377,4 +392,15 @@ def test_an_issued_invoices_own_xml_for_saga_leaves_the_buyers_contact_out_too(s
 
     shown = ElementTree.fromstring(service.invoice_view("3001")["saga_xml"].encode("utf-8"))
     antet = shown.find("Factura/Antet")
+    assert (antet.findtext("ClientTelefon"), antet.findtext("ClientMail")) == ("", "")
+
+
+def test_a_sale_listed_as_received_and_booked_by_a_person_leaves_the_buyers_contact_out_too(service, anaf, cfg):
+    anaf.add("3001", xml=sold([line("Manopera", "100.00")]))  # SAGA files it among the sales: its supplier is the client
+    service.sync(VALID_CUI)
+
+    service.set_cont("3001", cont="704")
+
+    (path,) = (cfg.saga_dir / VALID_CUI).iterdir()
+    antet = ElementTree.parse(path).getroot().find("Factura/Antet")
     assert (antet.findtext("ClientTelefon"), antet.findtext("ClientMail")) == ("", "")

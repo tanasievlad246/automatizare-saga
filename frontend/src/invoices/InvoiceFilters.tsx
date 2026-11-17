@@ -8,7 +8,7 @@ import { type ListState, type Order, type Party, orderOptions } from './invoiceL
 
 /**
  * The fields above a list of invoices: a search by name, CUI or number, the days of the invoice,
- * the account (left out for issued invoices, which have none) and the order. Every change goes
+ * the account (when `accounts` are given) and the order. Every change goes
  * straight to `onChange`; nothing waits for a button.
  */
 export function InvoiceFilters({

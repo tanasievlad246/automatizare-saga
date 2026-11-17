@@ -218,7 +218,7 @@ def _parser() -> argparse.ArgumentParser:
     invoices.add_argument("--classification", choices=STATUSES, help="only those in this state")
     invoices.add_argument(
         "--new", action="store_true", dest="only_new",
-        help="only received invoices from the latest sync, not yet uploaded",
+        help="only invoices from the latest sync, not yet uploaded: received ones unless --type says another kind",
     )
 
     classify = commands.add_parser("classify", help="give one saved invoice its account (cont)")

@@ -433,7 +433,7 @@ def create_app(
         type: str | None = Query(None, description="primita, trimisa, erori or mesaj"),
         since: str | None = Query(None, description="YYYY-MM-DD"),
         classification: str | None = Query(None, description="pending, classified or review"),
-        new: bool = Query(False, description="only those from the latest sync, not yet uploaded"),
+        new: bool = Query(False, description="only those from the latest sync, not yet uploaded: received ones unless type is given"),
     ):
         return call(lambda s: s.invoices(cui, pending, type, since, classification, new))
 

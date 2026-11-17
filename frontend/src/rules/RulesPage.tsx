@@ -48,7 +48,10 @@ export function RulesPage() {
             O regulă alege contul singură, fără Jev. Întâi se verifică regulile clientului, apoi cele pentru toți clienții, fiecare grup de sus în jos. Prima care se potrivește câștigă.
           </PageTitle>
         </div>
-        <Button asChild variant="outline" size="lg"><Link to="/reguli/test">Testează regulile</Link></Button>
+        {/* The rule test tries received invoices only, so far. */}
+        {kind === 'received' && (
+          <Button asChild variant="outline" size="lg"><Link to="/reguli/test">Testează regulile</Link></Button>
+        )}
       </div>
       {error && <Notice tone="attention">{errorMessage(error)}</Notice>}
 

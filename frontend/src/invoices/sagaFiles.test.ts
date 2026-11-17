@@ -86,12 +86,19 @@ describe('the note on an invoice', () => {
     expect(fileCardNote(invoice('1', FILE), fine('invoice'))).toBeNull()
   })
 
-  it('says where SAGA puts an invoice the client issued', () => {
-    const sold = { message_type: 'FACTURA TRIMISA' }
+  it('says where SAGA puts an invoice whose supplier is the client', () => {
+    const sold = { message_type: 'FACTURA TRIMISA', cui: '12345674', supplier_cui: 'RO12345674' }
     expect(fileCardNote(invoice('1', FILE, sold), fine())).toBe(
       'Factura este în fișierul clientului, împreună cu celelalte facturi gata de import. În SAGA ajunge în „Ieșiri”:',
     )
     expect(fileCardNote(invoice('1', FILE, sold), fine('invoice'))).toBe('În SAGA ajunge în „Ieșiri”.')
+  })
+
+  it('goes by the supplier, not by what ANAF listed the invoice as', () => {
+    const listedAsIssued = { message_type: 'FACTURA TRIMISA', cui: '12345674', supplier_cui: 'RO87654321' }
+    expect(fileCardNote(invoice('1', FILE, listedAsIssued), fine())).toBe(
+      'Factura este în fișierul clientului, împreună cu celelalte facturi gata de import:',
+    )
   })
 
   it('warns, whatever else is true, while the client’s folder is not up to date', () => {

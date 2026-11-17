@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { api } from '../api'
 import { showError } from '../errorMessages'
 import { formatWhen } from '../format'
-import { isIssued, kindsLine } from './issuedInvoices'
+import { goesToSales, kindsLine } from './issuedInvoices'
 import type { Invoice, SagaState } from '../types'
 import { importedButton, isStale, NOT_UP_TO_DATE, placeLine, readyPlaces } from './sagaFiles'
 
@@ -109,8 +109,8 @@ export function ImportedInSagaCard({ cui, ready, saga }: { cui: string; ready: I
   )
 }
 
-/** How many of these invoices are received and how many issued, and where SAGA puts each kind. */
+/** How many of these invoices SAGA puts among the purchases and how many among the sales. */
 function kindsOf(invoices: Invoice[]): string | null {
-  const issued = invoices.filter(isIssued).length
-  return kindsLine(invoices.length - issued, issued)
+  const sales = invoices.filter(goesToSales).length
+  return kindsLine(invoices.length - sales, sales)
 }

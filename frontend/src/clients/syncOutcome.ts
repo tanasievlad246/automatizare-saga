@@ -1,4 +1,5 @@
 import { countOf } from '../format'
+import { newInvoices } from '../newInvoices'
 import type { SyncResult } from '../types'
 
 /**
@@ -8,12 +9,8 @@ import type { SyncResult } from '../types'
  */
 export function describeSyncResult(result: SyncResult, askedDays: number | null): string {
   const { received_count: received, issued_count: issued } = result
-  const parts = issued
-    ? [
-        received ? countOf(received, 'o factură primită nouă', 'facturi primite noi') : 'nicio factură primită',
-        countOf(issued, 'o emisă nouă', 'emise noi'),
-      ]
-    : [received ? countOf(received, 'o factură nouă', 'facturi noi') : 'nimic nou']
+  const came = newInvoices(received, issued)
+  const parts = came.length ? came : ['nimic nou']
   const toReview = result.classification?.review ?? 0
   if (toReview) parts.push(`${toReview} de verificat`)
   if (result.failed_count) {

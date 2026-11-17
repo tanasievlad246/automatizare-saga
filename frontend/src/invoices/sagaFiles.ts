@@ -1,5 +1,5 @@
 import { countOf, folderOf } from '../format'
-import { isIssued } from './issuedInvoices'
+import { goesToSales } from './issuedInvoices'
 import type { Invoice, SagaFilePer, SagaState } from '../types'
 
 /** The two ways the invoices waiting for SAGA are put in files. Exactly one is in force. */
@@ -68,8 +68,8 @@ export function fileCardNote(invoice: Invoice, saga: SagaState): string | null {
     return `Folderul pentru SAGA al acestui client nu este la zi, așa că fișierul poate să nu arate ce vedeți aici. Deschideți lista de facturi a clientului și apăsați acolo „${NOT_UP_TO_DATE.retry}”.`
   }
   if (invoice.saga_xml_path) {
-    // SAGA files an invoice the client issued among the sales, by its supplier.
-    const sales = isIssued(invoice) ? 'În SAGA ajunge în „Ieșiri”' : null
+    // SAGA files an invoice among the sales by its supplier: the client itself.
+    const sales = goesToSales(invoice) ? 'În SAGA ajunge în „Ieșiri”' : null
     if (saga.file_per !== 'client') return sales && `${sales}.`
     const shared = 'Factura este în fișierul clientului, împreună cu celelalte facturi gata de import'
     return sales ? `${shared}. ${sales}:` : `${shared}:`

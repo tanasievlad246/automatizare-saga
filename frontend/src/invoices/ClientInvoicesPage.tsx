@@ -26,7 +26,7 @@ import {
 import { InvoicesTable } from './InvoicesTable'
 import { needsAnAccount } from './invoiceState'
 import { PerLineSwitch } from './PerLineSwitch'
-import { kindFrom, kindTabs, whenNoneIssued, whenNoneReceived } from './issuedInvoices'
+import { kindFrom, kindTabs, readyForSaga, whenNoneIssued, whenNoneReceived } from './issuedInvoices'
 
 // The four ways to look at a client's invoices. The first one that has anything is shown.
 const VIEWS = [
@@ -76,8 +76,10 @@ export function ClientInvoicesPage() {
   const chosen = search.get('arata') ?? VIEWS.find((view) => found.some(view.includes))?.value ?? 'toate'
   const inView = found.filter(VIEWS.find((view) => view.value === chosen)?.includes ?? (() => true))
   const page = pageOf(sortInvoices(inView, list.order, party), list.page, INVOICES_PER_PAGE)
-  const isReady = (invoice: Invoice) => invoice.classification_status === 'classified' && !invoice.uploaded_to_accounting
-  const ready = [...(received.data?.invoices ?? []), ...(issued.data?.invoices ?? [])].filter(isReady)
+  // Known once both lists are here: the button must name every invoice the file holds.
+  const ready = readyForSaga(received.data?.invoices, issued.data?.invoices)
+  // A list that could not be read is said on both tabs: the card for SAGA needs both.
+  const problem = error ?? received.error ?? issued.error
 
   // The list chosen is written down with every change, so it does not jump to another while the person narrows it.
   const change = (changes: Partial<ListState>) => {
@@ -126,7 +128,7 @@ export function ClientInvoicesPage() {
       </div>
 
       {client && <PerLineSwitch client={client} />}
-      {error && <Notice tone="attention">{errorMessage(error)}</Notice>}
+      {problem && <Notice tone="attention">{errorMessage(problem)}</Notice>}
       <div ref={listTop} className="flex flex-col gap-3.5">
         <KindTabs
           value={kind}
@@ -181,7 +183,7 @@ export function ClientInvoicesPage() {
         />
       ))}
       <Pager page={page} label="Paginile listei de facturi" line={rangeLine(page, INVOICE_NOUN, narrowed ? 'găsite' : undefined)} onPage={turnPage} />
-      <ImportedInSagaCard cui={cui} ready={ready} saga={received.data?.saga} />
+      {ready && <ImportedInSagaCard cui={cui} ready={ready} saga={received.data?.saga} />}
 
       <SyncDialog
         clients={syncing ? [client ?? unknownClient(cui)] : null}

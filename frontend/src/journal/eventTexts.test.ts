@@ -19,9 +19,9 @@ describe('a line of the journal, in Romanian', () => {
 
   it('tells the received invoices of a download from the ones the client issued', () => {
     expect(describeEvent(line('sync.finished', { cui: '12345674', new: 8, received: 3, issued: 5, failed: 0 })))
-      .toBe('Descărcarea pentru CUI 12345674 s-a terminat: 3 facturi noi, 5 facturi emise, niciuna nereușită.')
+      .toBe('Descărcarea pentru CUI 12345674 s-a terminat: 3 facturi primite noi, 5 emise noi, niciuna nereușită.')
     expect(describeEvent(line('sync.finished', { cui: '12345674', new: 1, received: 0, issued: 1, failed: 0 })))
-      .toBe('Descărcarea pentru CUI 12345674 s-a terminat: nicio factură primită, o factură emisă, niciuna nereușită.')
+      .toBe('Descărcarea pentru CUI 12345674 s-a terminat: nicio factură primită, o emisă nouă, niciuna nereușită.')
     expect(describeEvent(line('sync.finished', { cui: '12345674', new: 2, received: 2, issued: 0, failed: 0 })))
       .toBe('Descărcarea pentru CUI 12345674 s-a terminat: 2 facturi noi, niciuna nereușită.')
   })
@@ -61,7 +61,7 @@ describe('a line of the journal, in Romanian', () => {
 
   it('says when a rule, an account or a question is for the invoices a client issued', () => {
     expect(describeEvent(line('rule.added', { name: 'manoperă', cont: '704', kind: 'issued' })))
-      .toBe('A fost adăugată regula „manoperă” pentru facturile emise, pentru contul 704.')
+      .toBe('A fost adăugată regula „manoperă” (facturi emise), pentru contul 704.')
     expect(describeEvent(line('rule.changed', { name: 'combustibil', cont: '6022', kind: 'received' })))
       .toBe('A fost modificată regula „combustibil”, pentru contul 6022.')
     expect(describeEvent(line('account.saved', { cont: '704', kind: 'issued' })))
@@ -189,9 +189,9 @@ describe('a line of the journal, in Romanian', () => {
     expect(say('sync.auto_finished', { status: 'ok', new: 0, review: 0 })).toBe('Descărcarea automată s-a terminat: nimic nou.')
     // Since the issued invoices are counted apart, only the received ones are "new".
     expect(say('sync.auto_finished', { status: 'ok', new: 9, received: 2, issued: 7, review: 1 }))
-      .toBe('Descărcarea automată s-a terminat: 2 facturi noi, 1 de verificat, 7 facturi emise.')
+      .toBe('Descărcarea automată s-a terminat: 2 facturi primite noi, 7 emise noi, 1 de verificat.')
     expect(say('sync.auto_finished', { status: 'ok', new: 3, received: 0, issued: 3, review: 0 }))
-      .toBe('Descărcarea automată s-a terminat: 3 facturi emise.')
+      .toBe('Descărcarea automată s-a terminat: nicio factură primită, 3 emise noi.')
     expect(say('sync.auto_finished', { status: 'partial', new: 1, review: 0 }))
       .toBe('Descărcarea automată s-a terminat: o factură nouă. Nu a fost completă; se reia la următoarea descărcare.')
     expect(say('sync.auto_finished', { status: 'failed', error: 'login_needed' }))
@@ -214,6 +214,9 @@ describe('the files for SAGA in the journal', () => {
   it('says whether the issued invoices are shown', () => {
     expect(line('settings.show_issued', { shown: true })).toBe('De acum, facturile emise de clienți se văd pe ecranul fiecărui client.')
     expect(line('settings.show_issued', { shown: false })).toBe('De acum, facturile emise de clienți nu se mai văd pe ecran.')
+    expect(line('settings.show_issued', { shown: true, no_effect: true })).toBe(
+      'A fost schimbată setarea veche „Arată facturile emise”. Ea nu mai schimbă nimic: facturile emise au fila lor.',
+    )
   })
 
   it('says which way was chosen', () => {

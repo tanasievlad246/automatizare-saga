@@ -20,3 +20,10 @@ export function reviewLink(client: Pick<Client, 'cui' | 'review_count' | 'issued
   const onlyIssued = client.review_count > 0 && client.review_count === client.issued_review_count
   return `/clienti/${client.cui}?${onlyIssued ? 'fel=emise&' : ''}arata=de-verificat`
 }
+
+/** Beside the CUI on the client list: how many invoices of each kind, once the client has issued ones. */
+export function countsLine(client: Pick<Client, 'invoices' | 'issued_count'>): string | null {
+  if (client.issued_count === 0) return null
+  const issued = client.issued_count === 1 ? 'una emisă' : countOf(client.issued_count, '', 'emise')
+  return `${countOf(client.invoices, 'o factură primită', 'facturi primite')} · ${issued}`
+}

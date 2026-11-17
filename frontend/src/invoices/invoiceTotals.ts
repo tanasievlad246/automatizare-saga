@@ -53,7 +53,7 @@ export function totalRows(document: InvoiceDocument): TotalRow[] {
 
 /**
  * Why what is left to pay is not what the invoice is worth, and which of the two SAGA gets.
- * `goesToSaga` is false for an invoice the client issued: nothing is written for SAGA from it.
+ * `goesToSaga` says whether a file for SAGA is written from the invoice; every invoice shown has one now.
  */
 export function totalsNote(document: InvoiceDocument, goesToSaga: boolean): string | null {
   const paid = paidAmount(document)

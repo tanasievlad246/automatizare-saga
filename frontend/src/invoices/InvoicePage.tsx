@@ -127,6 +127,15 @@ export function InvoicePage() {
             />
           )}
         </section>
+        {!document ? (
+          // Nothing to decide from: no account can be given, so none is offered.
+          <section aria-label="Contul facturii" className="flex min-w-0 flex-col gap-2 rounded-2xl border bg-card px-5 pt-4.5 pb-5.5">
+            <h2 className="font-sans text-xl font-bold">Fără cont</h2>
+            <p className="text-muted-foreground">
+              Fișierul de la ANAF nu se poate citi ca factură, așa că nu primește cont și nu ajunge în SAGA.
+            </p>
+          </section>
+        ) : (
         <div className="flex min-w-0 flex-col gap-5">
             {lineAccounts ? (
               <LineAccountsCard invoice={invoice} accounts={accounts} issued={issued} onChooseAll={() => setChoosing('all')} />
@@ -148,6 +157,7 @@ export function InvoicePage() {
             )}
             <SagaFileCard invoice={invoice} saga={view.saga} />
         </div>
+        )}
         {target && (
           <LineAccountDialog key={String(choosing)} invoice={invoice} target={target} accounts={accounts} onClose={() => setChoosing(null)} />
         )}

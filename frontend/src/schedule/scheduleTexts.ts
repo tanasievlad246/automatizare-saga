@@ -2,6 +2,7 @@
 
 import { ANAF_KEEPS_DAYS } from '../anafKeeps'
 import { knowsCode, messageForCode } from '../errorMessages'
+import { newInvoices } from '../newInvoices'
 import { countOf, daysAgo, formatDate, formatFromWhen, formatNext, formatWhen, today } from '../format'
 import type { SchedulePeriod, ScheduleRun, ScheduleStatus } from '../types'
 
@@ -114,15 +115,12 @@ function endedOn(status: ScheduleStatus, now: Date): string | null {
   return failedOtherwise ? null : period.end
 }
 
-/** "3 clienți · 7 facturi noi · 2 de verificat · 4 facturi emise". New are the received invoices. */
+/** "3 clienți · 7 facturi primite noi · 4 emise noi · 2 de verificat"; "3 clienți · 7 facturi noi" without issued ones. */
 function outcome(run: ScheduleRun): string {
-  const fresh = run.received ?? run.new
-  const issued = run.issued ?? 0
-  const parts = [countOf(run.clients, 'un client', 'clienți')]
-  if (fresh > 0) parts.push(countOf(fresh, 'o factură nouă', 'facturi noi'))
+  const came = newInvoices(run.received ?? run.new, run.issued ?? 0)
+  const parts = [countOf(run.clients, 'un client', 'clienți'), ...came]
   if (run.review > 0) parts.push(`${run.review} de verificat`)
-  if (issued > 0) parts.push(countOf(issued, 'o factură emisă', 'facturi emise'))
-  if (fresh === 0 && run.review === 0 && issued === 0) parts.push('nimic nou')
+  if (came.length === 0 && run.review === 0) parts.push('nimic nou')
   return parts.join(' · ')
 }
 

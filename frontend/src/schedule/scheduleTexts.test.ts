@@ -95,9 +95,9 @@ describe('the state card', () => {
       .toBe('Ultima: azi, 08:00 · un client · nimic nou.')
     // Since the issued invoices are counted apart, only the received ones are "new".
     expect(stateCard(status({ last_run: run({ new: 9, received: 2, issued: 7, review: 0 }) }), NOW).text)
-      .toBe('Ultima: azi, 08:00 · 3 clienți · 2 facturi noi · 7 facturi emise.')
+      .toBe('Ultima: azi, 08:00 · 3 clienți · 2 facturi primite noi · 7 emise noi.')
     expect(stateCard(status({ last_run: run({ new: 1, received: 0, issued: 1, review: 0 }) }), NOW).text)
-      .toBe('Ultima: azi, 08:00 · 3 clienți · o factură emisă.')
+      .toBe('Ultima: azi, 08:00 · 3 clienți · nicio factură primită · o emisă nouă.')
   })
 
   it('says that it is off', () => {

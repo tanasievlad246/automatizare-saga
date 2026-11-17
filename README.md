@@ -219,7 +219,7 @@ Most invoices ask for what they are worth. Some do not: a supplier adds an earli
 
 A client can be switched off. A client that is off keeps its invoices and is left out of every download until it is switched on again; asking to download it answers `client_off`. A CUI that is not in the client list is not affected and is downloaded as before.
 
-**"New"** means: a received invoice brought in by that client's latest download that brought anything, and not yet marked as imported in SAGA.
+**"New"** means: an invoice brought in by that client's latest download that brought any of its kind (received, or issued by the client), and not yet marked as imported in SAGA. Asked for alone (`new=true`, `--new`), "new" still gives the received invoices only, as it always did; with `type=trimisa` (`--type trimisa`) it gives the new issued ones. Every invoice returned says `is_new` for its own kind.
 
 **Downloading from the screen never leaves a gap.** "Ultimele 5 zile" means at least five days: if the last complete download for that client was longer ago, the program reaches back to it (up to ANAF's 60 days) and says so. Two dates are taken exactly as chosen. If some invoices could not be downloaded, the window says how many.
 
@@ -257,9 +257,9 @@ Run them from this folder. Use `--config PATH` before the command if `config.tom
 | `uv run efactura login-start [--open]` | Returns the ANAF login address (for a flow that drives the browser). |
 | `uv run efactura login-finish "<address>"` | Takes the address the browser ended on and saves the login. |
 | `uv run efactura list <CUI> [--days N]` | What ANAF has, each marked new or already saved. Saves nothing. |
-| `uv run efactura sync <CUI> [--days N] [--from DATE --to DATE] [--no-classify]` | Fetches and saves everything not saved yet, then classifies the received invoices it saved. The period is the last `N` days, or the days from `--from` to `--to` (`--to` defaults to today). |
+| `uv run efactura sync <CUI> [--days N] [--from DATE --to DATE] [--no-classify]` | Fetches and saves everything not saved yet, then classifies the invoices it saved, received and issued. The period is the last `N` days, or the days from `--from` to `--to` (`--to` defaults to today). |
 | `uv run efactura sync-all` | Does `sync` for every client that is switched on, one after another, with the default period. It does once, now, what the schedule does, and leaves no record of an automatic run. |
-| `uv run efactura invoices [--cui CUI] [--pending] [--new] [--type T] [--since YYYY-MM-DD] [--classification S]` | Reads the database. `--pending` = not yet uploaded. `--new` = from the latest download and not yet uploaded. `T` is `primita`, `trimisa`, `erori` or `mesaj`. `S` is `pending`, `classified` or `review`. |
+| `uv run efactura invoices [--cui CUI] [--pending] [--new] [--type T] [--since YYYY-MM-DD] [--classification S]` | Reads the database. `--pending` = not yet uploaded. `--new` = from the latest download and not yet uploaded: received invoices, unless `--type` names another kind. `T` is `primita`, `trimisa`, `erori` or `mesaj`. `S` is `pending`, `classified` or `review`. |
 | `uv run efactura invoice <id> [--xml]` | One message; `--xml` adds the XML text. |
 | `uv run efactura mark-uploaded <id>... [--undo]` | Sets (or clears) the uploaded flag. |
 | `uv run efactura classify <id> [--force]` | Classifies one saved invoice. |
@@ -383,7 +383,7 @@ Failure (from any command):
 | `client_off` | The client is switched off in the client list. Switch it on to download its invoices. |
 | `busy` | Another sync or login renewal is running. |
 | `config_error` | `config.toml` is missing or incomplete, or ANAF rejected the client ID/secret. In the certificate login: ANAF answered `invalid_client` (wrong Client ID) or `invalid_request` with "Redirect-URI ... does not match" (wrong Callback URL); the message keeps ANAF's words. |
-| `not_classifiable` | The message is not a received invoice, is marked as uploaded, was saved outside classification, or is already classified. `force` lifts the last two. |
+| `not_classifiable` | The message is not an invoice (received or issued), cannot be read as one, is marked as uploaded, was saved outside classification, or is already classified. `force` lifts the last two. |
 | `jev_error` | OpenRouter refused or could not be reached; the message says why (key, credit, rate limit). |
 | `internal_error` | A bug. The details are in `data/efactura.log`. |
 
@@ -509,13 +509,13 @@ A rule matches a line when any of its conditions holds: a keyword in the descrip
 - **When it goes away.** As soon as any rule in force for that client matches the invoice, however that rule was made. "Nu acum" hides the proposal for those invoices until their account changes (choosing the same account again keeps it hidden); a later invoice of the same kind brings it back.
 - **Limits.** The rules screen lists proposals from decisions made in the last 90 days, the ones with most invoices first, 20 at most. An invoice that got its account before this feature existed takes part only after its account is chosen again.
 
-**Only new invoices are classified.** An invoice enters classification at the moment `sync` saves it. Invoices already in the database, and those saved with `--no-classify`, are never classified automatically; `classify <id> --force` does one on request. Use `sync <CUI> --days 60 --no-classify` for a first run that brings in invoices already booked by hand.
+**Only new invoices are classified.** An invoice enters classification at the moment `sync` saves it. Invoices already in the database, and those saved with `--no-classify`, are never classified automatically; `classify <id> --force` does one on request. Use `sync <CUI> --days 60 --no-classify` for a first run that brings in invoices already booked by hand. One exception, once: at the first start of 0.11.0 the issued invoices saved before, `--no-classify` ones included, start waiting (see [issued invoices](#issued-invoices)); tick as imported those SAGA already has, or let its "Nr.+data" skip them.
 
 **States** (`classification_status`)
 
 | State | Meaning |
 |---|---|
-| `null` | Outside classification: saved before it existed or with `--no-classify`, or not a received invoice |
+| `null` | Outside classification: saved before it existed or with `--no-classify`, not an invoice, or one that cannot be read (`classification_error` says why) |
 | `pending` | Waiting. OpenRouter as a whole was failing (no connection, key, credit, rate limit); the next `sync` tries again. After such a failure the rest of that run is not sent to Jev either |
 | `classified` | Account decided. The invoice is in a file for SAGA until it is marked as imported. `classification_method` says how: `rules`, `jev`, `jev_accepted` (a person accepted Jev's suggestion) or `human` |
 | `review` | A person must decide |

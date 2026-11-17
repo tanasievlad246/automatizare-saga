@@ -505,8 +505,8 @@ class Service:
             "window_days": window.days,
             "listed": len(entries),
             "new_count": len(saved),
-            # Of those: the invoices the client received, which get an account, and the ones
-            # it issued, which are only kept. Errors and other messages are in neither.
+            # Of those: the invoices the client received and the ones it issued; both get an
+            # account. Errors and other messages are in neither.
             "received_count": sum(type_slug(m["message_type"]) == "primita" for m in saved),
             "issued_count": sum(type_slug(m["message_type"]) == "trimisa" for m in saved),
             "failed_count": len(failed),
@@ -972,9 +972,12 @@ class Service:
         try:
             if shown != _show_issued(store):
                 store.set_setting(SHOW_ISSUED, "1" if shown else "0")
+                # Since issued invoices have a tab of their own, the setting is kept only for
+                # programs that set it; the journal says it changed nothing.
                 journal.record(
                     "settings", "settings.show_issued",
-                    f"The invoices a client issued are now {'shown' if shown else 'hidden'}.", shown=shown,
+                    f"The old setting for showing issued invoices was set to {shown}; it no longer changes anything.",
+                    shown=shown, no_effect=True,
                 )
         finally:
             store.close()
@@ -2008,8 +2011,7 @@ class Service:
                 log.warning("Message %s has an account but its invoice cannot be read", row["id"])
                 continue
             waiting.append(saga.Entry(
-                invoice, row["cont"], row["id_solicitare"], row["id"], _line_conts(row),
-                issued=_is_issued(row["message_type"]),
+                invoice, row["cont"], row["id_solicitare"], row["id"], _line_conts(row), issued=_is_sale(cui, invoice),
             ))
         saga_dir = self._saga_dir(store)
         folder = saga_dir / cui
@@ -2416,6 +2418,12 @@ def _cui_digits(cui: str | None) -> str:
     return re.sub(r"\D", "", cui or "")
 
 
+def _is_sale(cui: str, invoice: Invoice) -> bool:
+    """Whether SAGA files this invoice among the client's sales ("Ieșiri"): it does so by the
+    supplier, whatever ANAF listed the message as."""
+    return _cui_digits(invoice.supplier.cui) == _cui_digits(cui)
+
+
 def _parties_misfit(cui: str, invoice: Invoice, issued: bool) -> str | None:
     """Why the parties of an invoice do not fit its kind for this client, or None. SAGA
     files an invoice whose supplier is the company under "Ieșiri", any other under "Intrări"."""
@@ -2740,7 +2748,7 @@ def _own_saga_xml(invoice: Invoice | None, row: dict) -> str | None:
     if invoice is None or row["classification_status"] != CLASSIFIED or not row["cont"]:
         return None
     return saga.build_xml(
-        invoice, row["cont"], row["id_solicitare"], row["id"], _line_conts(row), issued=_is_issued(row["message_type"]),
+        invoice, row["cont"], row["id_solicitare"], row["id"], _line_conts(row), issued=_is_sale(row["cui"], invoice),
     ).decode(saga.ENCODING)
 
 

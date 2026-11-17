@@ -907,3 +907,55 @@ def test_a_jev_call_about_an_issued_invoice_says_so_and_names_its_buyer(store):
 
     (call,) = store.jev_call_list()
     assert (call["message_type"], call["customer_name"]) == ("FACTURA TRIMISA", "Beta Instal SRL")
+
+
+def test_new_alone_still_means_new_received_invoices_and_new_issued_ones_are_asked_for_by_kind(store):
+    run = store.start_run(VALID_CUI, 3, "2026-11-10T09:00:00")
+    store.insert_message(make_row(id="1", sync_run_id=run))
+    store.insert_message(issued_row("2", sync_run_id=run))
+
+    assert [row["id"] for row in store.list_messages(only_new=True)] == ["1"]
+    assert [row["id"] for row in store.list_messages(only_new=True, type_prefix="FACTURA TRIMISA")] == ["2"]
+
+
+def test_a_received_invoice_stays_new_when_the_latest_download_brought_only_issued_ones(store):
+    first = store.start_run(VALID_CUI, 3, "2026-11-09T09:00:00")
+    store.insert_message(make_row(id="1", sync_run_id=first))
+    second = store.start_run(VALID_CUI, 3, "2026-11-10T09:00:00")
+    store.insert_message(issued_row("2", sync_run_id=second))
+
+    assert {row["id"]: row["is_new"] for row in store.list_messages()} == {"1": True, "2": True}
+
+
+def test_only_issued_invoices_to_check_are_counted_as_issued_ones_to_check(store):
+    store.save_client(VALID_CUI, "Alfa Construct SRL", "2026-11-01T09:00:00")
+    store.insert_message(make_row(id="1"))
+    store.set_classification("1", classification_status="review")
+    store.insert_message(issued_row("2"))
+    store.set_classification("2", classification_status="review")
+
+    (client,) = store.clients()
+    assert (client["review_count"], client["issued_review_count"]) == (2, 1)
+
+
+def test_a_database_from_0_10_0_gets_issued_accounts_and_its_rules_stay_for_received_invoices(tmp_path):
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.executescript("""
+        CREATE TABLE rules (id INTEGER PRIMARY KEY AUTOINCREMENT, position INTEGER NOT NULL, name TEXT NOT NULL,
+            cont TEXT NOT NULL, keywords TEXT NOT NULL DEFAULT '[]', item_codes TEXT NOT NULL DEFAULT '[]',
+            commodity_prefixes TEXT NOT NULL DEFAULT '[]', supplier_cuis TEXT NOT NULL DEFAULT '[]',
+            client_cui TEXT, enabled INTEGER NOT NULL DEFAULT 1);
+        CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO rules (position, name, cont, keywords) VALUES (1, 'combustibil', '6022', '["motorina"]');
+        INSERT INTO settings VALUES ('examples_added', '1');
+    """)
+    old.commit()
+    old.close()
+
+    store = Store(path)
+
+    assert [(rule["name"], rule["direction"]) for rule in store.rules()] == [("combustibil", "received")]
+    assert list(store.accounts(kind="issued")) == ["701", "704", "707"]
+    assert store.accounts() == {}  # the examples for received invoices were added long ago, and removed
+    store.close()

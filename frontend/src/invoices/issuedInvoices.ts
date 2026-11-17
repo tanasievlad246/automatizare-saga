@@ -72,3 +72,26 @@ export function kindsLine(received: number, issued: number): string | null {
   const issuedGo = issued === 1 ? 'cea emisă' : 'cele emise'
   return `${counted.charAt(0).toUpperCase()}${counted.slice(1)}. În SAGA, ${receivedGo} în „Intrări”, iar ${issuedGo} în „Ieșiri”.`
 }
+
+/** A fiscal code as compared: its digits, without "RO" or spaces. */
+const cuiDigits = (cui: string | null | undefined) => (cui ?? '').replace(/\D/g, '')
+
+/**
+ * Whether SAGA puts this invoice among the client's sales ("Ieșiri"): it goes by the supplier,
+ * whatever ANAF listed the message as, so an invoice a person booked despite its parties ends
+ * up where its supplier says.
+ */
+export function goesToSales(invoice: Pick<Invoice, 'cui' | 'supplier_cui'>): boolean {
+  return cuiDigits(invoice.supplier_cui) !== '' && cuiDigits(invoice.supplier_cui) === cuiDigits(invoice.cui)
+}
+
+/**
+ * The invoices in the client's file for SAGA: of both kinds, with an account, not yet imported.
+ * Unknown (null) while either list is missing, so the card never names fewer than the file holds.
+ */
+export function readyForSaga(received: Invoice[] | undefined, issued: Invoice[] | undefined): Invoice[] | null {
+  if (!received || !issued) return null
+  return [...received, ...issued].filter(
+    (invoice) => invoice.classification_status === 'classified' && !invoice.uploaded_to_accounting,
+  )
+}

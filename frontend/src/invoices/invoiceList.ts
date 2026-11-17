@@ -21,7 +21,7 @@ export const NO_ACCOUNT = 'fara'
 /** How many invoices one page holds. */
 export const INVOICES_PER_PAGE = 25
 
-// The names in the address; the issued list puts "emise-" in front of each.
+// The names in the address; a `prefix` can keep the choices of two lists on one page apart.
 const KEYS = { page: 'pagina', text: 'cauta', from: 'de-la', until: 'pana-la', cont: 'cont', order: 'ordine' } as const
 const DAY = /^\d{4}-\d{2}-\d{2}$/
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Invoice } from '../types'
-import { isIssued, kindFrom, kindTabs, kindsLine, misfitReason, whenNoneIssued, whenNoneReceived } from './issuedInvoices'
+import { goesToSales, isIssued, kindFrom, kindTabs, kindsLine, misfitReason, readyForSaga, whenNoneIssued, whenNoneReceived } from './issuedInvoices'
 
 const invoice = (message_type: string) => ({ message_type }) as Invoice
 
@@ -78,5 +78,31 @@ describe('the invoices of each kind in the file for SAGA', () => {
 
   it('say nothing more about received invoices alone, as before', () => {
     expect(kindsLine(12, 0)).toBeNull()
+  })
+})
+
+describe('where SAGA puts an invoice', () => {
+  const party = (cui: string, supplier_cui: string | null) => ({ cui, supplier_cui }) as Invoice
+
+  it('is among the sales when its supplier is the client, whatever ANAF listed it as', () => {
+    expect(goesToSales(party('12345674', 'RO12345674'))).toBe(true)
+    expect(goesToSales(party('12345674', '12345674'))).toBe(true)
+    expect(goesToSales(party('12345674', 'RO87654321'))).toBe(false)
+    expect(goesToSales(party('12345674', null))).toBe(false)
+  })
+})
+
+describe('the invoices ready for SAGA on a client\'s screen', () => {
+  const ready = { classification_status: 'classified', uploaded_to_accounting: false } as Invoice
+  const waiting = { classification_status: 'review', uploaded_to_accounting: false } as Invoice
+  const imported = { classification_status: 'classified', uploaded_to_accounting: true } as Invoice
+
+  it('are those with an account and not yet imported, of both kinds', () => {
+    expect(readyForSaga([ready, waiting], [ready, imported])).toEqual([ready, ready])
+  })
+
+  it('are not known while either list is missing: the button must name them all', () => {
+    expect(readyForSaga([ready], undefined)).toBeNull()
+    expect(readyForSaga(undefined, [ready])).toBeNull()
   })
 })
