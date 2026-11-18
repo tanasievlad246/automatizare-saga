@@ -15,7 +15,7 @@ const asked = { ask: 'rules_then_jev' } as const
 
 describe('what one question to Jev cost', () => {
   it('says the cost and the time, whichever is known', () => {
-    expect(spentOnJev(jev())).toBe('A costat 0,00002 $ și a durat 1,4 s.')
+    expect(spentOnJev(jev())).toBe('A costat < 0,01 $ și a durat 1,4 s.')
     expect(spentOnJev(jev({ cost_usd: null }))).toBe('A durat 1,4 s.')
     expect(spentOnJev(jev({ cost_usd: null, duration_ms: null }))).toBeNull()
   })

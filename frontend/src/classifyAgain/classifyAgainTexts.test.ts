@@ -58,9 +58,9 @@ describe('how one client went', () => {
 
   it('says plainly when none got an account', () => {
     expect(outcomeLine(result({ total: 3, classified: 0, review: 3, jev_calls: 3, jev_cost_usd: 0.006 })))
-      .toBe('nicio factură nu a primit cont; cele 3 rămân de verificat · Jev: 3 întrebări, 0,006 $')
+      .toBe('nicio factură nu a primit cont; cele 3 rămân de verificat · Jev: 3 întrebări, < 0,01 $')
     expect(outcomeLine(result({ total: 1, classified: 0, review: 1, jev_calls: 1, jev_cost_usd: 0.002 })))
-      .toBe('factura rămâne de verificat · Jev: o întrebare, 0,002 $')
+      .toBe('factura rămâne de verificat · Jev: o întrebare, < 0,01 $')
   })
 
   it('names the invoices still waiting for Jev and those that cannot be read', () => {

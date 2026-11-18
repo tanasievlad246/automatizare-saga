@@ -32,7 +32,7 @@ describe('the answer to a trial invoice decided line by line', () => {
     expect(said).toMatchObject({ tone: 'attention', title: 'De verificat', subtitle: '3 linii au cont, linia 3 așteaptă', failed: false })
     expect(said.sentences).toEqual([
       'O factură adevărată ar aștepta la „De verificat” până alegeți contul liniei 3. Celelalte linii își păstrează contul.',
-      'Jev a fost întrebat de 2 ori, câte o dată pentru liniile 2 și 3. A costat 0,00004 $ în total.',
+      'Jev a fost întrebat de 2 ori, câte o dată pentru liniile 2 și 3. A costat < 0,01 $ în total.',
     ])
   })
 
@@ -62,7 +62,7 @@ describe('the answer to a trial invoice decided line by line', () => {
     expect(said.subtitle).toBe('Nicio linie nu are cont')
     expect(said.sentences).toEqual([
       'O factură adevărată ar aștepta la „De verificat” până alegeți contul liniilor 1 și 2.',
-      'Jev a fost întrebat o dată, pentru linia 1. A costat 0,00002 $.',
+      'Jev a fost întrebat o dată, pentru linia 1. A costat < 0,01 $.',
     ])
   })
 
@@ -137,7 +137,7 @@ describe('the answer to a trial invoice with one account', () => {
 
     expect(said.sentences).toEqual([
       'O factură adevărată ar primi contul fără să vă mai întrebe.',
-      'A costat 0,00002 $ și a durat 1,4 s.',
+      'A costat < 0,01 $ și a durat 1,4 s.',
     ])
   })
 

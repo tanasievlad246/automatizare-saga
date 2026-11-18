@@ -1,7 +1,7 @@
 import { Link } from 'react-router'
 import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { formatPercent, formatUsd, formatWhen } from '../format'
+import { formatPercent, formatUsd, formatUsdExact, formatWhen } from '../format'
 import { isIssued } from '../invoices/issuedInvoices'
 import type { JevCall } from '../types'
 
@@ -45,7 +45,7 @@ export function JevCallsTable({ calls, loading }: { calls: JevCall[]; loading: b
               </TableCell>
               <TableCell className="font-heading text-lg font-bold">{call.choice}</TableCell>
               <TableCell><Sureness call={call} /></TableCell>
-              <TableCell className="text-right whitespace-nowrap">{formatUsd(call.cost_usd)}</TableCell>
+              <TableCell className="text-right whitespace-nowrap" title={formatUsdExact(call.cost_usd)}>{formatUsd(call.cost_usd)}</TableCell>
             </TableRow>
           ))}
         </TableBody>

@@ -29,7 +29,7 @@ export const REFUSED_SENTENCE = 'OpenRouter a refuzat întrebarea. Verificați c
 export const NO_ANSWER_SENTENCE = 'Jev nu a răspuns. Încercați din nou puțin mai târziu.'
 const NOT_ASKED = 'Jev nu a fost întrebat pentru această linie.'
 
-/** "A costat 0,00002 $ și a durat 1,4 s.", or what of it is known; null when neither is. */
+/** "A costat < 0,01 $ și a durat 1,4 s.", or what of it is known; null when neither is. */
 export function spentOnJev(jev: TrialJev): string | null {
   const parts = [
     jev.cost_usd === null ? null : `a costat ${formatUsd(jev.cost_usd)}`,

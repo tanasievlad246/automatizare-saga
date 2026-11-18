@@ -1,5 +1,5 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { formatPeriod, formatUsd } from '../format'
+import { formatPeriod, formatUsd, formatUsdExact } from '../format'
 import type { Costs } from '../types'
 
 /** The cost of each day, week, month or year in the chosen range, newest first. */
@@ -22,7 +22,7 @@ export function CostsByPeriodTable({ periods }: { periods: Costs['by_period'] })
             <TableRow key={period.period}>
               <TableCell className="font-semibold">{formatPeriod(period.period)}</TableCell>
               <TableCell className="text-right">{period.invoices.toLocaleString('ro-RO')}</TableCell>
-              <TableCell className="text-right font-semibold">{formatUsd(period.cost_usd)}</TableCell>
+              <TableCell className="text-right font-semibold whitespace-nowrap" title={formatUsdExact(period.cost_usd)}>{formatUsd(period.cost_usd)}</TableCell>
             </TableRow>
           ))}
         </TableBody>

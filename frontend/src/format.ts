@@ -63,8 +63,19 @@ export function formatAmount(amount: string | null): string {
   return Number(amount).toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
 }
 
-/** Jev costs a few thousandths of a cent per invoice, so small sums keep their first two digits. */
+/**
+ * What Jev cost, in cents: "0,42 $". Jev costs a few thousandths of a cent per invoice, and
+ * "0,000023 $" is a row of zeroes nobody reads, so anything under a cent is "< 0,01 $";
+ * formatUsdExact gives its first digits for whoever looks closer.
+ */
 export function formatUsd(amount: number | null): string {
+  if (amount === null) return ''
+  if (amount > 0 && amount < 0.01) return '< 0,01 $'
+  return `${amount.toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`
+}
+
+/** A cost as it is, a tiny one by its first two digits: "0,000023 $". */
+export function formatUsdExact(amount: number | null): string {
   if (amount === null) return ''
   const options =
     amount === 0 || Math.abs(amount) >= 0.01

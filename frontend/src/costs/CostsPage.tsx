@@ -7,7 +7,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { MOST_CALLS_LISTED, api } from '../api'
 import { errorMessage } from '../errorMessages'
-import { formatUsd, today } from '../format'
+import { formatUsd, formatUsdExact, today } from '../format'
+import { perThousandLine } from './costTexts'
 import type { CostGroup } from '../types'
 import { CostsByPeriodTable } from './CostsByPeriodTable'
 import { JevCallsTable } from './JevCallsTable'
@@ -56,9 +57,14 @@ export function CostsPage() {
       {costs.data && (
         <>
           <div className="grid grid-cols-[repeat(auto-fit,minmax(min(240px,100%),1fr))] gap-4">
-            <Figure name="Cost în perioada aleasă" value={formatUsd(costs.data.cost_usd)} />
+            <Figure name="Cost în perioada aleasă" value={formatUsd(costs.data.cost_usd)} exact={formatUsdExact(costs.data.cost_usd)} />
             <Figure name="Facturi clasificate de Jev" value={costs.data.invoices.toLocaleString('ro-RO')} />
-            <Figure name="Cost mediu pe factură" value={formatUsd(costs.data.average_cost_per_invoice_usd) || 'încă nimic'} />
+            <Figure
+              name="Cost mediu pe factură"
+              value={formatUsd(costs.data.average_cost_per_invoice_usd) || 'încă nimic'}
+              exact={formatUsdExact(costs.data.average_cost_per_invoice_usd)}
+              note={perThousandLine(costs.data.average_cost_per_invoice_usd)}
+            />
           </div>
           <section className="flex flex-col gap-3">
             <h2 className="text-2xl">{GROUPS.find((each) => each.value === group)?.heading}</h2>
@@ -83,11 +89,16 @@ export function CostsPage() {
   )
 }
 
-function Figure({ name, value }: { name: string; value: string }) {
+/**
+ * One figure in large type. `exact`: the cost as it is, shown when the figure is pointed at
+ * (a cost under a cent reads "< 0,01 $"); `note`: a line under it.
+ */
+function Figure({ name, value, exact, note }: { name: string; value: string; exact?: string; note?: string | null }) {
   return (
     <div className="rounded-2xl border bg-card px-5 py-4.5">
       <div className="font-semibold text-muted-foreground">{name}</div>
-      <div className="font-heading text-[2.4rem] leading-tight font-bold">{value}</div>
+      <div className="font-heading text-[2.4rem] leading-tight font-bold" title={exact && exact !== value ? exact : undefined}>{value}</div>
+      {note && <div className="text-muted-foreground">{note}</div>}
     </div>
   )
 }

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { ApiError } from './api'
 import { errorDetail, errorMessage } from './errorMessages'
 import {
-  countDoing, countOf, daysAgo, formatAmount, formatDate, formatFromWhen, formatMoney, formatNext, formatPercent, formatPeriod, formatUsd, formatSize, formatWhen,
+  countDoing, countOf, daysAgo, formatAmount, formatDate, formatFromWhen, formatMoney, formatNext, formatPercent, formatPeriod, formatUsd, formatUsdExact, formatSize, formatWhen,
   shortPath, today,
 } from './format'
 
@@ -22,11 +22,20 @@ describe('amounts', () => {
     expect(formatAmount('0.12345')).toBe('0,1235')
   })
 
-  it('shows a tiny cost by its first digits instead of rounding it to zero', () => {
-    expect(plain(formatUsd(0.00002))).toBe('0,00002 $')
-    expect(plain(formatUsd(0.0013))).toBe('0,0013 $')
+  it('shows a cost under one cent as "< 0,01 $", without a row of zeroes, and never as nothing', () => {
+    expect(plain(formatUsd(0.000023))).toBe('< 0,01 $')
+    expect(plain(formatUsd(0.0099))).toBe('< 0,01 $')
+    expect(plain(formatUsd(0.01))).toBe('0,01 $')
     expect(plain(formatUsd(0.42))).toBe('0,42 $')
     expect(plain(formatUsd(0))).toBe('0,00 $')
+    expect(formatUsd(null)).toBe('')
+  })
+
+  it('keeps the exact figure of a tiny cost, by its first digits, for whoever looks closer', () => {
+    expect(plain(formatUsdExact(0.000023))).toBe('0,000023 $')
+    expect(plain(formatUsdExact(0.0013))).toBe('0,0013 $')
+    expect(plain(formatUsdExact(0.42))).toBe('0,42 $')
+    expect(formatUsdExact(null)).toBe('')
   })
 
   it('writes a share as a whole percentage', () => {
