@@ -18,11 +18,11 @@ import time
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import Callable, Union
+from typing import Callable, Literal, Optional, Union
 
 from fastapi import APIRouter, Depends, FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, StrictBool, StrictInt
@@ -36,6 +36,9 @@ from .errors import (
     ANAF_LIMIT_REACHED,
     BUSY,
     CLIENT_OFF,
+    SAGA_FILES_CHANGED,
+    SAGA_FILES_STALE,
+    SAGA_ARCHIVE_ERROR,
     CONFIG_ERROR,
     INTERNAL_ERROR,
     INVALID_CUI,
@@ -73,6 +76,9 @@ HTTP_STATUS = {
     UPDATE_ERROR: 409,
     BACKUP_ERROR: 409,
     CLIENT_OFF: 409,
+    SAGA_FILES_CHANGED: 409,
+    SAGA_FILES_STALE: 409,
+    SAGA_ARCHIVE_ERROR: 409,
     JEV_ERROR: 502,
     NO_SPV_RIGHTS: 502,
     ANAF_LIMIT_REACHED: 502,
@@ -208,6 +214,10 @@ class PerLineRequest(BaseModel):
     enabled: StrictBool
 
 
+class ClassifyAgainRequest(BaseModel):
+    jev: StrictBool = True  # false: the rules alone, and Jev is not asked
+
+
 class PeriodRequest(BaseModel):
     days: StrictInt | None = None  # the last so many days, 1-60; a number, not "7" or true
     start: str | None = None  # or a first day, YYYY-MM-DD, with a last one
@@ -229,6 +239,11 @@ class ScreenSettingsRequest(BaseModel):
 
 class SagaFilesRequest(BaseModel):
     cui: Union[str, int, None] = None  # left out: every client
+
+
+class SagaImportedRequest(BaseModel):
+    version: Optional[str] = None  # from GET /saga-files; left out, whatever the files hold now
+    source: Literal["api", "screen"] = "api"  # "screen": confirmed by a person on the page
 
 
 class OpenFolderRequest(BaseModel):
@@ -636,6 +651,13 @@ def create_app(
         return call(lambda s: s.set_client_per_line(cui, body.enabled))
 
     @router.post(
+        "/clients/{cui}/classify-again", dependencies=documented_key,
+        summary="Send this client's invoices to check or waiting for Jev back through the rules and Jev",
+    )
+    def classify_again(cui: str, body: ClassifyAgainRequest | None = None):
+        return call(lambda s: s.classify_again(cui, jev=body.jev if body else True))
+
+    @router.post(
         "/clients/import", dependencies=documented_key,
         summary="Add clients from a CSV or Excel file sent as the request body",
     )
@@ -666,6 +688,47 @@ def create_app(
     def write_saga_files(body: SagaFilesRequest):
         cui = str(body.cui) if body.cui is not None else None
         return call(lambda s: s.write_saga_files(cui))
+
+    # --- an import in SAGA, confirmed, and the archive ---
+
+    @router.get("/saga-files", dependencies=documented_key, summary="Every client with a file for SAGA waiting")
+    def saga_files():
+        return call(lambda s: s.saga_files())
+
+    @router.get("/saga-files/{cui}", dependencies=documented_key, summary="One client's files for SAGA and their version")
+    def saga_files_of(cui: str):
+        return call(lambda s: s.saga_files(cui))
+
+    @router.post(
+        "/saga-files/{cui}/imported", dependencies=documented_key,
+        summary="SAGA imported this client's files: mark their invoices and archive the files",
+    )
+    def saga_imported(cui: str, body: SagaImportedRequest):
+        return call(lambda s: s.confirm_saga_import(cui, version=body.version, source=body.source))
+
+    @router.get("/saga-archive", dependencies=documented_key, summary="One client's confirmed imports, newest first")
+    def saga_archive(cui: str):
+        return call(lambda s: s.saga_archive(cui))
+
+    @router.get("/saga-archive/{import_id}", dependencies=documented_key, summary="One confirmed import, with its invoices")
+    def saga_archive_entry(import_id: int):
+        return call(lambda s: s.saga_archive_entry(import_id))
+
+    @router.get(
+        "/saga-archive/{import_id}/files/{name}", dependencies=documented_key,
+        summary="A file of a confirmed import, as SAGA got it",
+    )
+    def saga_archive_file(import_id: int, name: str):
+        service = make_service(cfg)
+        try:
+            path = service.saga_archive_file(import_id, name)
+        finally:
+            service.close()
+        return FileResponse(path, media_type="application/xml", filename=path.name)
+
+    @router.post("/saga-archive/{import_id}/open", dependencies=documented_key, summary="Show a confirmed import's folder")
+    def open_saga_archive(import_id: int):
+        return call(lambda s: s.open_saga_archive(import_id))
 
     @router.post(
         "/settings/choose-folder", dependencies=documented_key,

@@ -17,12 +17,29 @@ export type Client = {
   issued_new_count: number
   review_count: number // of both kinds
   issued_review_count: number
+  waiting_count: number // of both kinds: waiting for Jev, who did not answer at the last download
   ready_count: number // of both kinds
   last_sync_at: string | null
   enabled: boolean
 }
 
 export type ClassificationStatus = 'pending' | 'classified' | 'review' | null
+
+/** One client's invoices to check, or waiting for Jev, sent back through the rules and Jev. */
+export type ClassifyAgainResult = {
+  ok: true
+  cui: string
+  client: string | null
+  total: number // how many were classified again
+  classified: number // got an account
+  review: number // still to check
+  waiting: number // still waiting for Jev
+  skipped: number // could not be read, and left classification
+  jev_asked: boolean // false: the rules alone
+  jev_stopped: boolean // Jev stopped answering on the way
+  jev_calls: number
+  jev_cost_usd: number
+}
 
 /** How the invoices waiting for SAGA are put in files: one file per client, or one per invoice. */
 export type SagaFilePer = 'client' | 'invoice'
@@ -35,6 +52,9 @@ export type SagaState = {
   file_per: SagaFilePer
   written_at: string | null
   problem: { message: string; at: string } | null
+  up_to_date: boolean // no failure noted, and every file the program wrote is still in the folder
+  // A fingerprint of the files on disk, sent back when the import is confirmed; only with the received invoices.
+  version?: string | null
 }
 
 export type Invoice = {
@@ -51,6 +71,7 @@ export type Invoice = {
   total_with_vat: string | null // what the invoice is worth: this is the "Total" of every list
   total_payable: string | null // what is left to pay: more with an earlier balance, less with an advance
   uploaded_to_accounting: boolean
+  uploaded_at: string | null
   is_new: boolean
   classification_status: ClassificationStatus
   cont: string | null
@@ -63,6 +84,7 @@ export type Invoice = {
   line_accounts: LineAccount[] | null // null: one account for the whole invoice
   classification_error: string | null
   possible_duplicate_of: string | null
+  saga_import?: SagaImportRef | null // on one invoice's screen: the confirmed import it went to SAGA in
 }
 
 /** The account of one line of an invoice decided line by line. `line` is its number on the invoice. */
@@ -175,6 +197,25 @@ export type RuleFields = Omit<Rule, 'id'>
 
 /** Received by the client, or issued by it: each kind has its own accounts, rules and questions. */
 export type InvoiceKind = 'received' | 'issued'
+/** The tabs of a client's screen: its two lists of invoices, and the archive of its imports in SAGA. */
+export type ClientTab = InvoiceKind | 'archive'
+
+/** Who confirmed an import in SAGA: the automation, through the API, or a person on this page. */
+export type SagaImportSource = 'api' | 'screen'
+/** The confirmed import an invoice went to SAGA in, as one invoice's screen gets it. */
+export type SagaImportRef = { id: number; imported_at: string; source: SagaImportSource }
+/** One confirmed import: the client's files as SAGA got them, kept in the archive. */
+export type SagaImport = SagaImportRef & {
+  cui: string
+  folder: string
+  files: { name: string; path: string; present: boolean }[] // present: the file is still in the archive
+  invoices: number
+  received: number
+  issued: number
+  unmarked: number // no longer marked as imported, so back in the file for SAGA
+}
+/** One confirmed import with its invoices, as the lists give them. */
+export type SagaImportDetail = Omit<SagaImport, 'invoices'> & { invoices: Invoice[] }
 
 export type RulesOverview = {
   accounts: Record<string, string>

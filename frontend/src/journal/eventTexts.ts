@@ -2,7 +2,7 @@
 // is known to write become Romanian sentences; anything else keeps the English line.
 
 import { newInvoices } from '../newInvoices'
-import { countOf, formatPercent, formatUsd } from '../format'
+import { countDoing, countOf, formatPercent, formatUsd } from '../format'
 import { describePeriod, describeWhen } from '../schedule/scheduleTexts'
 import type { JournalLine, SchedulePeriod } from '../types'
 
@@ -109,6 +109,16 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
   'anaf.certificate_asked': () => 'Programul a cerut certificatul de la Windows.',
   'anaf.renewed': () => 'Conectarea la ANAF a fost reînnoită automat, fără tokenul USB.',
 
+  'classification.again': (data) => {
+    const parts = [
+      countOf(Number(data.total), 'o factură', 'facturi'),
+      Number(data.classified) ? countDoing(Number(data.classified), 'una a primit cont', 'au primit cont') : 'niciuna nu a primit cont',
+      ...(Number(data.review) ? [countDoing(Number(data.review), 'una rămâne de verificat', 'rămân de verificat')] : []),
+      ...(Number(data.waiting) ? [countDoing(Number(data.waiting), 'una așteaptă încă răspunsul lui Jev', 'așteaptă încă răspunsul lui Jev')] : []),
+    ]
+    return `Facturile de verificat ale clientului ${who(data)} au fost clasificate din nou${data.jev_asked ? '' : ', doar după reguli'}: ` +
+      `${parts.join(', ')}.${data.jev_stopped ? ' Jev nu a mai răspuns.' : ''}`
+  },
   'account.by_rule': (data) => `${invoice(data)} a primit contul ${text(data.cont)}, după o regulă a dumneavoastră.`,
   'account.by_jev': (data) =>
     `${invoice(data)} a primit contul ${text(data.cont)}, ales de Jev (sigur ${formatPercent(Number(data.confidence))}).`,

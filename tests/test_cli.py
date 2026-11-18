@@ -218,6 +218,36 @@ def test_mark_uploaded_unknown_id_exits_one(run, logged_in):
     assert json.loads(out)["error"]["code"] == "not_found"
 
 
+def test_the_saga_import_commands_answer_in_json(run, config_path, logged_in):
+    Service(load_config(config_path)).save_client(VALID_CUI, "Alfa Construct SRL")
+
+    _, listed, _ = run("saga-files")
+    _, one, _ = run("saga-files", VALID_CUI)
+    code, confirmed, _ = run("saga-imported", VALID_CUI, "--version", "abc")
+    _, archive, _ = run("saga-archive", VALID_CUI)
+    unknown_code, unknown, _ = run("saga-imported", "18547290")
+
+    assert json.loads(listed)["clients"] == [] and json.loads(one)["files"] == []
+    assert code == 0 and json.loads(confirmed) == {"ok": True, "archive": None}
+    assert json.loads(archive)["imports"] == []
+    assert unknown_code == 1 and json.loads(unknown)["error"]["code"] == "not_found"
+
+
+def test_classify_again_answers_for_one_client_or_for_all(run, config_path, logged_in):
+    Service(load_config(config_path)).save_client(VALID_CUI, "Alfa Construct SRL")
+
+    code, one, _ = run("classify-again", VALID_CUI, "--no-jev")
+    _, every, _ = run("classify-again", "--all")
+    neither_code, neither, _ = run("classify-again")
+
+    assert code == 0
+    assert {key: json.loads(one)[key] for key in ("cui", "total", "jev_asked")} == {
+        "cui": VALID_CUI, "total": 0, "jev_asked": False,
+    }
+    assert json.loads(every)["clients"] == []  # nothing waits for an account
+    assert neither_code == 1 and json.loads(neither)["error"]["code"] == "invalid_input"
+
+
 # --- login -------------------------------------------------------------------
 
 

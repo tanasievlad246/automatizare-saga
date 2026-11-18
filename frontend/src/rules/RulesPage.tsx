@@ -41,7 +41,7 @@ export function RulesPage() {
   })
 
   return (
-    <div className="flex max-w-[66rem] flex-col gap-9">
+    <div className="flex flex-col gap-9">
       <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
         <div className="min-w-0 flex-[1_1_28rem]">
           <PageTitle title="Reguli de clasificare">
@@ -62,53 +62,61 @@ export function RulesPage() {
         onChange={(wanted) => setSearch(wanted === 'issued' ? { fel: 'emise' } : {}, { replace: true })}
       />
 
-      {/* Proposed rules come from received invoices only, so far. */}
-      {kind === 'received' && <ProposedRulesSection onChangeFirst={(draft) => setEditing({ rule: 'new', draft })} />}
+      {/* On a wide screen the rules on the left, and beside them what they choose from: the
+          accounts, and how Jev is asked. Narrower, one under the other. */}
+      <div className="grid items-start gap-9 min-[96rem]:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+        <div className="flex min-w-0 flex-col gap-9">
+          {/* Proposed rules come from received invoices only, so far. */}
+          {kind === 'received' && <ProposedRulesSection onChangeFirst={(draft) => setEditing({ rule: 'new', draft })} />}
 
-      <section className="flex flex-col gap-3.5">
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
-          <div className="min-w-0 flex-[1_1_240px]">
-            <h2 className="text-2xl">{kind === 'issued' ? 'Regulile pentru facturile emise' : 'Regulile mele'}</h2>
-            {kind === 'issued' && (
-              <p className="mt-1 text-muted-foreground">
-                Se uită la liniile facturilor emise de clienți: cuvinte, codul articolului, codul CPV sau NC. Nu se
-                uită la cumpărător. O regulă de aici nu hotărăște niciodată o factură primită.
+          <section className="flex flex-col gap-3.5">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+              <div className="min-w-0 flex-[1_1_240px]">
+                <h2 className="text-2xl">{kind === 'issued' ? 'Regulile pentru facturile emise' : 'Regulile mele'}</h2>
+                {kind === 'issued' && (
+                  <p className="mt-1 text-muted-foreground">
+                    Se uită la liniile facturilor emise de clienți: cuvinte, codul articolului, codul CPV sau NC. Nu se
+                    uită la cumpărător. O regulă de aici nu hotărăște niciodată o factură primită.
+                  </p>
+                )}
+              </div>
+              <Button onClick={() => setEditing({ rule: 'new' })}>Adaugă o regulă</Button>
+            </div>
+            {data && rules.length === 0 && (
+              <p className="rounded-2xl border bg-card px-6 py-6 text-lg">
+                {kind === 'issued'
+                  ? 'Nicio regulă pentru facturile emise încă. Fără reguli, liniile lor merg la Jev.'
+                  : 'Nicio regulă încă. Fără reguli, toate facturile merg la Jev.'}
               </p>
             )}
-          </div>
-          <Button onClick={() => setEditing({ rule: 'new' })}>Adaugă o regulă</Button>
+            {rules.map((rule, index) => (
+              <RuleRow
+                key={rule.id}
+                rule={rule}
+                position={index + 1}
+                isLast={index === rules.length - 1}
+                clientName={clients.find((client) => client.cui === rule.client_cui)?.name ?? null}
+                onEdit={() => setEditing({ rule })}
+                onMove={(up) => move.mutate({ id: rule.id, up })}
+              />
+            ))}
+          </section>
         </div>
-        {data && rules.length === 0 && (
-          <p className="rounded-2xl border bg-card px-6 py-6 text-lg">
-            {kind === 'issued'
-              ? 'Nicio regulă pentru facturile emise încă. Fără reguli, liniile lor merg la Jev.'
-              : 'Nicio regulă încă. Fără reguli, toate facturile merg la Jev.'}
-          </p>
-        )}
-        {rules.map((rule, index) => (
-          <RuleRow
-            key={rule.id}
-            rule={rule}
-            position={index + 1}
-            isLast={index === rules.length - 1}
-            clientName={clients.find((client) => client.cui === rule.client_cui)?.name ?? null}
-            onEdit={() => setEditing({ rule })}
-            onMove={(up) => move.mutate({ id: rule.id, up })}
-          />
-        ))}
-      </section>
 
-      {data && <AccountsCard kind={kind} accounts={kind === 'issued' ? data.issued_accounts : data.accounts} />}
-      {data && (
-        <JevSettingsCard
-          // The fields start from the questions of the tab shown.
-          key={kind}
-          kind={kind}
-          minConfidence={data.min_confidence}
-          question={kind === 'issued' ? data.jev_issued_instructions : data.jev_instructions}
-          lineQuestion={kind === 'issued' ? data.jev_issued_line_instructions : data.jev_line_instructions}
-        />
-      )}
+        <div className="flex min-w-0 flex-col gap-9">
+          {data && <AccountsCard kind={kind} accounts={kind === 'issued' ? data.issued_accounts : data.accounts} />}
+          {data && (
+            <JevSettingsCard
+              // The fields start from the questions of the tab shown.
+              key={kind}
+              kind={kind}
+              minConfidence={data.min_confidence}
+              question={kind === 'issued' ? data.jev_issued_instructions : data.jev_instructions}
+              lineQuestion={kind === 'issued' ? data.jev_issued_line_instructions : data.jev_line_instructions}
+            />
+          )}
+        </div>
+      </div>
       {editing && <RuleDialog {...editing} kind={kind} clients={clients} onClose={() => setEditing(null)} />}
     </div>
   )

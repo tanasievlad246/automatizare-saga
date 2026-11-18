@@ -9,12 +9,14 @@ import logging
 import math
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
 import time
 from collections import Counter
 from contextlib import nullcontext
+from functools import partial
 from dataclasses import asdict, dataclass, replace
 from decimal import Decimal, InvalidOperation
 from datetime import date, datetime, timedelta
@@ -47,6 +49,9 @@ from .errors import (
     ANAF_LIMIT_REACHED,
     BUSY,
     CLIENT_OFF,
+    SAGA_FILES_CHANGED,
+    SAGA_FILES_STALE,
+    SAGA_ARCHIVE_ERROR,
     CONFIG_ERROR,
     INTERNAL_ERROR,
     INVALID_CUI,
@@ -146,6 +151,10 @@ SAGA_FILE_PER = "saga_file_per"
 SHOW_ISSUED = "show_issued"
 # Bringing a client's files up to date takes a moment; a second writer waits this long for it.
 SAGA_LOCK_WAIT = 30.0
+# Who confirmed an import in SAGA: a program through the API (the automation), or a person on screen.
+SAGA_IMPORT_SOURCES = ("api", "screen")
+# Where the files of a confirmed import are kept, inside the data folder.
+SAGA_ARCHIVE_DIR = "saga-archive"
 
 
 class _JevCouldNotDecide(Exception):
@@ -607,7 +616,7 @@ class Service:
             # One client's list also says how that client's files for SAGA stand, and how
             # many invoices the client issued, which the page does not list unless asked to.
             of_client = {
-                "saga": self._saga_state(store, normalize_cui(cui)),
+                "saga": self._saga_state(store, normalize_cui(cui), with_version=message_type != "trimisa"),
                 "issued_count": store.issued_count(normalize_cui(cui)),
             } if cui else {}
         finally:
@@ -618,11 +627,13 @@ class Service:
         store = self._open_store()
         try:
             row = store.get_message(message_id, include_xml=include_xml)
+            # The confirmed import it went to SAGA in, if any: one invoice says it, the lists do not.
+            saga_import = store.saga_import_of(message_id) if row else None
         finally:
             store.close()
         if row is None:
             raise EfacturaError(NOT_FOUND, f"No saved message with id: {message_id}")
-        return {"ok": True, "invoice": self._present(row)}
+        return {"ok": True, "invoice": {**self._present(row), "saga_import": saga_import}}
 
     def mark_uploaded(self, ids: list[str], undo: bool = False) -> dict:
         ids = [str(i) for i in ids]
@@ -1026,6 +1037,214 @@ class Service:
         finally:
             store.close()
         return {"ok": True, "clients": len(clients), "problems": problems}
+
+    # --- the import in SAGA, confirmed, and its archive ----------------------------------
+
+    def saga_files(self, cui: str | None = None) -> dict:
+        """What waits for SAGA, for one client or for every client that has a file: the
+        files with their paths and invoices, whether they are up to date, and their version,
+        a fingerprint of the files as they are on disk. A program that imports them into SAGA
+        sends the version back with confirm_saga_import."""
+        store = self._open_store()
+        try:
+            if cui:
+                return {"ok": True, **self._saga_waiting(store, self._known_client(store, cui))}
+            listed = [self._saga_waiting(store, client) for client in store.clients_with_saga_files()]
+        finally:
+            store.close()
+        return {"ok": True, "clients": [entry for entry in listed if entry["files"]]}
+
+    def confirm_saga_import(self, cui: str, version: str | None = None, source: str = "api") -> dict:
+        """SAGA has imported this client's files: mark every invoice in them as imported,
+        and move the files, as SAGA got them, to the archive.
+
+        The invoices are those the program put in the files when it last wrote them, which
+        is what SAGA read. Refused, changing nothing, when `version` is given and the files
+        have changed since it was read, or when the files are not up to date. With nothing
+        waiting, the answer's archive is None.
+        """
+        if source not in SAGA_IMPORT_SOURCES:
+            raise EfacturaError(INVALID_INPUT, f"source must be one of: {', '.join(SAGA_IMPORT_SOURCES)}.")
+        version = (version or "").strip() or None
+        store = self._open_store()
+        try:
+            client = self._known_client(store, cui)
+            # The same lock as every writer of the files: nothing rewrites them meanwhile.
+            with _FileLock(
+                self.cfg.saga_lock_path, wait=SAGA_LOCK_WAIT,
+                busy="The files for SAGA are being written by another part of the program.",
+            ):
+                archive = self._archive_saga_files(store, client, version, source)
+        finally:
+            store.close()
+        return {"ok": True, "archive": archive}
+
+    def _archive_saga_files(self, store: Store, cui: str, version: str | None, source: str) -> dict | None:
+        waiting = self._saga_waiting(store, cui)
+        if not waiting["files"]:
+            return None
+        if not waiting["up_to_date"]:
+            raise EfacturaError(
+                SAGA_FILES_STALE,
+                f"The files for SAGA of {cui} are not up to date, so what SAGA imported is not known. "
+                "Bring them up to date, import them again and confirm then.",
+            )
+        # Read once: the bytes compared with the version are the bytes archived.
+        contents = []
+        for file in waiting["files"]:
+            try:
+                contents.append((file["name"], Path(file["path"]).read_bytes()))
+            except OSError as exc:
+                raise EfacturaError(SAGA_FILES_STALE, f"A file for SAGA could not be read: {exc}") from exc
+        if version and version != _version_of(contents):
+            raise EfacturaError(
+                SAGA_FILES_CHANGED,
+                f"The files for SAGA of {cui} have changed since version {version} was read; nothing was "
+                "marked. Read them again, import them and confirm with the new version.",
+            )
+        now = self._now()
+        when = now.isoformat()
+        try:
+            folder = self._new_archive_folder(cui, now)
+        except OSError as exc:
+            raise EfacturaError(SAGA_ARCHIVE_ERROR, f"The archive folder could not be made: {exc}. Nothing was marked.") from exc
+        ids = [message_id for file in waiting["files"] for message_id in file["ids"]]
+        try:
+            kept = []
+            for name, content in contents:
+                target = folder / name
+                try:
+                    _write_file(target, content)
+                except OSError as exc:
+                    raise EfacturaError(
+                        SAGA_ARCHIVE_ERROR, f"The archive could not be written ({target}): {exc}. Nothing was marked."
+                    ) from exc
+                kept.append(target)
+            import_id = store.record_saga_import(
+                cui=cui, imported_at=when, source=source, folder=self._stored_path(folder),
+                files=[file["name"] for file in waiting["files"]], ids=ids,
+            )
+        except BaseException:
+            shutil.rmtree(folder, ignore_errors=True)
+            raise
+        # The invoices wait no more, so bringing the folder up to date takes the files out of
+        # it. One SAGA still holds open is noted, and removed at a later try.
+        try:
+            self._place_saga_files(store, cui, when)
+            failure = None
+        except Exception as exc:
+            failure = exc
+        self._note_saga_outcome(store, cui, failure, when)
+        journal.record(
+            "accounts", "saga.imported",
+            f"Import in SAGA confirmed for {cui}: {len(ids)} invoice(s) marked as imported, the files archived.",
+            cui=cui, client=store.client_name(cui), invoices=len(ids), source=source, import_id=import_id,
+            files=[file["name"] for file in waiting["files"]],
+        )
+        return {
+            "id": import_id, "cui": cui, "imported_at": when, "source": source, "invoices": len(ids), "ids": ids,
+            "folder": str(folder), "files": [{"name": path.name, "path": str(path)} for path in kept],
+        }
+
+    def _new_archive_folder(self, cui: str, now: datetime) -> Path:
+        """A folder of its own for one import: by client, then by its date and time."""
+        base = self.cfg.data_dir / SAGA_ARCHIVE_DIR / cui / now.strftime("%Y-%m-%d_%H-%M-%S")
+        folder, number = base, 1
+        while folder.exists():
+            number += 1
+            folder = base.with_name(f"{base.name}_{number}")
+        folder.mkdir(parents=True)
+        return folder
+
+    def _saga_waiting(self, store: Store, cui: str) -> dict:
+        """One client's files for SAGA as the program last wrote them, for confirming an import."""
+        files = []
+        for stored, ids in store.saga_placement(cui).items():
+            path = self.cfg.data_dir / stored
+            files.append({"name": path.name, "path": str(path), "invoices": len(ids), "ids": ids})
+        on_disk = all(Path(file["path"]).is_file() for file in files)
+        return {
+            "cui": cui, "client": store.client_name(cui), "file_per": _saga_file_per(store), "files": files,
+            "invoices": sum(file["invoices"] for file in files),
+            "up_to_date": store.saga_problem(cui) is None and on_disk,
+            "version": _saga_version([Path(file["path"]) for file in files]),
+        }
+
+    def _known_client(self, store: Store, cui: str) -> str:
+        client = normalize_cui(cui)
+        if store.client_enabled(client) is None:
+            raise EfacturaError(NOT_FOUND, f"No client with CUI {client}.")
+        return client
+
+    def saga_archive(self, cui: str) -> dict:
+        """One client's confirmed imports, the newest first."""
+        cui = normalize_cui(cui)
+        store = self._open_store()
+        try:
+            imports = [self._present_import(entry) for entry in store.saga_imports(cui)]
+        finally:
+            store.close()
+        return {"ok": True, "cui": cui, "imports": imports}
+
+    def saga_archive_entry(self, import_id: int) -> dict:
+        """One confirmed import, with its invoices as the lists give them."""
+        store = self._open_store()
+        try:
+            entry = self._saga_import(store, import_id)
+            rows = store.messages_by_ids(entry["ids"])
+        finally:
+            store.close()
+        invoices = [self._present(row) for row in rows]
+        counts = {
+            "invoices": len(invoices),
+            "received": sum(1 for row in rows if _is_received(row["message_type"])),
+            "issued": sum(1 for row in rows if _is_issued(row["message_type"])),
+            "unmarked": sum(1 for row in rows if not row["uploaded_to_accounting"]),
+        }
+        return {"ok": True, "import": {**self._present_import({**entry, **counts}), "invoices": invoices}}
+
+    def saga_archive_file(self, import_id: int, name: str) -> Path:
+        """One of the files of a confirmed import, as SAGA got it."""
+        store = self._open_store()
+        try:
+            entry = self._saga_import(store, import_id)
+        finally:
+            store.close()
+        if name not in entry["files"]:  # only the names on record: nothing outside the entry
+            raise EfacturaError(NOT_FOUND, f"Import {import_id} has no file named {name}.")
+        path = self.cfg.data_dir / entry["folder"] / name
+        if not path.is_file():
+            raise EfacturaError(NOT_FOUND, f"The archived file is gone: {path}")
+        return path
+
+    def open_saga_archive(self, import_id: int) -> dict:
+        """Show the folder of a confirmed import in the file manager."""
+        store = self._open_store()
+        try:
+            entry = self._saga_import(store, import_id)
+        finally:
+            store.close()
+        folder = self.cfg.data_dir / entry["folder"]
+        if not folder.is_dir():
+            raise EfacturaError(NOT_FOUND, f"The archive folder is gone: {folder}")
+        _reveal(folder)
+        return {"ok": True, "folder": str(folder)}
+
+    def _saga_import(self, store: Store, import_id: int) -> dict:
+        entry = store.saga_import(int(import_id))
+        if entry is None:
+            raise EfacturaError(NOT_FOUND, f"No import with id {import_id}.")
+        return entry
+
+    def _present_import(self, entry: dict) -> dict:
+        """An import as the commands return it: its folder and files with full paths, and
+        whether each file is still there."""
+        folder = self.cfg.data_dir / entry["folder"]
+        shown = {key: value for key, value in entry.items() if key != "ids"}
+        return {
+            **shown, "folder": str(folder),
+            "files": [{"name": name, "path": str(folder / name), "present": (folder / name).is_file()} for name in entry["files"]],
+        }
 
     def choose_folder(self, purpose: str = "saga") -> dict:
         """Let the person pick a folder in the computer's own dialog; None if they cancel.
@@ -1621,9 +1840,10 @@ class Service:
             client_name = store.client_name(row["cui"])
             rule_suggestion = self._rule_suggestion(store, row)
             saga_state = self._saga_state(store, row["cui"])
+            saga_import = store.saga_import_of(message_id)
         finally:
             store.close()
-        shown = self._present(row)
+        shown = {**self._present(row), "saga_import": saga_import}
         xml = shown.pop("invoice_xml")
         shown.pop("signature_xml")
         invoice = parse_invoice(xml or "")
@@ -1651,28 +1871,8 @@ class Service:
         Never fails the sync: the messages are saved either way, and an invoice that could
         not be classified simply waits for the next run.
         """
-        counts = {CLASSIFIED: 0, REVIEW: 0, PENDING: 0}
         tally = _new_tally()
-        jev_down = False
-        for message_id in store.pending_classification(cui):
-            try:
-                status = self._classify_one(store, message_id, tally, jev_allowed=not jev_down)
-            except EfacturaError as exc:
-                if exc.code == NOT_CLASSIFIABLE:
-                    # Waiting again would change nothing: it leaves classification, with why.
-                    store.set_classification(message_id, classification_status=None, classification_error=exc.message)
-                    log.warning("Message %s left out of classification: %s", message_id, exc.message)
-                    continue
-                # OpenRouter itself is failing (connection, key, credit, rate limit), so
-                # the invoices after this one are not sent in this run either.
-                jev_down = jev_down or exc.code == JEV_ERROR
-                status = PENDING
-                log.warning("Message %s not classified: %s", message_id, exc.message)
-            except Exception as exc:
-                log.exception("Could not classify message %s", message_id)
-                status = PENDING
-                _note_error(store, message_id, f"{type(exc).__name__}: {exc}")
-            counts[status] += 1
+        counts, _, _ = self._classify_each(store, store.pending_classification(cui), tally)
 
         self._write_saga_files(store, cui)
         result["new"] = [self._present(store.get_message(entry["id"])) for entry in result["new"]]
@@ -1683,6 +1883,97 @@ class Service:
         }
         if counts[CLASSIFIED]:
             result["saga_folder"] = str(self.cfg.saga_dir / cui)
+
+    def _classify_each(
+        self, store: Store, ids: list[str], tally: dict, jev: bool = True, again: bool = False,
+    ) -> tuple[dict, int, bool]:
+        """Decide these invoices one after another: how many ended in each state, how many
+        left classification, and whether OpenRouter stopped answering on the way. One that
+        cannot be decided now stays as it was; the others are still tried."""
+        counts = {CLASSIFIED: 0, REVIEW: 0, PENDING: 0}
+        left_out, jev_down = 0, False
+        for message_id in ids:
+            try:
+                status = self._classify_one(store, message_id, tally, jev_allowed=jev and not jev_down, again=again)
+            except EfacturaError as exc:
+                if exc.code == NOT_CLASSIFIABLE:
+                    # Waiting again would change nothing: it leaves classification, with why.
+                    store.set_classification(message_id, classification_status=None, classification_error=exc.message)
+                    log.warning("Message %s left out of classification: %s", message_id, exc.message)
+                    left_out += 1
+                    continue
+                # OpenRouter itself is failing (connection, key, credit, rate limit), so
+                # the invoices after this one are not sent in this run either.
+                jev_down = jev_down or exc.code == JEV_ERROR
+                status = _status_now(store, message_id) if again else PENDING
+                log.warning("Message %s not classified: %s", message_id, exc.message)
+            except Exception as exc:
+                log.exception("Could not classify message %s", message_id)
+                _note_error(store, message_id, f"{type(exc).__name__}: {exc}")
+                # A download sends only invoices that wait, and they go on waiting.
+                status = _status_now(store, message_id) if again else PENDING
+            if status in counts:
+                counts[status] += 1
+        return counts, left_out, jev_down
+
+    def classify_again(self, cui: str, jev: bool = True) -> dict:
+        """Send this client's invoices that wait for a person or for Jev, received and
+        issued, back through the rules and, with `jev`, Jev; as a download would, but on
+        purpose, after a rule or an account changed or once OpenRouter answers again.
+
+        What is already decided stays: a line a person chose, and a line Jev was sure of
+        unless a rule now matches it. Without `jev`, what Jev said before stays too, and an
+        invoice waiting for Jev goes on waiting."""
+        cui = normalize_cui(cui)
+        tally = _new_tally()
+        counts, left_out, jev_down = {CLASSIFIED: 0, REVIEW: 0, PENDING: 0}, 0, False
+        with self._lock():
+            store = self._open_store()
+            try:
+                client = store.client_name(cui)
+                ids = store.to_classify_again(cui)
+                if ids:
+                    began = time.monotonic()
+                    try:
+                        counts, left_out, jev_down = self._classify_each(store, ids, tally, jev=jev, again=True)
+                    finally:
+                        self._write_saga_files(store, cui)
+                    journal.record(
+                        "accounts", "classification.again",
+                        f"Classified again for {cui}: {len(ids)} invoice(s), {counts[CLASSIFIED]} got an account, "
+                        f"{counts[REVIEW]} still to check, {counts[PENDING]} waiting for Jev.",
+                        level="warning" if jev_down else "info",
+                        cui=cui, client=client, total=len(ids), classified=counts[CLASSIFIED], review=counts[REVIEW],
+                        waiting=counts[PENDING], skipped=left_out, jev_asked=jev, jev_stopped=jev_down, **tally,
+                        duration_ms=_since(began),
+                    )
+            finally:
+                store.close()
+        return {
+            "ok": True, "cui": cui, "client": client, "total": len(ids),
+            "classified": counts[CLASSIFIED], "review": counts[REVIEW], "waiting": counts[PENDING], "skipped": left_out,
+            "jev_asked": jev, "jev_stopped": jev_down, **tally,
+        }
+
+    def classify_again_all(self, jev: bool = True) -> dict:
+        """`classify_again` for every client in the list with an invoice to check or waiting
+        for Jev, one after another. Once Jev stops answering, it is not asked for the
+        clients after."""
+        store = self._open_store()
+        try:
+            cuis = [client["cui"] for client in store.clients() if client["review_count"] or client["waiting_count"]]
+        finally:
+            store.close()
+        results, ask = [], jev
+        for cui in cuis:
+            result = self.classify_again(cui, jev=ask)
+            ask = ask and not result["jev_stopped"]
+            results.append(result)
+        totals = {
+            key: sum(result[key] for result in results)
+            for key in ("total", "classified", "review", "waiting", "skipped", "jev_calls", "jev_cost_usd")
+        }
+        return {"ok": True, **totals, "clients": results}
 
     def _classifiable(
         self, store: Store, message_id: str, force: bool, classified_ok: bool
@@ -1721,18 +2012,27 @@ class Service:
         return row, invoice
 
     def _classify_one(
-        self, store: Store, message_id: str, tally: dict, jev_allowed: bool = True
+        self, store: Store, message_id: str, tally: dict, jev_allowed: bool = True, again: bool = False,
     ) -> str:
-        """Decide one invoice and return its new status."""
+        """Decide one invoice and return its new status.
+
+        `again`: an invoice that waits for a person or for Jev, sent back on purpose
+        (classify_again). The lines a person chose stay, and so does a line Jev was sure of
+        unless a rule now matches it. Without Jev allowed, whatever no rule decides is left
+        as it was. One that goes back to a person is a detail in the journal."""
         row = store.get_message(message_id, include_xml=True)
         invoice = parse_invoice(row["invoice_xml"] or "")
         if invoice is None:
             raise EfacturaError(NOT_CLASSIFIABLE, "The saved XML cannot be read as an invoice.")
 
+        to_review = partial(self._to_review, quiet=again)
         issued = _is_issued(row["message_type"])
         rulebook = _rulebook_for(store, row["cui"], issued=issued)
         # One line is one account either way: such an invoice is decided, shown and booked whole.
         per_line = store.client_per_line(row["cui"]) and len(invoice.lines) > 1
+        chosen = {
+            entry["line"]: entry for entry in _stored_lines(row) or () if entry["method"] in BY_A_PERSON
+        } if again and per_line else {}
         earlier = _same_invoice_saved_before(store, row)
         if earlier:
             # Booking it automatically would enter the invoice in SAGA a second time.
@@ -1742,19 +2042,20 @@ class Service:
             )
             if per_line:  # every line waits for the person, as it would have been decided
                 open_lines = [
-                    _line_entry(item.number, None, FOLLOWS if follows_largest(invoice, item) else None, why)
+                    chosen.get(item.number)
+                    or _line_entry(item.number, None, FOLLOWS if follows_largest(invoice, item) else None, why)
                     for item in invoice.lines
                 ]
-                return self._record_lines(store, row, invoice, open_lines, why=why)
-            return self._to_review(store, row, why)
+                return self._record_lines(store, row, invoice, open_lines, why=why, quiet=again)
+            return to_review(store, row, why)
         misfit = _parties_misfit(row["cui"], invoice, issued)
         if misfit:
             # SAGA files an invoice by its supplier: one whose parties do not fit its kind
             # would land on the wrong side, so a person looks at it first.
-            return self._to_review(store, row, misfit)
+            return to_review(store, row, misfit)
 
         if per_line:
-            return self._classify_lines(store, row, invoice, rulebook, tally, jev_allowed)
+            return self._classify_lines(store, row, invoice, rulebook, tally, jev_allowed, again, chosen)
 
         decision = decide_by_rules(invoice, rulebook)
         if decision:
@@ -1762,15 +2063,17 @@ class Service:
                 store, row, invoice, decision.cont, "rules",
                 f'Rule "{decision.rule}" matched line {decision.line}, the largest on the invoice.',
             )
+        if again and not jev_allowed:
+            return row["classification_status"]  # no rule decides it: left as it was, Jev's word too
         if not invoice.lines:
-            return self._to_review(store, row, "The invoice has no lines to decide from.")
+            return to_review(store, row, "The invoice has no lines to decide from.")
         if not self.cfg.openrouter_api_key:
-            return self._to_review(
+            return to_review(
                 store, row,
                 "No rule matched, and OpenRouter is not set up ([openrouter] api_key in config.toml).",
             )
         if not rulebook.accounts:
-            return self._to_review(
+            return to_review(
                 store, row, "No rule matched, and there are no accounts for Jev to choose from."
             )
         if not jev_allowed:
@@ -1780,37 +2083,42 @@ class Service:
         request = jev_request(invoice, rulebook, self.cfg.jev_model)
         if not request["state"]["linii"]:
             # Not even the deciding line fits beside the list of accounts.
-            return self._to_review(
+            return to_review(
                 store, row, "The invoice and the list of accounts do not fit in one request to Jev."
             )
         try:
             answer = self._ask_jev(store, row, request, rulebook, tally)
         except _JevCouldNotDecide as exc:
-            return self._to_review(store, row, f"Jev could not decide this invoice: {exc}")
+            return to_review(store, row, f"Jev could not decide this invoice: {exc}")
         cont, reason, jev_said = _judged(answer, _min_confidence(store))
         if cont is None:
-            return self._to_review(store, row, reason, **jev_said)
+            return to_review(store, row, reason, **jev_said)
         return self._finish(store, row, invoice, cont, "jev", reason, **jev_said)
 
     def _classify_lines(
         self, store: Store, row: dict, invoice: Invoice, rulebook: Rulebook, tally: dict, jev_allowed: bool,
+        again: bool = False, chosen: dict[int, dict] | None = None,
     ) -> str:
         """Decide each line on its own: the rules first; a discount or a line worth nothing
         takes the account of the largest line; Jev for the rest, one question per distinct
         line; a person for whatever is left. While OpenRouter is failing as a whole the
         invoice keeps waiting, with the lines Jev has already answered: the next run asks
         only about the others, so a long invoice is not paid for again from the start. The
-        invoice has more than one line."""
+        invoice has more than one line.
+
+        `again` (see _classify_one): the lines in `chosen`, which a person chose, are kept as
+        they are, and Jev's earlier account for a line no rule matches now. When Jev is not
+        asked this time (not allowed, no key, no accounts), every line no rule decides stays
+        as it was, and an invoice that was decided whole stays whole, with Jev's proposal."""
         largest = deciding_line(invoice).number
-        # Answers kept by an earlier run that OpenRouter stopped; never those of a decision
-        # that is being made again on purpose.
-        earlier = {
-            entry["line"]: entry for entry in _stored_lines(row) or () if entry.get("asked")
-        } if row["classification_status"] == PENDING else {}
-        entries = {
-            number: _line_entry(number, rule.cont, "rules", f'Rule "{rule.name}" matched line {number}.', rule=rule.name)
-            for number, rule in rules_by_line(invoice, rulebook).items()
-        }
+        waiting = row["classification_status"] == PENDING
+        stored = _stored_lines(row)
+        entries = dict(chosen or {})
+        for number, rule in rules_by_line(invoice, rulebook).items():
+            if number not in entries:
+                entries[number] = _line_entry(
+                    number, rule.cont, "rules", f'Rule "{rule.name}" matched line {number}.', rule=rule.name
+                )
         for item in invoice.lines:
             if item.number not in entries and follows_largest(invoice, item):
                 entries[item.number] = _line_entry(
@@ -1822,9 +2130,29 @@ class Service:
             why_not = "No rule matched this line, and OpenRouter is not set up ([openrouter] api_key in config.toml)."
         elif asked and not rulebook.accounts:
             why_not = "No rule matched this line, and there are no accounts for Jev to choose from."
-        elif asked and not jev_allowed:
+        if again and asked and (not jev_allowed or (why_not and not waiting)):
+            # Jev is not asked this time: what no rule decides now stays as it was.
+            if waiting:
+                return PENDING  # it goes on waiting for Jev, untouched
+            if stored is None:
+                return row["classification_status"]  # decided whole before: whole, with Jev's proposal
+            kept = {entry["line"]: entry for entry in stored}
+            for item in asked:
+                entries[item.number] = kept.get(item.number) or _line_entry(
+                    item.number, reason=why_not or "No rule matched this line, and Jev was not asked this time."
+                )
+            return self._record_lines(store, row, invoice, [entries[item.number] for item in invoice.lines], quiet=True)
+        if asked and not why_not and not jev_allowed:
             _note_error(store, row["id"], "Not sent to Jev: OpenRouter failed earlier in this run.")
             return PENDING
+        answered = [entry for entry in stored or () if entry.get("asked")]
+        if waiting:
+            # Answers kept by an earlier run that OpenRouter stopped.
+            earlier = {entry["line"]: entry for entry in answered}
+        elif again:
+            earlier = {entry["line"]: entry for entry in answered if entry["cont"]}  # Jev was sure of these
+        else:
+            earlier = {}  # a decision made again from the start, on purpose
         groups: dict[tuple, list[Line]] = {}
         for item in asked:
             groups.setdefault(same_question(item), []).append(item)
@@ -1856,10 +2184,11 @@ class Service:
                 entries[item.number] = _line_entry(
                     item.number, cont, "jev" if cont else None, reason, asked=asked, **jev_said
                 )
-        return self._record_lines(store, row, invoice, [entries[item.number] for item in invoice.lines])
+        return self._record_lines(store, row, invoice, [entries[item.number] for item in invoice.lines], quiet=again)
 
     def _record_lines(
         self, store: Store, row: dict, invoice: Invoice, entries: list[dict], why: str | None = None,
+        quiet: bool = False,
     ) -> str:
         """Record each line's account. The invoice is ready for SAGA once every line has one;
         until then it waits for a person, for `why` when it is given. Its own `cont` and the
@@ -1891,7 +2220,7 @@ class Service:
             )
             journal.record(
                 "accounts", "account.to_review", f"Message {row['id']} needs a person: {reason}",
-                level="warning", **details, reason=reason, lines_left=len(to_choose),
+                level="detail" if quiet else "warning", **details, reason=reason, lines_left=len(to_choose),
             )
             return REVIEW
         reason = _lines_summary(entries)
@@ -1999,7 +2328,9 @@ class Service:
         )
         return CLASSIFIED
 
-    def _to_review(self, store: Store, row: dict, reason: str, **jev_said) -> str:
+    def _to_review(self, store: Store, row: dict, reason: str, quiet: bool = False, **jev_said) -> str:
+        """The invoice waits for a person, for `reason`. `quiet`: written in the journal as a
+        detail, for an invoice that was waiting for one already."""
         store.set_classification(
             row["id"],
             classification_status=REVIEW,
@@ -2012,7 +2343,8 @@ class Service:
             **jev_said,
         )
         journal.record(
-            "accounts", "account.to_review", f"Message {row['id']} needs a person: {reason}", level="warning",
+            "accounts", "account.to_review", f"Message {row['id']} needs a person: {reason}",
+            level="detail" if quiet else "warning",
             id=row["id"], cui=row["cui"], invoice_number=row.get("invoice_number"),
             supplier=row.get("supplier_name"), reason=reason, suggested=jev_said.get("suggested_cont"),
             confidence=jev_said.get("confidence"),
@@ -2125,14 +2457,23 @@ class Service:
         saved = store.get_setting("saga_dir")
         return Path(saved) if saved else self._file_cfg.saga_dir
 
-    def _saga_state(self, store: Store, cui: str) -> dict:
-        """How this client's files for SAGA stand, for the screen."""
+    def _saga_state(self, store: Store, cui: str, with_version: bool = False) -> dict:
+        """How this client's files for SAGA stand, for the screen. The version, which reads
+        every file, only where the screen sends it back: with the list of received invoices."""
         written = [when for when in store.saga_ledger(cui).values() if when]
-        return {
+        placed = [self.cfg.data_dir / stored for stored in store.saga_placement(cui)]
+        problem = store.saga_problem(cui)
+        state = {
             "file_per": _saga_file_per(store),
             "written_at": max(written, default=None),
-            "problem": store.saga_problem(cui),
+            "problem": problem,
+            # A file gone from the folder (by hand, a stick unplugged) is not up to date either.
+            "up_to_date": problem is None and all(path.is_file() for path in placed),
         }
+        if with_version:
+            # What the screen sends back when a person confirms the import, as a program does.
+            state["version"] = _saga_version(placed)
+        return state
 
     def _stored_path(self, path: Path) -> str:
         """Relative to the data folder when inside it, so the folder can be moved."""
@@ -2415,6 +2756,30 @@ def _reveal(folder: Path) -> None:
 def _since(began: float) -> int:
     """Milliseconds since `began`, a time.monotonic() reading."""
     return round((time.monotonic() - began) * 1000)
+
+
+def _saga_version(paths: list[Path]) -> str | None:
+    """A fingerprint of a client's files for SAGA as they are on disk; None when there are
+    none. It changes when any of them does, and only then."""
+    if not paths:
+        return None
+    contents = []
+    for path in paths:
+        try:
+            contents.append((path.name, path.read_bytes()))
+        except OSError:
+            contents.append((path.name, None))
+    return _version_of(contents)
+
+
+def _version_of(contents: list[tuple[str, bytes | None]]) -> str:
+    """The fingerprint of files given by name and bytes (None: the file could not be read)."""
+    digest = hashlib.sha256()
+    for name, content in sorted(contents, key=lambda named: named[0]):
+        digest.update(name.encode("utf-8") + b"\0")
+        digest.update(content if content is not None else b"\0missing")
+        digest.update(b"\0")
+    return digest.hexdigest()[:16]
 
 
 def _is_received(message_type: str | None) -> bool:
@@ -2725,6 +3090,7 @@ def _evidence(rule: Rule, classified: list[tuple[str, Subject]]) -> dict:
 
 
 FOLLOWS = "follows"  # a line that takes the account of the invoice's largest line
+BY_A_PERSON = ("human", "jev_accepted")  # how a line a person decided is marked
 
 
 def _line_entry(
@@ -2959,6 +3325,17 @@ def _same_invoice_saved_before(store: Store, row: dict) -> str | None:
     if earlier and earlier["invoice_issue_date"] == row["invoice_issue_date"]:
         return earlier_id
     return None
+
+
+def _status_now(store: Store, message_id: str) -> str | None:
+    """The state an invoice is left in after its decision failed; None when even that
+    cannot be read (the database busy), so it is not counted."""
+    try:
+        row = store.get_message(message_id)
+    except sqlite3.Error:
+        log.exception("Could not read message %s after its decision failed", message_id)
+        return None
+    return row["classification_status"] if row else None
 
 
 def _note_error(store: Store, message_id: str, error: str) -> None:

@@ -104,7 +104,7 @@ The program can download invoices by itself, for every client that is switched o
 
 ## Backups
 
-The database holds everything: clients, invoices, accounts, rules, settings, and the keys typed on screen. The screen "Copii de siguranță" keeps copies of it in a folder the accountant chooses.
+The database holds everything: clients, invoices, accounts, rules, settings, and the keys typed on screen. The screen "Copii de siguranță" keeps copies of it in a folder the accountant chooses. The files of the confirmed imports in SAGA (`data/saga-archive`) are not in these copies; the database's record of them is.
 
 - **The folder** is typed, or picked with "Alege folderul", and is made if it does not exist. It has to be a whole path (`E:\Copii AutoSaga`). Until one is chosen, no copy is made, and the screen says so. A stick, another disk or a folder that syncs to the internet is the point: a copy on the program's own disk does not survive that disk.
 - **A copy on a click:** "Fă o copie acum", or `efactura backup`.
@@ -177,8 +177,8 @@ The page opens at `http://autosaga.localhost:8765/ui/`. `http://127.0.0.1:8765/u
 
 | Screen | What it is for |
 |---|---|
-| **Clienți** | Import clients from Excel or CSV, add one by hand, download invoices for one client or all (the last 1 to 30 days, or two dates). Shows how many invoices are new and how many wait for an account. A search field narrows the list by name or CUI as it is typed (no matter the case, the diacritics, or whether the CUI is written with `RO`); the download for all clients still covers every client that is on. The list shows 20 clients a page, by name, with a bar under it to the other pages. Once a client has new issued invoices, the new ones are counted by kind ("3 primite noi", "2 emise noi"); "de verificat" counts both kinds, and "Vezi facturile de verificat" opens the list they are in |
-| **A client's invoices** | Two tabs, "Facturi primite" and "Facturi emise", each with how many there are; under each, the same four lists: new, to check, not yet in SAGA, all. Above the list: a search by the supplier's name (on issued invoices, the buyer's), its CUI or the invoice's number; the invoice's days, from and to; the account (an invoice whose lines are on several accounts is found under each, "Fără cont încă" finds those still missing one); and the order: newest first (the start), oldest first, supplier A to Z, total largest or smallest first. While something narrows the list, the counts beside new, to check, not yet in SAGA and all are of the invoices found, and "Arată toate facturile" clears the search, the days and the account. The list shows 25 invoices a page. What is chosen is kept in the address, so the link back from an invoice returns to the same page of the same list. Totals in different currencies are compared as written. Under the list, on both tabs, the client's file for SAGA: its path, when it was written, how many of its invoices are received and how many issued (SAGA puts the first in "Intrări", the others in "Ieșiri"), and one button that names how many invoices it marks as imported. While the folder is not up to date, a notice says so and offers "Încearcă din nou", and the marking button is off. See [issued invoices](#issued-invoices) |
+| **Clienți** | Import clients from Excel or CSV, add one by hand, download invoices for one client or all (the last 1 to 30 days, or two dates). Shows how many invoices are new and how many wait for an account. A search field narrows the list by name or CUI as it is typed (no matter the case, the diacritics, or whether the CUI is written with `RO`); the download for all clients still covers every client that is on. The list shows 20 clients a page, by name, with a bar under it to the other pages. Once a client has new issued invoices, the new ones are counted by kind ("3 primite noi", "2 emise noi"); "de verificat" counts both kinds, and "Vezi facturile de verificat" opens the list they are in. Beside it, "Clasifică din nou, la toți clienții" sends every client's invoices to check back through the rules and Jev, see [Classifying again](#classifying-again) |
+| **A client's invoices** | Three tabs, "Facturi primite", "Facturi emise" and "Arhivă", each with how many there are (the archive is described under [confirming an import in SAGA](#confirming-an-import-in-saga)); on the first two under each, the same four lists: new, to check, not yet in SAGA, all. Above the list: a search by the supplier's name (on issued invoices, the buyer's), its CUI or the invoice's number; the invoice's days, from and to; the account (an invoice whose lines are on several accounts is found under each, "Fără cont încă" finds those still missing one); and the order: newest first (the start), oldest first, supplier A to Z, total largest or smallest first. While something narrows the list, the counts beside new, to check, not yet in SAGA and all are of the invoices found, and "Arată toate facturile" clears the search, the days and the account. The list shows 25 invoices a page. What is chosen is kept in the address, so the link back from an invoice returns to the same page of the same list. Totals in different currencies are compared as written. Under the list, on both tabs, the client's file for SAGA: its path, when it was written, how many of its invoices are received and how many issued (SAGA puts the first in "Intrări", the others in "Ieșiri"), and one button that names how many invoices it marks as imported; it also moves the file to the archive, and refuses, marking nothing, when the file has changed since the page was opened. While the folder is not up to date, a notice says so and offers "Încearcă din nou", and the marking button is off. Above the tabs, while the client has invoices to check or waiting for Jev, "Clasifică din nou facturile de verificat" sends them back through the rules and Jev, see [Classifying again](#classifying-again). See [issued invoices](#issued-invoices) |
 | **One invoice** | The invoice as a person reads it (with an earlier balance, what was already paid or a rounding shown apart from what the invoice is worth), ANAF's XML, its own part of the SAGA XML; its account and who chose it; accept Jev's proposal or pick another; a rule proposed from it when no rule decided it; the file for SAGA it is in, or why it is in none; a warning, and no ticking as imported, while the client's folder is not up to date. An invoice the client issued is shown the same way, marked "Emisă", with its income accounts to choose from |
 | **Reguli de clasificare** | Two tabs, "Pentru facturile primite" and "Pentru facturile emise", each with its rules, the accounts Jev chooses from and the two questions Jev is asked; rules proposed from recent decisions are on the first. How sure Jev must be is one setting for both. The button "Testează regulile" opens the rule test, see [Testing the rules](#testing-the-rules) |
 | **Costuri Jev** | Cost between two dates, by day, week, month or year, and every invoice Jev classified |
@@ -187,7 +187,7 @@ The page opens at `http://autosaga.localhost:8765/ui/`. `http://127.0.0.1:8765/u
 | **Jurnal** | What the program did, line by line: everything or only the problems, by area, period or a word; one line opens to its technical details and to the whole operation it belongs to. See [The journal](#the-journal) |
 | **Chei și parole** | The OpenRouter key and ANAF client details (hidden until asked for, changeable), and when the ANAF login expires |
 
-On every screen, a notice appears on top when a newer release of the program exists; see [Updating](#updating). The foot of the menu, under the last entry, holds two things: the installed version ("AutoSaga 0.4.0") and the button "Caută o versiune nouă" (always there, also on a development copy; it says what it found, and when a newer release exists it offers "Actualizează programul"). The author line, "© 2026 Tanasie Vlad-Cristian" with a `mailto:` link to the address, is in the footer of every screen, across the whole page. It is written in the page's code, not read from the settings.
+On every screen, a notice appears on top when a newer release of the program exists; see [Updating](#updating). The foot of the menu, under the last entry, holds two things: the installed version ("AutoSaga 0.4.0") and the button "Caută o versiune nouă" (always there, also on a development copy; it says what it found, and when a newer release exists it offers "Actualizează programul"). The author line, "© 2026 Tanasie Vlad-Cristian" with a `mailto:` link to the address and a `tel:` link to the phone number, is in the footer of every screen, across the whole page. It is written in the page's code, not read from the settings.
 
 On every screen, the top bar holds the name, the **folder for SAGA** and the **ANAF connection**:
 
@@ -262,7 +262,11 @@ Run them from this folder. Use `--config PATH` before the command if `config.tom
 | `uv run efactura invoices [--cui CUI] [--pending] [--new] [--type T] [--since YYYY-MM-DD] [--classification S]` | Reads the database. `--pending` = not yet uploaded. `--new` = from the latest download and not yet uploaded: received invoices, unless `--type` names another kind. `T` is `primita`, `trimisa`, `erori` or `mesaj`. `S` is `pending`, `classified` or `review`. |
 | `uv run efactura invoice <id> [--xml]` | One message; `--xml` adds the XML text. |
 | `uv run efactura mark-uploaded <id>... [--undo]` | Sets (or clears) the uploaded flag. |
+| `uv run efactura saga-files [CUI]` | What waits for SAGA: each client's files, their invoices and their `version`. |
+| `uv run efactura saga-imported CUI [--version V]` | SAGA imported the client's files: marks their invoices as imported and moves the files to the archive. |
+| `uv run efactura saga-archive CUI` or `saga-archive --id N` | A client's confirmed imports, or one with its invoices. |
 | `uv run efactura classify <id> [--force]` | Classifies one saved invoice. |
+| `uv run efactura classify-again CUI [--no-jev]` or `classify-again --all [--no-jev]` | Sends a client's invoices to check, or waiting for Jev, back through the rules and Jev; `--all` for every client that has any; `--no-jev` for the rules alone. See [Classifying again](#classifying-again). |
 | `uv run efactura review [--cui CUI]` | Invoices a person must decide, with Jev's suggestion. |
 | `uv run efactura set-cont <id> --accept` | Accepts Jev's suggestion. |
 | `uv run efactura set-cont <id> --cont 628` | Sets the account a person chose. On an invoice decided line by line, `--line N` sets it for that line only; without it, every line. |
@@ -438,9 +442,14 @@ Routes that exist for the screen and have no command:
 | `PUT /accounts/{cont}` with `{"description"}` (and `"kind": "issued"` for issued invoices), `DELETE /accounts/{cont}` (with `?kind=issued`) | The accounts Jev chooses from, for each kind of invoice |
 | `PUT /classification/settings` with `{"min_confidence", "jev_instructions", "jev_line_instructions", "jev_issued_instructions", "jev_issued_line_instructions"}` | The confidence level, the question for Jev about a whole invoice and the one about a line, and the same two for issued invoices |
 | `PUT /clients/{cui}/per-line` with `{"enabled": true}` or `false` | An account for each line of this client's invoices, or one for the whole invoice |
+| `POST /clients/{cui}/classify-again` with optional `{"jev": false}` | `classify-again`, for one client. Answers `{"cui", "client", "total", "classified", "review", "waiting", "skipped", "jev_asked", "jev_stopped", "jev_calls", "jev_cost_usd"}` |
 | `GET /classification/calls?since=...&until=...&cui=...&limit=...` | What Jev was asked, newest first |
 | `GET /settings`, `PUT /settings` with `{"saga_folder", "saga_file_per", "show_issued"}` | The folder for SAGA, whether it gets one file per `"client"` or one per `"invoice"`, and `show_issued` (`true` or `false`), which an earlier version used to show [issued invoices](#issued-invoices) and which now changes nothing. Any field may be left out and then stays as it is; nothing is saved unless all of it is valid. When a setting for SAGA is given, what waits for SAGA is written again. The reply to `PUT` adds `problems`: the clients whose files could not be, an empty list when nothing was written |
 | `POST /saga-files/write` with `{"cui"}` or `{}` | Bring the files for SAGA up to date, for one client or for all. Answers `{"clients", "problems": [{"cui", "message", "at"}]}` |
+| `GET /saga-files`, `GET /saga-files/{cui}` | What waits for SAGA: every client with a file, or one client. Each has `cui`, `client`, `file_per`, `files` (`name`, `path`, `invoices`, `ids`), `invoices`, `up_to_date` and `version`, a fingerprint of the files on disk |
+| `POST /saga-files/{cui}/imported` with `{"version"}` or `{}` | SAGA imported the client's files: mark every invoice in them as imported and move the files to the archive. Answers `archive` (`id`, `cui`, `imported_at`, `source`, `invoices`, `ids`, `folder`, `files`), `null` when nothing was waiting. 409 `saga_files_changed` when the files changed since `version`, 409 `saga_files_stale` when they are not up to date; then nothing is marked or moved |
+| `GET /saga-archive?cui=`, `GET /saga-archive/{id}` | A client's confirmed imports, the newest first, each with `invoices`, `received`, `issued`, `unmarked` and `files` (`name`, `path`, `present`); one import with its `invoices` as the lists give them |
+| `GET /saga-archive/{id}/files/{name}`, `POST /saga-archive/{id}/open` | A file of a confirmed import as SAGA got it; show the import's folder |
 | `POST /settings/choose-folder?purpose=saga` (or `backups`), `POST /folders/open` with `{"invoice_id"}` or `{"cui"}` | Open the computer's folder dialog, titled for the SAGA folder or the backup folder and starting there; show in Explorer the folder an invoice's SAGA file is in, or a client's folder |
 | `GET /secrets`, `PUT /secrets/{key}` with `{"value"}` | The keys, in full |
 | `POST /shutdown` | Stops the program (what `efactura stop` calls). With the key only; the page cannot reach it |
@@ -584,6 +593,19 @@ gives calls, tokens and cost in total and per month (`--group` changes that to d
 - To list the invoices waiting for SAGA: `uv run efactura invoices --classification classified --pending`. Each carries `saga_xml_path`, the file it is in; with one file per client they share it. After importing, `mark-uploaded <id>`.
 - `GET /invoices?cui=...` and `GET /invoices/{id}/view` also answer `saga`, how that client's files stand: `{"file_per", "written_at", "problem"}`, where `problem` is `null` or `{"message", "at"}`.
 
+### Classifying again
+
+An invoice stays "de verificat" (or "Așteaptă contul", when OpenRouter did not answer) until a person decides it. A rule added afterwards does not reach it by itself. "Clasifică din nou facturile de verificat" on a client's screen, and "Clasifică din nou, la toți clienții" on the client list, send these invoices back through the same steps as a download: the rules, then Jev, then a person. Use it after adding or changing a rule, after changing the accounts or Jev's questions, or once OpenRouter answers again.
+
+- **What is classified again:** the client's invoices, received and issued, that are "de verificat" or waiting for Jev and not marked as imported in SAGA. Invoices with an account are not touched.
+- **What stays:** a line a person chose keeps its account, and Jev is not asked about it; a line Jev was sure of keeps its account unless a rule now matches it. Jev is asked again only about the lines that have no account.
+- **"Întreabă-l din nou și pe Jev"**, ticked to begin with. Unticked, only the rules run: free, in seconds, and what Jev said before stays, its proposal included; an invoice waiting for Jev goes on waiting. Ticked, each question to Jev is paid again, and an invoice Jev was unsure of is often unsure again when nothing about it changed.
+- **Still to check either way:** an invoice saved twice, and one whose parties do not fit its kind; the program holds them back on purpose.
+- **For every client**, the page takes the clients one at a time and shows how each went. When Jev stops answering (credit, key, connection), the invoices after stay as they were and the clients after are classified with the rules alone.
+- **The journal** gets one line per client ("classification.again"); an invoice that gets an account has its own line, as always, and one that stays "de verificat" is a detail.
+- **While a download runs** it is refused with `busy`, and the other way round: the two take turns.
+- **The per-line switch.** On an invoice that was decided line by line, the lines a person chose are kept only while the client's switch is on; with it off since, the invoice is decided whole.
+
 ## Using it from Power Automate Desktop
 
 These steps have not been tried in Power Automate from the machine this was built on; the action names are the standard ones.
@@ -595,7 +617,7 @@ These steps have not been tried in Power Automate from the machine this was buil
 3. *Convert JSON to custom object* on `CommandOutput`, then loop over `new` (for example `%JsonAsCustomObject['new']%`). Each item has `xml_path` (ANAF's file) and, once classified, `saga_xml_path` (the file for SAGA it is in; with one file per client, the same file for all of that client's waiting invoices).
 4. Invoices classified by a later run or by a person are not in `new`. To get everything waiting for SAGA, run `uv run efactura invoices --classification classified --pending`.
 5. If `classification.review` is above zero, tell someone: `uv run efactura review` lists what to decide.
-6. After SAGA has imported an invoice, run `uv run efactura mark-uploaded <id>`. The invoice then leaves its file.
+6. After SAGA has imported a client's file, confirm it, as below. Or, for one invoice, run `uv run efactura mark-uploaded <id>`; the invoice then leaves its file.
 
 **As a web request**
 
@@ -604,6 +626,33 @@ These steps have not been tried in Power Automate from the machine this was buil
    - Raise the timeout: a sync with hundreds of new invoices can take minutes.
    - Turn off "Fail on error status" so the flow can read the JSON of a failure, and branch on the status code instead.
 3. *Convert JSON to custom object* on the response.
+
+### Confirming an import in SAGA
+
+A desktop automation that imports each client's file into SAGA tells the program when it is done:
+
+1. `GET /saga-files` (or `saga-files`) lists the clients with a file, each with the `path` of every file and a `version`.
+2. The automation imports the files into SAGA.
+3. `POST /saga-files/{cui}/imported` with `{"version": "<the version from step 1>"}` (or `saga-imported <cui> --version <v>`).
+   - Every invoice the files held is marked as imported.
+   - The files, byte for byte, move to `data/saga-archive/<CUI>/<date and time>/`.
+   - The import is recorded, and shown on the client's "Arhivă" tab.
+4. If the answer is 409 `saga_files_changed`, nothing was marked. An automatic download or a finished review added an invoice to the file after step 1. Take that client again from step 1. SAGA skips the invoices it already has (by number and date), so importing the file again does not double them.
+
+- **Without a version** (`{}`), whatever the files hold at that moment is confirmed.
+- **Refused with 409 `saga_files_stale`** when the client's files are not up to date: the program could not write or delete one, and what SAGA read is not known. Bring the folder up to date (`POST /saga-files/write`, or "Încearcă din nou" on screen), import again and confirm then.
+- **Nothing waiting:** the answer's `archive` is `null`, so the automation can go through every client.
+- **On screen:** "Da, am importat" does the same with the version the page read.
+- **Removing the file:** if SAGA still holds a file open, so that it cannot be deleted, the invoices are marked and archived all the same. The file is removed at the next try.
+- **Each confirmation** is one journal line, `saga.imported`.
+
+**The "Arhivă" tab** of a client's screen lists the confirmed imports, the newest first:
+
+- Each shows when it was confirmed, "Din automatizare" or "De pe ecran", how many invoices of each kind, and the file.
+- "Descarcă fișierul" and "Deschide folderul" reach the file. "Arată facturile" opens its invoices, each a link to its screen.
+- An invoice taken off "imported" afterwards goes back into the client's file. It stays in the import, which then says how many of its invoices are no longer marked.
+- An imported invoice's screen says which import it went in, with a link to it.
+- Invoices marked as imported before 0.13.0 have no import in the archive.
 
 **The yearly login from a flow**
 
@@ -634,9 +683,12 @@ data/
   SAGA Import/         (or the folder chosen on screen)
     12345674/          one folder per company
       F_87654321_FV-1042_09.11.2026.xml    the invoices waiting for SAGA, named after the first
+  saga-archive/
+    12345674/
+      2026-11-17_10-42-00/                 one confirmed import: its files as SAGA got them
 ```
 
-- **Database:** table `messages` (one row per ANAF message: list details, invoice fields read from the XML, the full invoice XML and ANAF's signature XML, `uploaded_to_accounting`, `uploaded_at`, the classification fields), `sync_runs` (one row per run), `jev_calls` (every request to Jev with its reply and cost), `clients`, `accounts`, `issued_accounts` (the income accounts for issued invoices), `rules` (each with its kind, `direction`), `events` (the [journal](#the-journal)), `saga_files` (the files written for SAGA that are still there) and `saga_problems` (why a client's files could not be brought up to date, until they are), and `settings` (the confidence level, the question for Jev, the schedule `auto_sync` and the record of the last automatic download `auto_sync_last_run`, and what was changed on screen: the SAGA folder, one file per client or per invoice `saga_file_per`, issued invoices shown or not `show_issued`, the backup folder and the keys). Any SQLite tool can read it. A database made by an earlier version gains the new columns when it is first opened; nothing is lost.
+- **Database:** table `messages` (one row per ANAF message: list details, invoice fields read from the XML, the full invoice XML and ANAF's signature XML, `uploaded_to_accounting`, `uploaded_at`, the classification fields), `sync_runs` (one row per run), `jev_calls` (every request to Jev with its reply and cost), `clients`, `accounts`, `issued_accounts` (the income accounts for issued invoices), `rules` (each with its kind, `direction`), `events` (the [journal](#the-journal)), `saga_files` (the files written for SAGA that are still there), `saga_problems` (why a client's files could not be brought up to date, until they are), `saga_imports` and `saga_import_invoices` (each confirmed import, its archive folder and files, and the invoices it held), and `settings` (the confidence level, the question for Jev, the schedule `auto_sync` and the record of the last automatic download `auto_sync_last_run`, and what was changed on screen: the SAGA folder, one file per client or per invoice `saga_file_per`, issued invoices shown or not `show_issued`, the backup folder and the keys). Any SQLite tool can read it. A database made by an earlier version gains the new columns when it is first opened; nothing is lost.
 - **Saved login:** `%LOCALAPPDATA%\efactura\tokens.json`, in the Windows user's private folder and outside this project. Treat it like the token and PIN: whoever copies it can read e-Factura data for every company the certificate covers until it expires.
 - **`config.toml`** holds the client secret, the API key and the OpenRouter key. It is ignored by git; do not share it.
 - **Keys changed on screen** are stored in the database as plain text, like those in `config.toml`. Treat `data/efactura.db` as a secret too, and with it every copy in the backup folder.

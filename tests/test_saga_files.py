@@ -9,6 +9,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 import pytest
+from unittest.mock import ANY
 
 from efactura import auth, service as service_module
 from efactura.auth import Tokens
@@ -483,7 +484,7 @@ def test_a_clients_invoice_list_says_how_its_files_stand(service, anaf, cfg, clo
     clock["now"] = LATER
     downloaded(service, anaf, "A2", first_id=3002)
 
-    assert state_of(service) == {"file_per": "client", "written_at": LATER.isoformat(), "problem": None}
+    assert state_of(service) == {"file_per": "client", "written_at": LATER.isoformat(), "problem": None, "up_to_date": True, "version": ANY}
     assert "saga" not in service.invoices()  # only when one client is asked for
 
 
@@ -586,7 +587,7 @@ def test_an_attempt_that_failed_does_not_change_when_the_file_was_written(
 
     service.set_cont("3001", cont="6022")  # back to what the file says
 
-    assert state_of(service) == {"file_per": "client", "written_at": NOW.isoformat(), "problem": None}
+    assert state_of(service) == {"file_per": "client", "written_at": NOW.isoformat(), "problem": None, "up_to_date": True, "version": ANY}
 
 
 def test_marking_invoices_of_two_clients_at_once_brings_both_folders_up_to_date(service, anaf, cfg):

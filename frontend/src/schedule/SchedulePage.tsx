@@ -10,7 +10,7 @@ import { useSchedule } from './useSchedule'
 export function SchedulePage() {
   const { data: status, error, isPending } = useSchedule()
   return (
-    <div className="flex max-w-[66rem] flex-col gap-5">
+    <div className="flex flex-col gap-5">
       <PageTitle title="Descărcare automată">
         Programul descarcă singur facturile de la ANAF, pentru toți clienții porniți, în zilele și la orele alese.
         Fiecare factură nouă își primește contul din reguli sau de la Jev, la fel ca atunci când descărcați dumneavoastră.
@@ -18,9 +18,12 @@ export function SchedulePage() {
       {error && <ErrorNotice error={error} />}
       {isPending && <p role="status" className="text-lg text-muted-foreground">Se încarcă…</p>}
       {status && (
-        <>
-          <ScheduleStateCard status={status} />
-          <ScheduleForm saved={status} />
+        // On a wide screen, what to know stands beside the settings instead of under them.
+        <div className="grid items-start gap-5 min-[96rem]:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+          <div className="flex min-w-0 flex-col gap-5">
+            <ScheduleStateCard status={status} />
+            <ScheduleForm saved={status} />
+          </div>
           <section aria-label="Bine de știut" className="flex flex-col gap-3 rounded-2xl border bg-card px-5.5 py-5">
             <h2 className="font-sans text-xl font-bold">Bine de știut</h2>
             <ul className="flex list-disc flex-col gap-2.5 pl-6 text-lg">
@@ -41,7 +44,7 @@ export function SchedulePage() {
               </li>
             </ul>
           </section>
-        </>
+        </div>
       )}
     </div>
   )

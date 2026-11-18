@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { ApiError } from './api'
 import { errorDetail, errorMessage } from './errorMessages'
 import {
-  countOf, daysAgo, formatAmount, formatDate, formatFromWhen, formatMoney, formatNext, formatPercent, formatPeriod, formatUsd, formatSize, formatWhen,
+  countDoing, countOf, daysAgo, formatAmount, formatDate, formatFromWhen, formatMoney, formatNext, formatPercent, formatPeriod, formatUsd, formatSize, formatWhen,
   shortPath, today,
 } from './format'
 
@@ -66,11 +66,17 @@ describe('counting in Romanian', () => {
     expect(countOf(101, 'o zi', 'zile')).toBe('101 zile')
     expect(countOf(342, 'o zi', 'zile')).toBe('342 de zile')
   })
+
+  it('puts no "de" before what was done, a verb rather than a noun', () => {
+    expect(countDoing(1, 'una a primit cont', 'au primit cont')).toBe('una a primit cont')
+    expect(countDoing(5, 'una a primit cont', 'au primit cont')).toBe('5 au primit cont')
+    expect(countDoing(25, 'una a primit cont', 'au primit cont')).toBe('25 au primit cont')
+  })
 })
 
 describe('failures', () => {
   it('are explained in Romanian by their code', () => {
-    expect(errorMessage(new ApiError('busy', 'Another sync is running.'))).toContain('Se descarcă deja facturi')
+    expect(errorMessage(new ApiError('busy', 'Another sync is running.'))).toContain('Programul descarcă sau clasifică deja facturi')
   })
 
   it('fall back to a general sentence when the code is unknown', () => {
@@ -175,7 +181,7 @@ describe('a failure that means something else in one place', () => {
   })
 
   it('keeps the usual sentence for every other code', () => {
-    expect(errorMessage(new ApiError('busy', 'A sync is running.'), HERE)).toContain('Se descarcă deja facturi')
+    expect(errorMessage(new ApiError('busy', 'A sync is running.'), HERE)).toContain('Programul descarcă sau clasifică deja facturi')
     expect(errorMessage(new ApiError('backup_error', 'x'))).toContain('Copia de siguranță nu a reușit')
     expect(errorMessage(new Error('boom'), HERE)).toContain('A apărut o problemă în program.')
   })

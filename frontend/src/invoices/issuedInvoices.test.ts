@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Invoice } from '../types'
-import { goesToSales, isIssued, kindFrom, kindTabs, kindsLine, misfitReason, readyForSaga, whenNoneIssued, whenNoneReceived } from './issuedInvoices'
+import { goesToSales, isIssued, kindFrom, kindsLine, misfitReason, readyForSaga, whenNoneIssued, whenNoneReceived } from './issuedInvoices'
 
 const invoice = (message_type: string) => ({ message_type }) as Invoice
 
@@ -20,13 +20,6 @@ describe('the two kinds of invoice on a client\'s screen', () => {
     expect(kindFrom(new URLSearchParams('fel=altceva'))).toBe('received')
   })
 
-  it('are two tabs, each with how many there are once that is known', () => {
-    expect(kindTabs(48, 12)).toEqual([
-      { value: 'received', label: 'Facturi primite (48)' },
-      { value: 'issued', label: 'Facturi emise (12)' },
-    ])
-    expect(kindTabs(undefined, undefined).map((tab) => tab.label)).toEqual(['Facturi primite', 'Facturi emise'])
-  })
 })
 
 describe('the lists, when they are empty', () => {

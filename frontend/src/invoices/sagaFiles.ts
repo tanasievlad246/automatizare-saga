@@ -36,7 +36,7 @@ export function readyPlaces(ready: Invoice[], filePer: SagaFilePer): ReadyPlace[
  * the list while that lasts, so that no invoice SAGA never got is ticked.
  */
 export function isStale(ready: Invoice[], saga: SagaState): boolean {
-  return saga.problem !== null || ready.some((invoice) => !invoice.saga_xml_path)
+  return saga.problem !== null || !saga.up_to_date || ready.some((invoice) => !invoice.saga_xml_path)
 }
 
 /** Said of the folder, not of a file: a file may be missing, old, or one too many. */

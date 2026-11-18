@@ -26,6 +26,18 @@ describe('a line of the journal, in Romanian', () => {
       .toBe('Descărcarea pentru CUI 12345674 s-a terminat: 2 facturi noi, niciuna nereușită.')
   })
 
+  it('tells how a client\'s invoices to check were classified again', () => {
+    const again = { client: 'Alfa Construct SRL', cui: '12345674', total: 7, classified: 5, review: 2, waiting: 0, jev_asked: true }
+    expect(describeEvent(line('classification.again', again)))
+      .toBe('Facturile de verificat ale clientului Alfa Construct SRL au fost clasificate din nou: 7 facturi, 5 au primit cont, 2 rămân de verificat.')
+    expect(describeEvent(line('classification.again', { ...again, total: 1, classified: 0, review: 0, waiting: 1, jev_asked: false })))
+      .toBe('Facturile de verificat ale clientului Alfa Construct SRL au fost clasificate din nou, doar după reguli: o factură, niciuna nu a primit cont, una așteaptă încă răspunsul lui Jev.')
+    expect(describeEvent(line('classification.again', { ...again, total: 65, classified: 25, review: 20, waiting: 20 })))
+      .toBe('Facturile de verificat ale clientului Alfa Construct SRL au fost clasificate din nou: 65 de facturi, 25 au primit cont, 20 rămân de verificat, 20 așteaptă încă răspunsul lui Jev.')
+    expect(describeEvent(line('classification.again', { ...again, classified: 0, review: 7, jev_stopped: true })))
+      .toBe('Facturile de verificat ale clientului Alfa Construct SRL au fost clasificate din nou: 7 facturi, niciuna nu a primit cont, 7 rămân de verificat. Jev nu a mai răspuns.')
+  })
+
   it('tells who chose an account', () => {
     expect(describeEvent(line('account.by_rule', { invoice_number: 'FV-1042', cont: '6022' })))
       .toBe('Factura FV-1042 a primit contul 6022, după o regulă a dumneavoastră.')

@@ -7,7 +7,7 @@ const invoice = (id: string, path: string | null, more: Partial<Invoice> = {}) =
 
 const FOLDER = 'C:\\AutoSaga\\SAGA Import\\12345674'
 const FILE = `${FOLDER}\\F_1_A1_03.11.2026.xml`
-const fine = (file_per: SagaState['file_per'] = 'client'): SagaState => ({ file_per, written_at: null, problem: null })
+const fine = (file_per: SagaState['file_per'] = 'client'): SagaState => ({ file_per, written_at: null, problem: null, up_to_date: true, version: null })
 const broken: SagaState = { ...fine(), problem: { message: 'PermissionError', at: '2026-11-16T10:02:00+02:00' } }
 
 describe('where the ready invoices are', () => {
@@ -33,6 +33,10 @@ describe('whether the folder can be trusted', () => {
   it('cannot while the program could not bring it up to date', () => {
     expect(isStale([invoice('1', FILE)], broken)).toBe(true)
     expect(isStale([], broken)).toBe(true)
+  })
+
+  it('cannot while a file is gone from the folder, though nothing failed', () => {
+    expect(isStale([invoice('1', FILE)], { ...fine(), up_to_date: false })).toBe(true)
   })
 
   it('cannot while a ready invoice is in no file: marking it would tick an invoice SAGA never got', () => {

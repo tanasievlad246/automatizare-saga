@@ -63,7 +63,7 @@ export function RuleTestPage() {
   const chosenByJev = answer?.result.per_line ? suggestedFrom?.decided_by === 'jev' : answer?.result.decided_by === 'jev'
 
   return (
-    <div className="flex max-w-[72rem] flex-col gap-6">
+    <div className="flex flex-col gap-6">
       <div>
         <Link to="/reguli" className="font-semibold">‹ Înapoi la reguli</Link>
         <div className="mt-3">

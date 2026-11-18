@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { Download } from 'lucide-react'
+import { Download, RotateCcw } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { Notice } from '@/components/Notice'
@@ -9,8 +9,9 @@ import { pageFrom, pageOf, rangeLine } from '@/components/paging'
 import { scrollBelowHeader } from '@/components/scrollBelowHeader'
 import { Button } from '@/components/ui/button'
 import { api } from '../api'
+import { ClassifyAgainDialog } from '../classifyAgain/ClassifyAgainDialog'
+import { WHEN_TO_USE, toCheckLine } from '../classifyAgain/classifyAgainTexts'
 import { errorMessage } from '../errorMessages'
-import { countOf } from '../format'
 import { rememberPlace } from '../listPlace'
 import { searchWords } from '../textSearch'
 import { runningLine } from '../schedule/scheduleTexts'
@@ -36,6 +37,7 @@ export function ClientsPage() {
   // While the program downloads by itself, no download is started by hand.
   const running = useSchedule().data?.running ?? null
   const [clientsToSync, setClientsToSync] = useState<Client[] | null>(null)
+  const [clientsToClassify, setClientsToClassify] = useState<Client[] | null>(null)
   const [importing, setImporting] = useState(false)
   const [adding, setAdding] = useState(false)
   // What is typed in the search field narrows the rows shown, nothing else: the counts and the
@@ -67,10 +69,13 @@ export function ClientsPage() {
   const onClients = switchedOn(clients)
   const offLine = switchedOffLine(onClients.length, clients.length - onClients.length)
   const waitingForAnAccount = clients.reduce((total, client) => total + client.review_count, 0)
+  const waitingForJev = clients.reduce((total, client) => total + client.waiting_count, 0)
   const firstWaiting = clients.find((client) => client.review_count > 0)
+  // Every client with an invoice to check or waiting for Jev, switched on or off: classifying does not ask ANAF.
+  const toClassify = clients.filter((client) => client.review_count + client.waiting_count > 0)
 
   return (
-    <div className="flex max-w-[66rem] flex-col gap-6">
+    <div className="flex flex-col gap-6">
       <PageTitle title="Clienți">
         Descărcați de la ANAF facturile primite, pentru toți clienții sau pentru unul singur.
       </PageTitle>
@@ -99,19 +104,27 @@ export function ClientsPage() {
       )}
       {offLine && <p className="-mt-3 text-lg text-muted-foreground">{offLine}</p>}
 
-      {firstWaiting && (
+      {toClassify.length > 0 && (
         <Notice tone="attention" className="flex-wrap items-center">
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
-            <p className="min-w-0 flex-[1_1_320px] text-lg font-semibold">
-              {countOf(
-                waitingForAnAccount,
-                'O factură este de verificat: trebuie să îi alegeți contul.',
-                'facturi sunt de verificat: trebuie să le alegeți contul.',
+          <div className="flex flex-col gap-3">
+            <p className="text-lg font-semibold">{toCheckLine(waitingForAnAccount, waitingForJev)}</p>
+            <div className="flex flex-wrap gap-3">
+              {firstWaiting && (
+                <Button asChild className="bg-attention-foreground hover:bg-attention-foreground/85">
+                  <Link to={reviewLink(firstWaiting)}>Vezi facturile de verificat</Link>
+                </Button>
               )}
-            </p>
-            <Button asChild className="bg-attention-foreground hover:bg-attention-foreground/85">
-              <Link to={reviewLink(firstWaiting)}>Vezi facturile de verificat</Link>
-            </Button>
+              <Button
+                variant="outline"
+                className="h-auto min-h-10 max-w-full border-attention-border bg-card py-2 text-left whitespace-normal"
+                disabled={running !== null}
+                onClick={() => setClientsToClassify(toClassify)}
+              >
+                <RotateCcw aria-hidden />
+                Clasifică din nou, la toți clienții
+              </Button>
+            </div>
+            <p className="text-[0.9rem]">{WHEN_TO_USE}</p>
           </div>
         </Notice>
       )}
@@ -157,6 +170,7 @@ export function ClientsPage() {
       )}
 
       <SyncDialog clients={clientsToSync} someAreOff={onClients.length < clients.length} onClose={() => setClientsToSync(null)} />
+      <ClassifyAgainDialog clients={clientsToClassify} onClose={() => setClientsToClassify(null)} />
       <ImportClientsDialog open={importing} onClose={() => setImporting(false)} />
       <AddClientDialog open={adding} onClose={() => setAdding(false)} />
     </div>

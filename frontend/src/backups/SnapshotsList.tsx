@@ -30,12 +30,13 @@ export function SnapshotsList({ status, onRestore }: { status: BackupStatus; onR
         <p className="border-t px-4.5 py-5 text-muted-foreground">Nicio copie încă. Prima apare aici după ce apăsați „Fă o copie acum”.</p>
       )}
       {status.snapshots.map((snapshot) => (
-        // A grid, so that in a narrow window each cell wraps its own words and the button stays on the row.
-        <div key={snapshot.name} className="grid grid-cols-[minmax(9rem,1fr)_minmax(0,15rem)_5rem_auto] items-center gap-x-4 border-t px-4.5 py-3">
+        // A grid, so that each cell wraps its own words and the button stays on the row. On a
+        // phone the three facts stand one under the other, with the button beside them.
+        <div key={snapshot.name} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-0.5 border-t px-4.5 py-3 sm:grid-cols-[minmax(9rem,1fr)_minmax(0,15rem)_5rem_auto]">
           <span className="font-semibold first-letter:uppercase">{formatWhen(snapshot.at)}</span>
-          <span className="text-muted-foreground">{WHO_MADE_IT[snapshot.kind]}</span>
-          <span className="text-right text-muted-foreground">{formatSize(snapshot.size)}</span>
-          <Button variant="outline" size="sm" aria-label={`Restaurează copia ${formatFromWhen(snapshot.at)}, ${WHO_MADE_IT[snapshot.kind]}`} onClick={() => onRestore(snapshot)}>
+          <span className="col-start-1 text-muted-foreground sm:col-start-auto">{WHO_MADE_IT[snapshot.kind]}</span>
+          <span className="col-start-1 text-muted-foreground sm:col-start-auto sm:text-right">{formatSize(snapshot.size)}</span>
+          <Button variant="outline" size="sm" className="col-start-2 row-span-3 row-start-1 sm:col-start-auto sm:row-span-1 sm:row-start-auto" aria-label={`Restaurează copia ${formatFromWhen(snapshot.at)}, ${WHO_MADE_IT[snapshot.kind]}`} onClick={() => onRestore(snapshot)}>
             Restaurează
           </Button>
         </div>

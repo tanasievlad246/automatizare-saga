@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { ChevronLeft, Download } from 'lucide-react'
+import { ChevronLeft, Download, RotateCcw } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
 import { Notice } from '@/components/Notice'
@@ -11,12 +11,16 @@ import { PillTabs } from '@/components/PillTabs'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { api } from '../api'
+import { ClassifyAgainDialog } from '../classifyAgain/ClassifyAgainDialog'
+import { WHEN_TO_USE, toCheckLine } from '../classifyAgain/classifyAgainTexts'
 import { SyncDialog } from '../clients/SyncDialog'
 import { errorMessage, messageForCode } from '../errorMessages'
 import { formatWhen } from '../format'
 import { placeOf, rememberPlace } from '../listPlace'
 import { useSchedule } from '../schedule/useSchedule'
-import type { Client, Invoice, InvoiceKind } from '../types'
+import { SagaArchive } from '../archive/SagaArchive'
+import { clientTabs, searchForTab, tabFrom } from '../archive/archiveTexts'
+import type { Client, ClientTab, Invoice, InvoiceKind } from '../types'
 import { ImportedInSagaCard } from './ImportedInSagaCard'
 import { InvoiceFilters } from './InvoiceFilters'
 import {
@@ -26,7 +30,7 @@ import {
 import { InvoicesTable } from './InvoicesTable'
 import { needsAnAccount } from './invoiceState'
 import { PerLineSwitch } from './PerLineSwitch'
-import { kindFrom, kindTabs, readyForSaga, whenNoneIssued, whenNoneReceived } from './issuedInvoices'
+import { readyForSaga, whenNoneIssued, whenNoneReceived } from './issuedInvoices'
 
 // The four ways to look at a client's invoices. The first one that has anything is shown.
 const VIEWS = [
@@ -41,20 +45,25 @@ const INVOICE_NOUN = { one: 'Factura', many: 'Facturile' }
 /**
  * One client's invoices, received or issued (two tabs, the received ones first): what is new, what
  * needs an account, what waits for SAGA; found by name, number, days or account, in the order
- * chosen, a page at a time. Under them, the one file for SAGA with both kinds.
+ * chosen, a page at a time. Under them, the one file for SAGA with both kinds. A third tab,
+ * "Arhivă", holds the imports in SAGA confirmed, with their files and invoices.
  */
 export function ClientInvoicesPage() {
   const { cui = '' } = useParams()
   const [search, setSearch] = useSearchParams()
   const [syncing, setSyncing] = useState(false)
+  const [classifying, setClassifying] = useState(false)
   const listTop = useRef<HTMLDivElement>(null)
   const client = useQuery({ queryKey: ['clients'], queryFn: api.clients }).data?.clients.find((each) => each.cui === cui)
-  const kind = kindFrom(search)
+  const tab = tabFrom(search)
+  const kind: InvoiceKind = tab === 'issued' ? 'issued' : 'received'
   const party = kind === 'issued' ? 'customer' : 'supplier'
   const received = useQuery({ queryKey: ['invoices', cui], queryFn: () => api.receivedInvoices(cui) })
   // Asked for even while the received ones are shown: the file for SAGA holds both kinds.
   const issued = useQuery({ queryKey: ['invoices', cui, 'issued'], queryFn: () => api.issuedInvoices(cui) })
   const rules = useQuery({ queryKey: ['rules'], queryFn: api.rules }).data
+  // Counted on its tab from the start; the archive tab reads the same answer.
+  const archive = useQuery({ queryKey: ['saga-archive', cui], queryFn: () => api.sagaArchive(cui) })
   const descriptions = (kind === 'issued' ? rules?.issued_accounts : rules?.accounts) ?? {}
   const { data, error, isPending } = kind === 'issued' ? issued : received
   const invoices = data?.invoices ?? []
@@ -98,8 +107,15 @@ export function ClientInvoicesPage() {
     // The button pressed goes away with the filters: the focus goes to the search field.
     document.getElementById('list-text')?.focus()
   }
-  // The other kind is another list: it starts whole, at its first page.
-  const chooseKind = (wanted: InvoiceKind) => setSearch(wanted === 'issued' ? { fel: 'emise' } : {}, { replace: true })
+  // Another tab is another list: it starts whole, at its first page.
+  const chooseTab = (wanted: ClientTab) => setSearch(searchForTab(wanted), { replace: true })
+  // The import opened last is kept in the address, so the link back from one of its invoices returns to it.
+  const openImport = (id: number | null) => {
+    const next = new URLSearchParams(search)
+    if (id === null) next.delete('import')
+    else next.set('import', String(id))
+    setSearch(next, { replace: true })
+  }
   const turnPage = (to: number) => {
     change({ page: to })
     scrollBelowHeader(listTop.current)
@@ -128,14 +144,31 @@ export function ClientInvoicesPage() {
       </div>
 
       {client && <PerLineSwitch client={client} />}
+      {client && client.review_count + client.waiting_count > 0 && (
+        <Notice tone="attention">
+          <div className="flex flex-col gap-3">
+            <p className="text-lg font-semibold">{toCheckLine(client.review_count, client.waiting_count, client.issued_review_count)}</p>
+            <Button
+              variant="outline"
+              className="h-auto min-h-10 max-w-full self-start border-attention-border bg-card py-2 text-left whitespace-normal"
+              disabled={automaticDownloadRuns}
+              onClick={() => setClassifying(true)}
+            >
+              <RotateCcw aria-hidden />
+              Clasifică din nou facturile de verificat
+            </Button>
+            <p className="text-[0.9rem]">{WHEN_TO_USE}</p>
+          </div>
+        </Notice>
+      )}
       {problem && <Notice tone="attention">{errorMessage(problem)}</Notice>}
       <div ref={listTop} className="flex flex-col gap-3.5">
         <KindTabs
-          value={kind}
-          onChange={chooseKind}
-          tabs={kindTabs(received.data?.invoices.length, issued.data?.invoices.length ?? received.data?.issued_count)}
+          value={tab}
+          onChange={chooseTab}
+          tabs={clientTabs(received.data?.invoices.length, issued.data?.invoices.length ?? received.data?.issued_count, archive.data?.imports.length)}
         />
-        <PillTabs
+        {tab !== 'archive' && <PillTabs
           label="Ce facturi se văd"
           value={chosen}
           onChange={chooseView}
@@ -144,8 +177,8 @@ export function ClientInvoicesPage() {
             value: view.value,
             label: data ? `${view.label} (${found.filter(view.includes).length})` : view.label,
           }))}
-        />
-        {invoices.length > 0 && (
+        />}
+        {tab !== 'archive' && invoices.length > 0 && (
           <InvoiceFilters
             id="list"
             state={list}
@@ -155,14 +188,15 @@ export function ClientInvoicesPage() {
             className="rounded-2xl border bg-card px-4.5 py-4"
           />
         )}
-        {narrowed && found.length > 0 && (
+        {tab !== 'archive' && narrowed && found.length > 0 && (
           <div className="flex flex-wrap items-center gap-x-4">
             <p role="status" className="text-muted-foreground">{foundLine(found.length, invoices.length)}</p>
             <Button type="button" variant="link" className="px-0" onClick={showAll}>Arată toate facturile</Button>
           </div>
         )}
       </div>
-      {!error && (narrowed && invoices.length > 0 && found.length === 0 ? (
+      {tab === 'archive' && <SagaArchive cui={cui} openImport={search.get('import')} onOpenImport={openImport} />}
+      {tab !== 'archive' && !error && (narrowed && invoices.length > 0 && found.length === 0 ? (
         <div className="rounded-2xl border bg-card px-6 py-5.5">
           <div role="status">
             <p className="text-lg font-semibold">Nicio factură nu se potrivește cu ce ați ales.</p>
@@ -182,9 +216,14 @@ export function ClientInvoicesPage() {
           }
         />
       ))}
-      <Pager page={page} label="Paginile listei de facturi" line={rangeLine(page, INVOICE_NOUN, narrowed ? 'găsite' : undefined)} onPage={turnPage} />
-      {ready && <ImportedInSagaCard cui={cui} ready={ready} saga={received.data?.saga} />}
+      {tab !== 'archive' && (
+        <>
+          <Pager page={page} label="Paginile listei de facturi" line={rangeLine(page, INVOICE_NOUN, narrowed ? 'găsite' : undefined)} onPage={turnPage} />
+          {ready && <ImportedInSagaCard cui={cui} ready={ready} saga={received.data?.saga} />}
+        </>
+      )}
 
+      <ClassifyAgainDialog clients={classifying && client ? [client] : null} onClose={() => setClassifying(false)} />
       <SyncDialog
         clients={syncing ? [client ?? unknownClient(cui)] : null}
         someAreOff={false}
@@ -194,10 +233,10 @@ export function ClientInvoicesPage() {
   )
 }
 
-/** The two kinds of invoice, as tabs that stand out from the four lists under them. */
-function KindTabs({ value, onChange, tabs }: { value: InvoiceKind; onChange: (kind: InvoiceKind) => void; tabs: { value: InvoiceKind; label: string }[] }) {
+/** The two kinds of invoice and the archive, as tabs that stand out from the four lists under them. */
+function KindTabs({ value, onChange, tabs }: { value: ClientTab; onChange: (tab: ClientTab) => void; tabs: { value: ClientTab; label: string }[] }) {
   return (
-    <div role="group" aria-label="Ce fel de facturi" className="flex flex-wrap gap-1 self-start rounded-xl border bg-card p-1">
+    <div role="group" aria-label="Ce se vede" className="flex flex-wrap gap-1 self-start rounded-xl border bg-card p-1">
       {tabs.map((tab) => (
         <button
           key={tab.value}
@@ -220,6 +259,6 @@ function KindTabs({ value, onChange, tabs }: { value: InvoiceKind; onChange: (ki
 function unknownClient(cui: string): Client {
   return {
     cui, name: `CUI ${cui}`, invoices: 0, issued_count: 0, new_count: 0, issued_new_count: 0, review_count: 0,
-    issued_review_count: 0, ready_count: 0, last_sync_at: null, enabled: true, per_line: false,
+    issued_review_count: 0, waiting_count: 0, ready_count: 0, last_sync_at: null, enabled: true, per_line: false,
   }
 }

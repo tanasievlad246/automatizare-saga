@@ -23,6 +23,12 @@ NOT_CLASSIFIABLE = "not_classifiable"
 UPDATE_ERROR = "update_error"
 BACKUP_ERROR = "backup_error"
 CLIENT_OFF = "client_off"
+# Confirming an import in SAGA: the files changed since their version was read, or they are
+# not what the program last decided (one could not be written, or is gone).
+SAGA_FILES_CHANGED = "saga_files_changed"
+SAGA_FILES_STALE = "saga_files_stale"
+# The files of a confirmed import could not be written to the archive (a full disk, no rights).
+SAGA_ARCHIVE_ERROR = "saga_archive_error"
 
 
 class EfacturaError(Exception):

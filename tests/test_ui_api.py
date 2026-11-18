@@ -380,7 +380,8 @@ def test_a_clients_invoice_list_carries_how_its_saga_files_stand(api, anaf, cfg)
 
     state = api.get("/invoices", params={"cui": VALID_CUI}).json()["saga"]
 
-    assert state == {"file_per": "client", "written_at": NOW.isoformat(), "problem": None}
+    assert state == {"file_per": "client", "written_at": NOW.isoformat(), "problem": None, "up_to_date": True, "version": state["version"]}
+    assert len(state["version"]) == 16
 
 
 def test_the_saga_files_can_be_written_again_when_asked(api, anaf, cfg):
@@ -552,6 +553,27 @@ def test_classification_per_line_is_switched_through_the_api(api):
     assert api.put(f"/clients/{VALID_CUI}/per-line", json={"enabled": "nu"}).status_code == 400
     unknown = api.put("/clients/14399840/per-line", json={"enabled": False})
     assert (unknown.status_code, unknown.json()["error"]["code"]) == (404, "not_found")
+
+
+def test_a_clients_invoices_to_check_are_classified_again_through_the_api(api, anaf, openrouter):
+    api.post("/clients", json={"cui": VALID_CUI, "name": "Alfa Construct SRL"})
+    openrouter.answer_for("piese", "628", confidence=0.5)
+    anaf.add("3001", xml=rich_invoice_xml(lines=PARTS))
+    api.post("/sync", json={"cui": VALID_CUI})
+    (client,) = api.get("/clients").json()["clients"]
+    assert (client["review_count"], client["waiting_count"]) == (1, 0)
+
+    rules_only = api.post(f"/clients/RO{VALID_CUI}/classify-again", json={"jev": False}).json()
+    openrouter.answer_for("piese", "628", confidence=0.95)
+    with_jev = api.post(f"/clients/{VALID_CUI}/classify-again")
+
+    assert (rules_only["total"], rules_only["review"], rules_only["jev_asked"]) == (1, 1, False)
+    assert with_jev.status_code == 200
+    assert (with_jev.json()["classified"], with_jev.json()["jev_calls"]) == (1, 1)
+    assert api.get("/invoices/3001").json()["invoice"]["classification_status"] == "classified"
+    assert api.post(f"/clients/{VALID_CUI}/classify-again", json={"jev": "nu"}).status_code == 400
+    wrong = api.post("/clients/123/classify-again")
+    assert (wrong.status_code, wrong.json()["error"]["code"]) == (400, "invalid_cui")
 
 
 def test_downloading_a_client_that_is_off_answers_409(api):

@@ -155,6 +155,25 @@ CREATE TABLE IF NOT EXISTS saga_problems (
     message TEXT NOT NULL,
     at      TEXT NOT NULL
 );
+
+-- An import in SAGA confirmed, by the automation or on screen: the client's files as SAGA
+-- got them, kept in `folder` (relative to the data folder), and the invoices they held.
+CREATE TABLE IF NOT EXISTS saga_imports (
+    id          INTEGER PRIMARY KEY,
+    cui         TEXT NOT NULL,
+    imported_at TEXT NOT NULL,
+    source      TEXT NOT NULL,   -- api | screen
+    folder      TEXT NOT NULL,
+    files       TEXT NOT NULL    -- the file names, as a JSON list
+);
+CREATE TABLE IF NOT EXISTS saga_import_invoices (
+    import_id  INTEGER NOT NULL REFERENCES saga_imports(id),
+    message_id TEXT NOT NULL,
+    position   INTEGER NOT NULL,   -- the invoice's place in the files
+    PRIMARY KEY (import_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_saga_import_invoices_message ON saga_import_invoices (message_id);
+CREATE INDEX IF NOT EXISTS idx_saga_imports_cui ON saga_imports (cui, imported_at);
 """
 
 RECEIVED_SQL = "message_type LIKE 'FACTURA PRIMITA%'"
@@ -435,6 +454,20 @@ class Store:
         sql += " ORDER BY first_seen_at, id"
         return [_to_dict(row) for row in self._conn.execute(sql, params)]
 
+    def messages_by_ids(self, ids: list[str]) -> list[dict]:
+        """These messages as the lists give them, in the order of `ids`; an unknown id is left out."""
+        found: dict[str, dict] = {}
+        for start in range(0, len(ids), _CHUNK):
+            chunk = ids[start : start + _CHUNK]
+            marks = ",".join("?" * len(chunk))
+            rows = self._conn.execute(
+                f"SELECT {', '.join(SUMMARY_COLUMNS)}, {IS_NEW_SQL} AS is_new "
+                f"FROM messages m {LATEST_RUN_JOIN}m.cui WHERE id IN ({marks})",
+                chunk,
+            )
+            found.update((row["id"], _to_dict(row)) for row in rows)
+        return [found[message_id] for message_id in ids if message_id in found]
+
     def issued_count(self, cui: str) -> int:
         """How many invoices this client issued itself are saved."""
         return self._conn.execute(
@@ -468,6 +501,16 @@ class Store:
         """Ids of this company's messages still waiting for an account, oldest first."""
         rows = self._conn.execute(
             "SELECT id FROM messages WHERE cui = ? AND classification_status = 'pending' "
+            "AND uploaded_to_accounting = 0 ORDER BY first_seen_at, id",
+            (cui,),
+        )
+        return [row["id"] for row in rows]
+
+    def to_classify_again(self, cui: str) -> list[str]:
+        """Ids of this company's invoices, received or issued, that wait for a person or for
+        Jev and are not yet in the accounting program, oldest first."""
+        rows = self._conn.execute(
+            "SELECT id FROM messages WHERE cui = ? AND classification_status IN ('review', 'pending') "
             "AND uploaded_to_accounting = 0 ORDER BY first_seen_at, id",
             (cui,),
         )
@@ -562,6 +605,87 @@ class Store:
                     "ON CONFLICT(cui) DO UPDATE SET message = excluded.message, at = excluded.at",
                     (cui, message, when),
                 )
+
+    def saga_placement(self, cui: str) -> dict[str, list[str]]:
+        """Which invoices each of this company's files for SAGA holds, as the program last
+        wrote them: the file's path (as in saga_xml_path), then the message ids in the order
+        the file has them."""
+        placed: dict[str, list[str]] = {}
+        for row in self._conn.execute(
+            "SELECT id, saga_xml_path FROM messages WHERE cui = ? AND saga_xml_path IS NOT NULL "
+            "ORDER BY first_seen_at, id",
+            (cui,),
+        ):
+            placed.setdefault(row["saga_xml_path"], []).append(row["id"])
+        return placed
+
+    # --- the archive of imports in SAGA --------------------------------------------------
+
+    def record_saga_import(
+        self, *, cui: str, imported_at: str, source: str, folder: str, files: list[str], ids: list[str],
+    ) -> int:
+        """Keep an import in SAGA and mark its invoices as imported at `imported_at`. All or
+        nothing: an unknown id keeps nothing and marks nothing."""
+        wanted = list(dict.fromkeys(ids))
+        missing = [i for i in wanted if i not in self.existing_ids(wanted)]
+        if missing:
+            raise EfacturaError(NOT_FOUND, f"No saved message with id: {', '.join(missing)}")
+        with self._conn:
+            cursor = self._conn.execute(
+                "INSERT INTO saga_imports (cui, imported_at, source, folder, files) VALUES (?, ?, ?, ?, ?)",
+                (cui, imported_at, source, folder, json.dumps(files, ensure_ascii=False)),
+            )
+            import_id = cursor.lastrowid
+            self._conn.executemany(
+                "INSERT INTO saga_import_invoices (import_id, message_id, position) VALUES (?, ?, ?)",
+                [(import_id, message_id, position) for position, message_id in enumerate(wanted)],
+            )
+            self._conn.executemany(
+                "UPDATE messages SET uploaded_to_accounting = 1, uploaded_at = ? WHERE id = ?",
+                [(imported_at, message_id) for message_id in wanted],
+            )
+        return import_id
+
+    def saga_imports(self, cui: str) -> list[dict]:
+        """This company's imports, the newest first, each with how many invoices it held,
+        of which kind, and how many of them are no longer marked as imported."""
+        rows = self._conn.execute(
+            "SELECT i.id, i.cui, i.imported_at, i.source, i.folder, i.files, "
+            "COUNT(m.id) AS invoices, "
+            f"COALESCE(SUM(CASE WHEN m.{RECEIVED_SQL} THEN 1 ELSE 0 END), 0) AS received, "
+            f"COALESCE(SUM(CASE WHEN m.{ISSUED_SQL} THEN 1 ELSE 0 END), 0) AS issued, "
+            "COALESCE(SUM(CASE WHEN m.uploaded_to_accounting = 0 THEN 1 ELSE 0 END), 0) AS unmarked "
+            "FROM saga_imports i "
+            "LEFT JOIN saga_import_invoices l ON l.import_id = i.id "
+            "LEFT JOIN messages m ON m.id = l.message_id "
+            "WHERE i.cui = ? GROUP BY i.id ORDER BY i.imported_at DESC, i.id DESC",
+            (cui,),
+        )
+        return [{**dict(row), "files": json.loads(row["files"])} for row in rows]
+
+    def saga_import(self, import_id: int) -> dict | None:
+        """One import, with the ids of its invoices in the order the files held them."""
+        row = self._conn.execute(
+            "SELECT id, cui, imported_at, source, folder, files FROM saga_imports WHERE id = ?", (import_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        ids = [
+            found["message_id"] for found in self._conn.execute(
+                "SELECT message_id FROM saga_import_invoices WHERE import_id = ? ORDER BY position", (import_id,)
+            )
+        ]
+        return {**dict(row), "files": json.loads(row["files"]), "ids": ids}
+
+    def saga_import_of(self, message_id: str) -> dict | None:
+        """The latest import an invoice was in."""
+        row = self._conn.execute(
+            "SELECT i.id, i.imported_at, i.source FROM saga_imports i "
+            "JOIN saga_import_invoices l ON l.import_id = i.id WHERE l.message_id = ? "
+            "ORDER BY i.imported_at DESC, i.id DESC LIMIT 1",
+            (message_id,),
+        ).fetchone()
+        return dict(row) if row else None
 
     def cuis_of(self, ids: Iterable[str]) -> list[str]:
         """The companies these messages belong to."""
@@ -675,6 +799,7 @@ class Store:
             f"{count(f'm.{ISSUED_SQL} AND {IS_NEW_SQL}')} AS issued_new_count, "
             f"{count(waiting('review'))} AS review_count, "
             f"{count(f'm.{ISSUED_SQL} AND ' + waiting('review'))} AS issued_review_count, "
+            f"{count(waiting('pending'))} AS waiting_count, "
             f"{count(waiting('classified'))} AS ready_count, "
             "(SELECT MAX(r.started_at) FROM sync_runs r WHERE r.cui = c.cui "
             " AND r.status IN ('ok', 'partial')) AS last_sync_at "

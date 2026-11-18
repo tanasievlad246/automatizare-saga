@@ -108,8 +108,8 @@ export function AppShell() {
           {update && <ProgramVersion status={update} onUpdate={() => setUpdating(update)} />}
         </nav>
         <main className="min-w-0 flex-1 px-8 pt-7 pb-12">
-          {/* Wide enough for tables on a large monitor; screens of text set a narrower width themselves. */}
-          <div className="max-w-[96rem]">
+          {/* As wide as the window allows: a page with room to spare puts its other cards on the right. */}
+          <div>
             {update?.update_available && <UpdateNotice status={update} onUpdate={() => setUpdating(update)} />}
             <ErrorBoundary key={pathname}>
               <Outlet />

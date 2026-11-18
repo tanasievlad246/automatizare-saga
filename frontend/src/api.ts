@@ -1,9 +1,10 @@
 // Every call the page makes to the Python program, in one place.
 
 import type {
-  AppSettings, AuthStatus, BackupStatus, Client, CostGroup, Costs, ImportResult, Invoice, InvoiceKind, InvoiceView, JevCall, JournalLine,
+  AppSettings, AuthStatus, BackupStatus, ClassifyAgainResult, Client, CostGroup, Costs, ImportResult, Invoice, InvoiceKind, InvoiceView, JevCall, JournalLine,
   ProposedRules,
-  RuleEvidence, RuleFields, RuleTestResult, RulesOverview, SagaFilePer, SagaState, SchedulePeriod, ScheduleStatus, Secret,
+  RuleEvidence, RuleFields, RuleTestResult, RulesOverview, SagaFilePer, SagaImport, SagaImportDetail, SagaState, SchedulePeriod,
+  ScheduleStatus, Secret,
   SyncResult, UpdateStatus,
 } from './types'
 
@@ -108,12 +109,29 @@ export const api = {
     call<{ invoices: Invoice[] }>('GET', `/invoices${query({ cui, type: 'trimisa' })}`),
   invoiceView: (id: string) => call<InvoiceView>('GET', `/invoices/${id}/view`),
   classify: (id: string, force = false) => call('POST', `/invoices/${id}/classify`, { force }),
+  /** The client's invoices to check, or waiting for Jev, back through the rules and, with `jev`, Jev. */
+  classifyAgain: (cui: string, jev: boolean) => call<ClassifyAgainResult>('POST', `/clients/${cui}/classify-again`, { jev }),
   /** Without `line`: Jev's proposal for the invoice, or for every line left on an invoice decided line by line. */
   acceptSuggestion: (id: string, line?: number) => call('POST', `/invoices/${id}/cont`, { accept: true, line }),
   /** Without `line`: the account of the whole invoice, or of every line on an invoice decided line by line. */
   setCont: (id: string, cont: string, force = false, line?: number) =>
     call('POST', `/invoices/${id}/cont`, { cont, force, line }),
   markUploaded: (ids: string[], uploaded = true) => call('POST', '/invoices/uploaded', { ids, uploaded }),
+  /**
+   * SAGA has imported the client's files: every invoice in them is marked as imported and the
+   * files go to the archive. Refused with `saga_files_changed` when they changed since `version`.
+   */
+  confirmSagaImport: (cui: string, version: string | null) =>
+    call<{ archive: { id: number; invoices: number; files: { name: string; path: string }[] } | null }>(
+      'POST', `/saga-files/${cui}/imported`, { version, source: 'screen' },
+    ),
+  /** One client's files for SAGA as they are now, with their version. */
+  sagaFiles: (cui: string) => call<{ version: string | null; up_to_date: boolean }>('GET', `/saga-files/${cui}`),
+  sagaArchive: (cui: string) => call<{ imports: SagaImport[] }>('GET', `/saga-archive${query({ cui })}`),
+  sagaArchiveEntry: (id: number) => call<{ import: SagaImportDetail }>('GET', `/saga-archive/${id}`),
+  /** Where the browser saves a file of a confirmed import from, as SAGA got it. */
+  sagaArchiveFileAddress: (id: number, name: string) => `/api/saga-archive/${id}/files/${encodeURIComponent(name)}`,
+  openSagaArchive: (id: number) => call('POST', `/saga-archive/${id}/open`),
 
   rules: () => call<RulesOverview>('GET', '/rules'),
   addRule: (rule: RuleFields) => call('POST', '/rules', rule),

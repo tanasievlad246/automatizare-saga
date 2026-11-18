@@ -197,15 +197,24 @@ def build(folder: Path, now: datetime | None = None) -> Config:
                 issued_id += 1
                 anaf.add(str(issued_id), tip="FACTURA TRIMISA", xml=_issued_xml(cui, buyer, buyer_cui, number, lines))
             service_at(moment, anaf).sync(cui)
+        if batch is EARLIER:
+            # Imported into SAGA the next day and confirmed, so the archive has them: by the
+            # automation for the first client, on screen for the others.
+            for position, cui in enumerate(EARLIER):
+                confirmed_at = moment + timedelta(days=1, hours=position)
+                service_at(confirmed_at, FakeAnaf()).confirm_saga_import(cui, source="api" if position == 0 else "screen")
 
     cui, number, cont = BOOKED_BY_HAND
     desk = service_at(now, FakeAnaf())
     by_hand = next(i for i in desk.invoices(cui=cui)["invoices"] if i["invoice_number"] == number)
     desk.set_cont(by_hand["id"], cont=cont)
 
-    # Last week's invoices were imported into SAGA in the meantime.
+    # Last week's invoices that were in no file (a person had still to choose their account)
+    # were imported into SAGA in the meantime too.
     earlier_ids = [str(3000 + n) for n in range(1, 1 + sum(len(v) for v in EARLIER.values()))]
-    service_at(now, FakeAnaf()).mark_uploaded(earlier_ids)
+    left = [i for i in earlier_ids if not desk.invoice(i)["invoice"]["uploaded_to_accounting"]]
+    if left:
+        service_at(now, FakeAnaf()).mark_uploaded(left)
     return cfg
 
 

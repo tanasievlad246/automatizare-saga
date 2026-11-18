@@ -112,6 +112,11 @@ export function countOf(count: number, one: string, many: string): string {
   return `${count} ${needsDe ? 'de ' : ''}${many}`
 }
 
+/** "una a primit cont", "25 au primit cont": a number before a verb takes no "de", however large. */
+export function countDoing(count: number, one: string, many: string): string {
+  return count === 1 ? one : `${count} ${many}`
+}
+
 /** A long path cut to its last two parts ("…\\data\\SAGA Import"), which say where it is. */
 export function shortPath(path: string): string {
   const separator = path.includes('\\') ? '\\' : '/'

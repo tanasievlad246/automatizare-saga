@@ -120,6 +120,22 @@ def test_every_second_download_also_brings_an_invoice_the_client_issued(cfg):
     assert issued["customer_name"] and issued["customer_cui"] != CLIENT
 
 
+def test_the_demo_archive_holds_last_weeks_confirmed_imports(cfg):
+    desk = demo.service(cfg)
+
+    imports = {cui: desk.saga_archive(cui)["imports"] for cui in demo.EARLIER}
+    first, *others = demo.EARLIER
+
+    assert all(len(entries) == 1 for entries in imports.values())
+    assert imports[first][0]["source"] == "api" and all(imports[cui][0]["source"] == "screen" for cui in others)
+    for cui, (entry,) in imports.items():
+        assert entry["invoices"] > 0 and all(file["present"] for file in entry["files"])
+        # Today's invoices wait in a new file; last week's are all marked as imported.
+        archived = {invoice["id"] for invoice in desk.saga_archive_entry(entry["id"])["import"]["invoices"]}
+        waiting = {message_id for file in desk.saga_files(cui)["files"] for message_id in file["ids"]}
+        assert archived and not archived & waiting
+
+
 @pytest.fixture
 def no_network(monkeypatch):
     """A request that would leave this computer fails the test instead of being sent."""

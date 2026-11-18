@@ -273,6 +273,30 @@ def test_pending_messages_are_listed_per_company_oldest_first(store):
     assert store.pending_classification(VALID_CUI) == ["1", "2"]
 
 
+def test_what_can_be_classified_again_is_what_waits_for_a_person_or_for_jev_and_is_not_imported(store):
+    store.insert_message(make_row(id="2", classification_status="review", first_seen_at="2026-11-11T10:00"))
+    store.insert_message(make_row(id="1", classification_status="pending", first_seen_at="2026-11-11T09:00"))
+    store.insert_message(issued_row("3", classification_status="review", first_seen_at="2026-11-11T11:00"))
+    store.insert_message(make_row(id="4", classification_status="classified", cont="628"))
+    store.insert_message(make_row(id="5"))  # outside classification
+    store.insert_message(make_row(id="6", classification_status="review", cui=OTHER_VALID_CUI))
+    store.insert_message(make_row(id="7", classification_status="review"))
+    store.set_uploaded(["7"], True, "2026-11-11T12:00")
+
+    assert store.to_classify_again(VALID_CUI) == ["1", "2", "3"]
+
+
+def test_the_client_list_counts_the_invoices_that_wait_for_jev(store):
+    store.save_client(VALID_CUI, "Alfa Construct SRL", "2026-11-01T09:00:00")
+    store.insert_message(make_row(id="1", classification_status="pending"))
+    store.insert_message(make_row(id="2", classification_status="pending"))
+    store.set_uploaded(["2"], True, "2026-11-11T12:00")
+    store.insert_message(make_row(id="3", classification_status="review"))
+
+    (client,) = store.clients()
+    assert (client["waiting_count"], client["review_count"]) == (1, 1)
+
+
 def test_classification_fields_are_saved_and_listed(store):
     store.insert_message(make_row(classification_status="pending"))
 
@@ -959,3 +983,88 @@ def test_a_database_from_0_10_0_gets_issued_accounts_and_its_rules_stay_for_rece
     assert list(store.accounts(kind="issued")) == ["701", "704", "707"]
     assert store.accounts() == {}  # the examples for received invoices were added long ago, and removed
     store.close()
+
+
+# --- the archive of imports in SAGA ---------------------------------------------------------
+
+WHEN = "2026-11-17T10:42:00+02:00"
+
+
+def an_import(store, ids=("3001", "3002"), when=WHEN, source="api", cui=VALID_CUI):
+    return store.record_saga_import(
+        cui=cui, imported_at=when, source=source, folder=f"saga-archive/{cui}/{when[:10]}",
+        files=["F_87654321_FV-1042_09.11.2026.xml"], ids=list(ids),
+    )
+
+
+def test_an_import_is_kept_with_its_invoices_and_marks_them_imported(store):
+    store.insert_message(make_row(id="3001"))
+    store.insert_message(make_row(id="3002", message_type="FACTURA TRIMISA"))
+
+    kept = an_import(store)
+
+    assert store.saga_imports(VALID_CUI) == [{
+        "id": kept, "cui": VALID_CUI, "imported_at": WHEN, "source": "api", "folder": f"saga-archive/{VALID_CUI}/2026-11-17",
+        "files": ["F_87654321_FV-1042_09.11.2026.xml"], "invoices": 2, "received": 1, "issued": 1, "unmarked": 0,
+    }]
+    assert store.saga_import(kept)["ids"] == ["3001", "3002"]
+    for message_id in ("3001", "3002"):
+        assert (store.get_message(message_id)["uploaded_to_accounting"], store.get_message(message_id)["uploaded_at"]) == (True, WHEN)
+
+
+def test_an_import_with_an_unknown_invoice_keeps_nothing_and_marks_nothing(store):
+    store.insert_message(make_row(id="3001"))
+
+    with pytest.raises(EfacturaError):
+        an_import(store, ids=("3001", "9999"))
+
+    assert store.saga_imports(VALID_CUI) == [] and store.get_message("3001")["uploaded_to_accounting"] is False
+
+
+def test_imports_are_listed_newest_first_and_for_one_company(store):
+    for message_id, cui in (("3001", VALID_CUI), ("3002", VALID_CUI), ("4001", OTHER_VALID_CUI)):
+        store.insert_message(make_row(id=message_id, cui=cui))
+    older = an_import(store, ids=("3001",), when="2026-11-10T09:12:00+02:00")
+    newer = an_import(store, ids=("3002",), source="screen")
+    an_import(store, ids=("4001",), cui=OTHER_VALID_CUI)
+
+    assert [entry["id"] for entry in store.saga_imports(VALID_CUI)] == [newer, older]
+    assert store.saga_import(newer)["source"] == "screen" and store.saga_import(12345) is None
+
+
+def test_an_invoice_knows_its_latest_import(store):
+    store.insert_message(make_row(id="3001"))
+    store.insert_message(make_row(id="3002"))
+    first = an_import(store, ids=("3001",), when="2026-11-10T09:12:00+02:00")
+    store.set_uploaded(["3001"], False, WHEN)
+    second = an_import(store, ids=("3001", "3002"))
+
+    assert store.saga_import_of("3001") == {"id": second, "imported_at": WHEN, "source": "api"}
+    assert store.saga_import_of("3002")["id"] == second and store.saga_import_of("9999") is None
+    # The first import still lists the invoice: it is what SAGA got then.
+    assert store.saga_import(first)["ids"] == ["3001"]
+
+
+def test_an_import_counts_the_invoices_no_longer_marked_as_imported(store):
+    store.insert_message(make_row(id="3001"))
+    store.insert_message(make_row(id="3002"))
+    an_import(store)
+
+    store.set_uploaded(["3002"], False, WHEN)
+
+    assert store.saga_imports(VALID_CUI)[0]["unmarked"] == 1
+
+
+def test_a_database_made_before_the_archive_gains_it_when_opened(tmp_path):
+    path = tmp_path / "data" / "efactura.db"
+    Store(path).close()
+    with sqlite3.connect(path) as raw:
+        raw.execute("DROP TABLE saga_import_invoices")
+        raw.execute("DROP TABLE saga_imports")
+
+    reopened = Store(path)
+    try:
+        reopened.insert_message(make_row(id="3001"))
+        assert an_import(reopened, ids=("3001",)) == 1
+    finally:
+        reopened.close()

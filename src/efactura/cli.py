@@ -228,6 +228,13 @@ def _parser() -> argparse.ArgumentParser:
         help="also an invoice saved outside classification, or one already classified",
     )
 
+    again = commands.add_parser(
+        "classify-again", help="send a client's invoices to check, or waiting for Jev, back through the rules and Jev"
+    )
+    again.add_argument("cui", nargs="?")
+    again.add_argument("--all", action="store_true", help="every client with an invoice to check or waiting for Jev")
+    again.add_argument("--no-jev", action="store_true", help="the rules alone: Jev is not asked")
+
     review = commands.add_parser("review", help="invoices a person must decide, with Jev's suggestion")
     review.add_argument("--cui")
 
@@ -259,6 +266,19 @@ def _parser() -> argparse.ArgumentParser:
     mark = commands.add_parser("mark-uploaded", help="set the uploaded flag")
     mark.add_argument("ids", nargs="+", metavar="id")
     mark.add_argument("--undo", action="store_true", help="clear the flag instead")
+
+    waiting = commands.add_parser("saga-files", help="what waits for SAGA: the files, their invoices and version")
+    waiting.add_argument("cui", nargs="?", help="one client; left out, every client with a file")
+
+    imported = commands.add_parser(
+        "saga-imported", help="SAGA imported a client's files: mark their invoices and archive the files"
+    )
+    imported.add_argument("cui")
+    imported.add_argument("--version", help="from saga-files; refused if the files changed since")
+
+    archive = commands.add_parser("saga-archive", help="a client's confirmed imports, or one with --id")
+    archive.add_argument("cui", nargs="?")
+    archive.add_argument("--id", type=int, help="one import, with its invoices")
 
     serve = commands.add_parser("serve", help="start the page and the local REST API")
     serve.add_argument("--port", type=int)
@@ -426,6 +446,12 @@ def _dispatch(args: argparse.Namespace, cfg: Config, config_path: Path) -> dict 
                 )
             case "classify":
                 return service.classify(args.id, force=args.force)
+            case "classify-again":
+                if args.all == bool(args.cui):
+                    raise EfacturaError(INVALID_INPUT, "Give a client's CUI, or --all for every client.")
+                if args.all:
+                    return service.classify_again_all(jev=not args.no_jev)
+                return service.classify_again(args.cui, jev=not args.no_jev)
             case "review":
                 return service.review(args.cui)
             case "set-cont":
@@ -442,6 +468,16 @@ def _dispatch(args: argparse.Namespace, cfg: Config, config_path: Path) -> dict 
                 return service.invoice(args.id, include_xml=args.xml)
             case "mark-uploaded":
                 return service.mark_uploaded(args.ids, undo=args.undo)
+            case "saga-files":
+                return service.saga_files(args.cui)
+            case "saga-imported":
+                return service.confirm_saga_import(args.cui, version=args.version)
+            case "saga-archive":
+                if args.id is not None:
+                    return service.saga_archive_entry(args.id)
+                if not args.cui:
+                    raise EfacturaError(INVALID_INPUT, "Give a client's CUI, or --id for one import.")
+                return service.saga_archive(args.cui)
     finally:
         service.close()
 

@@ -29,7 +29,7 @@ export function SecretsPage() {
   const { data: login, isError: programSilent } = useQuery({ queryKey: ['auth'], queryFn: api.authStatus })
 
   return (
-    <div className="flex max-w-[54rem] flex-col gap-5">
+    <div className="flex flex-col gap-5">
       <PageTitle title="Chei și parole">
         Cu aceste chei programul vorbește cu ANAF și cu Jev. De obicei se completează o singură dată.
       </PageTitle>
@@ -46,7 +46,8 @@ export function SecretsPage() {
         Cum obțin Client ID și Client Secret de la ANAF? Pașii, unul câte unul
       </a>
 
-      <div className="flex flex-col gap-3">
+      {/* Two keys side by side on a wide screen, the two of a row as tall as each other. */}
+      <div className="grid gap-3 min-[96rem]:grid-cols-2">
         {data?.secrets.map((secret) => (
           <SecretField key={secret.key} secret={secret} name={NAMES[secret.key] ?? secret.key} />
         ))}

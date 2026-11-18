@@ -11,15 +11,6 @@ export function kindFrom(search: URLSearchParams): InvoiceKind {
   return search.get('fel') === 'emise' ? 'issued' : 'received'
 }
 
-/** The two tabs over a client's invoices, with how many there are of each once that is known. */
-export function kindTabs(received: number | undefined, issued: number | undefined): { value: InvoiceKind; label: string }[] {
-  const counted = (label: string, count: number | undefined) => (count === undefined ? label : `${label} (${count})`)
-  return [
-    { value: 'received', label: counted('Facturi primite', received) },
-    { value: 'issued', label: counted('Facturi emise', issued) },
-  ]
-}
-
 const NEVER_DOWNLOADED = 'Nu ați descărcat încă facturi pentru acest client. Apăsați „Descarcă facturile”.'
 const OLDER_DAYS = 'Pentru zile mai vechi, apăsați „Descarcă facturile” și alegeți zilele.'
 
