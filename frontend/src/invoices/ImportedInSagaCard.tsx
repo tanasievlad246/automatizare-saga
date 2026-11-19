@@ -5,6 +5,7 @@ import { Notice } from '@/components/Notice'
 import { Button } from '@/components/ui/button'
 import { ApiError, api } from '../api'
 import { CHANGED_MEANWHILE, confirmedToast } from '../archive/archiveTexts'
+import { COPY_REFUSED, copyText } from '../clipboard'
 import { showError } from '../errorMessages'
 import { formatWhen } from '../format'
 import { goesToSales, kindsLine } from './issuedInvoices'
@@ -77,7 +78,10 @@ export function ImportedInSagaCard({ cui, ready, saga }: { cui: string; ready: I
   if (ready.length === 0 && !stale) return null
   const copyPath = (path: string) => {
     setSeen(current)
-    navigator.clipboard.writeText(path).then(() => toast.success('Calea a fost copiată.'), showError)
+    copyText(path).then(
+      () => toast.success('Calea a fost copiată.'),
+      () => toast.error('Calea nu a fost copiată.', { description: COPY_REFUSED, duration: Infinity }),
+    )
   }
   const showFolder = (invoiceId: string) => {
     setSeen(current)

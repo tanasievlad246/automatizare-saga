@@ -7,6 +7,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { api } from '../api'
 import { importedLine } from '../archive/archiveTexts'
+import { COPY_REFUSED, copyText } from '../clipboard'
 import { showError } from '../errorMessages'
 import type { Invoice, SagaState } from '../types'
 import { fileCardNote } from './sagaFiles'
@@ -27,7 +28,10 @@ export function SagaFileCard({ invoice, saga }: { invoice: Invoice; saga: SagaSt
   const stale = saga.problem !== null || !saga.up_to_date
   const path = stale ? null : invoice.saga_xml_path
   const copyPath = () =>
-    navigator.clipboard.writeText(path ?? '').then(() => toast.success('Calea a fost copiată.'), showError)
+    copyText(path ?? '').then(
+      () => toast.success('Calea a fost copiată.'),
+      () => toast.error('Calea nu a fost copiată.', { description: COPY_REFUSED, duration: Infinity }),
+    )
 
   return (
     <section aria-label="Fișierul pentru SAGA" className="flex flex-col gap-3 rounded-2xl border bg-card px-5 pt-4.5 pb-5.5">
