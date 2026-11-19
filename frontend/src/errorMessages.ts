@@ -22,6 +22,7 @@ const MESSAGES: Record<string, string> = {
   not_classifiable: 'Contul acestei facturi nu se poate schimba acum. Dacă este bifată ca importată în SAGA, debifați întâi „Am importat factura în SAGA”. Altfel, factura s-a schimbat între timp: pagina arată acum cum este.',
   update_error: 'Programul nu a putut fi actualizat. A rămas la versiunea pe care o avea.',
   backup_error: 'Copia de siguranță nu a reușit. Verificați folderul ales pentru copii.',
+  snapshot_too_new: 'Copia a fost făcută de o versiune mai nouă a programului decât cea instalată acum, așa că nu poate fi restaurată. Actualizați programul („Caută o versiune nouă”, în meniu), apoi încercați din nou.',
   jev_error: 'Jev nu a putut fi întrebat. Verificați cheia OpenRouter și creditul din cont.',
   saga_files_changed: 'Fișierul pentru SAGA s-a schimbat de când ați deschis pagina, așa că nu s-a marcat nimic. Importați în SAGA fișierul așa cum este acum, apoi confirmați din nou.',
   saga_archive_error: 'Fișierul nu a putut fi pus în arhivă: discul programului este plin sau nu se poate scrie pe el. Nu s-a marcat nimic. Faceți loc pe disc, apoi confirmați din nou.',

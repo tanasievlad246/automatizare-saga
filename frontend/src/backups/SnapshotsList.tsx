@@ -9,6 +9,7 @@ const WHO_MADE_IT: Record<Snapshot['kind'], string> = {
   auto: 'făcută de program',
   manual: 'făcută de dumneavoastră',
   'before-restore': 'făcută înaintea unei restaurări',
+  'before-wipe': 'făcută înainte de ștergerea datelor',
 }
 
 /**

@@ -1,4 +1,5 @@
-"""Copies of the database in a folder the person chose, and putting one back.
+"""Copies of the database in a folder the person chose, putting one back, and starting again
+from zero.
 
 A copy is made when asked for and by itself every 24 hours. At most 25 are kept: when a
 new one arrives, the oldest goes. Only files this program made are ever deleted, known by
@@ -7,6 +8,10 @@ their names.
 Each copy is one zip holding the whole database. It is made with SQLite's own copy, so it
 is complete while the program runs, checked before it is kept, and written under a
 temporary name first, so a half-written file is never taken for a backup.
+
+Starting from zero ("Șterge toate datele") makes a copy first, reads it back from the folder
+and checks it whole; only then is anything deleted, and only the rows (store.WIPED): the
+settings, the journal and every file on disk stay.
 """
 
 from __future__ import annotations
@@ -23,19 +28,21 @@ from pathlib import Path
 
 from . import background, journal
 from .config import Config
-from .errors import BACKUP_ERROR, BUSY, INVALID_INPUT, EfacturaError
+from . import store as stored
+from .errors import BACKUP_ERROR, BUSY, INVALID_INPUT, SNAPSHOT_TOO_NEW, EfacturaError
 from .service import _FileLock
-from .store import Store
+from .store import SCHEMA_VERSION, Store
 
 MAX_SNAPSHOTS = 25
 EVERY = timedelta(hours=24)
-KINDS = ("auto", "manual", "before-restore")
+KINDS = ("auto", "manual", "before-restore", "before-wipe")
 INSIDE = "efactura.db"  # the database's name inside each zip
 
 FOLDER = "backup_folder"  # in the settings table
 LAST_FAILURE = "backup_last_failure"
 RESTORE_RECORD = "last-restore.json"  # in the data folder: how the last restore ended, for the page
 RESTORE_OUTPUT = "restore.log"
+RESTORE_LOCK = "restore.lock"  # held by a restore and by a wipe
 
 # How long a file that Windows says is in use is tried again. A program that was just
 # stopped lets go of its files a moment after it stops answering.
@@ -44,8 +51,10 @@ FILE_RETRY_DELAY = 0.25
 HALF_WRITTEN_AFTER = timedelta(hours=1)  # a .partial older than this was left by a crash
 
 _STAMP = "%Y%m%d-%H%M%S"
-_NAME = re.compile(r"autosaga-(\d{8}-\d{6})-(auto|manual|before-restore)\.zip")  # matched whole
-_HALF_WRITTEN = re.compile(r"autosaga-(\d{8}-\d{6})-(?:auto|manual|before-restore)\.zip\.partial")
+_KIND = "|".join(re.escape(kind) for kind in KINDS)
+_NAME = re.compile(rf"autosaga-(\d{{8}}-\d{{6}})-({_KIND})\.zip")  # matched whole
+_HALF_WRITTEN = re.compile(rf"autosaga-(\d{{8}}-\d{{6}})-(?:{_KIND})\.zip\.partial")
+_SQLITE_HEADER = b"SQLite format 3\x00"
 
 log = logging.getLogger(__name__)
 
@@ -315,8 +324,10 @@ def _replace_with(cfg: Config, name: str, now: datetime) -> dict:
                 raise EfacturaError(BACKUP_ERROR, f"{chosen.name} could not be opened: {exc}") from None
             if not _is_sound(opened):
                 raise EfacturaError(BACKUP_ERROR, f"{chosen.name} does not hold a database this program can use.")
+            _refuse_if_newer(chosen.name, _version_of(opened))
             # Backups go on to the same folder, whatever the snapshot remembered.
             _stage(opened, staged, folder if readable else str(chosen.parent))
+            _bring_up_to_date(staged)
 
             with _no_download_running(cfg):
                 was_running = background.stop(cfg)["stopped"]
@@ -346,8 +357,10 @@ def _replace_with(cfg: Config, name: str, now: datetime) -> dict:
 
 def start_restore_in_background(cfg: Config, name: str) -> dict:
     """What the page's button does: the restore has to stop the program, so it runs as a
-    process of its own and leaves a record the page reads when the program is back."""
-    _snapshot_named(cfg, name)
+    process of its own and leaves a record the page reads when the program is back. What can
+    be refused at once is refused here, so the person is told on the spot."""
+    chosen = _snapshot_named(cfg, name)
+    _refuse_if_newer(chosen.name, _version_inside(chosen))
     with _no_download_running(cfg):  # said here, to the person, not found out by the other process
         pass
     background.spawn_command(cfg.path, cfg.data_dir / RESTORE_OUTPUT, "restore", name)
@@ -405,6 +418,54 @@ def _stage(snapshot_database: Path, staged: Path, folder: str | None) -> None:
             connection.close()
     except (OSError, sqlite3.Error) as exc:
         raise EfacturaError(BACKUP_ERROR, f"The snapshot could not be made ready: {exc}") from None
+
+
+def _version_of(database: Path) -> int:
+    connection = sqlite3.connect(database)
+    try:
+        return connection.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        connection.close()
+
+
+def _version_inside(snapshot_zip: Path) -> int | None:
+    """The database version a copy carries (SQLite's user_version, bytes 60 to 63 of the
+    file), read from the start of the file inside the zip, without unpacking it all. None
+    when it cannot be read so: the restore itself then says what is wrong with the copy."""
+    try:
+        with zipfile.ZipFile(snapshot_zip) as archive, archive.open(INSIDE) as inside:
+            header = inside.read(100)
+    except (OSError, KeyError, zipfile.BadZipFile, RuntimeError):
+        return None
+    if len(header) < 100 or not header.startswith(_SQLITE_HEADER):
+        return None
+    return int.from_bytes(header[60:64], "big")
+
+
+def _refuse_if_newer(name: str, version: int | None) -> None:
+    """A newer version may have changed what the tables mean; this one would bring the copy
+    "up to date" downwards and lose what it does not know."""
+    if version is not None and version > SCHEMA_VERSION:
+        raise EfacturaError(
+            SNAPSHOT_TOO_NEW,
+            f"{name} was made by a newer version of the program (database version {version}; "
+            f"this one reads up to {SCHEMA_VERSION}). Update the program, then restore it.",
+        )
+
+
+def _bring_up_to_date(staged: Path) -> None:
+    """A copy made by an earlier version gets the columns and tables added since, as the
+    program would add them on starting, but here, while the database in use is untouched:
+    one that cannot be brought up to date is refused instead of stopping the program."""
+    try:
+        Store(staged).close()
+        connection = sqlite3.connect(staged)
+        try:
+            connection.execute("PRAGMA journal_mode=DELETE")  # all of it in the one file that is moved
+        finally:
+            connection.close()
+    except Exception as exc:
+        raise EfacturaError(BACKUP_ERROR, f"The snapshot could not be brought up to date: {_said(exc)}") from None
 
 
 def _keep_what_is_there(cfg: Config, now: datetime, never_remove: str) -> tuple[str | None, str | None]:
@@ -465,12 +526,13 @@ def _said(exc: Exception) -> str:
 
 
 def _one_at_a_time(cfg: Config) -> _FileLock:
-    return held_or_busy(cfg.data_dir / "restore.lock", "A restore is already running.")
+    """One restore or one wipe at a time: both replace what the database holds."""
+    return held_or_busy(cfg.data_dir / RESTORE_LOCK, "A restore or a wipe of the data is already running.")
 
 
 def no_restore_running(cfg: Config) -> _FileLock:
     """For the update, which stops and starts the program too."""
-    return held_or_busy(cfg.data_dir / "restore.lock", "A restore is running. Wait for it to finish.")
+    return held_or_busy(cfg.data_dir / RESTORE_LOCK, "A restore or a wipe of the data is running. Wait for it to finish.")
 
 
 def _no_update_running(cfg: Config) -> _FileLock:
@@ -480,7 +542,7 @@ def _no_update_running(cfg: Config) -> _FileLock:
 def _no_download_running(cfg: Config) -> _FileLock:
     """Held across the swap: a download writes to the database for minutes, and stopping
     the program does not stop one that is under way."""
-    return held_or_busy(cfg.lock_path, "Invoices are being downloaded. Wait for that to finish, then restore.")
+    return held_or_busy(cfg.lock_path, "Invoices are being downloaded or classified. Wait for that to finish, then restore.")
 
 
 def held_or_busy(path: Path, busy: str) -> _FileLock:
@@ -492,6 +554,98 @@ def held_or_busy(path: Path, busy: str) -> _FileLock:
                 raise EfacturaError(BUSY, busy) from None
 
     return _Lock(path)
+
+
+# --- starting again from zero ---------------------------------------------------------------------
+
+
+def wipe(cfg: Config, now: datetime | None = None) -> dict:
+    """Delete every client, invoice, account and rule (store.WIPED), after a copy of it all.
+
+    The copy is made in the backup folder, read back from there and checked whole; if any of
+    that fails, nothing is deleted. The settings, the keys typed on screen, the journal, the
+    connection to ANAF, config.toml and every file on disk stay. The example accounts and
+    rules come back, as on the first day.
+
+    It runs inside the program, which goes on running: the database file stays where it is,
+    so there is nothing for Windows to refuse, and the next request already reads the empty
+    database. Refused while a download, a classification, a restore, an update or a write of
+    the files for SAGA is under way.
+    """
+    now = now or datetime.now().astimezone()
+    try:
+        with (
+            _one_at_a_time(cfg),
+            held_or_busy(cfg.data_dir / "update.lock", "An update is running. Wait for it to finish, then try again."),
+            held_or_busy(cfg.lock_path, "Invoices are being downloaded or classified. Wait for that to finish, then try again."),
+            held_or_busy(cfg.saga_lock_path, "The files for SAGA are being written. Wait a moment, then try again."),
+        ):
+            kept = snapshot(cfg, "before-wipe", now)["name"]
+            (folder,) = _settings(cfg, FOLDER)
+            expected = check_snapshot(Path(folder) / kept)
+            store = Store(cfg.db_path)
+            try:
+                deleted = store.wipe(expected)
+            finally:
+                store.close()
+    except Exception as exc:
+        failure = _said(exc)
+        busy = isinstance(exc, EfacturaError) and exc.code == BUSY
+        journal.record("backup", "wipe.failed", f"The data was not deleted: {failure}",
+                       level="warning" if busy else "error", error=failure)
+        if busy:
+            raise
+        raise EfacturaError(BACKUP_ERROR, f"Nothing was deleted. {failure}") from None
+    _compact(cfg)
+    journal.record(
+        "backup", "wipe.finished",
+        f"Every client, invoice, account and rule was deleted. The copy made just before is {kept}.",
+        kept_as=kept, deleted=deleted,
+    )
+    # When the copy was made, as the list of copies gives it: the PC's own clock, read from its name.
+    kept_at = _stamp_of(_NAME.fullmatch(kept).group(1)).isoformat()
+    return {"ok": True, "kept_as": kept, "kept_at": kept_at, "deleted": deleted}
+
+
+def check_snapshot(path: Path) -> dict[str, int]:
+    """Open a copy in the folder as a restore would, and check all of it: SQLite's full check,
+    every table this program has, and how many rows each table a wipe empties holds."""
+    expected_tables = set(stored.WIPED) | set(stored.KEPT_BY_WIPE)
+    try:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as scratch:
+            with zipfile.ZipFile(path) as archive:
+                inside = Path(archive.extract(INSIDE, scratch))
+            connection = sqlite3.connect(inside)
+            try:
+                verdict = connection.execute("PRAGMA integrity_check").fetchone()[0]
+                tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+                missing = sorted(expected_tables - tables)
+                rows = {} if (missing or verdict != "ok") else {
+                    table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in stored.WIPED
+                }
+            finally:
+                connection.close()
+    except (OSError, KeyError, RuntimeError, zipfile.BadZipFile, sqlite3.Error) as exc:
+        raise EfacturaError(BACKUP_ERROR, f"The copy {path.name} could not be read back: {exc}") from None
+    if verdict != "ok":
+        raise EfacturaError(BACKUP_ERROR, f"The copy {path.name} did not pass SQLite's check: {verdict}")
+    if missing:
+        raise EfacturaError(BACKUP_ERROR, f"The copy {path.name} lacks tables: {', '.join(missing)}.")
+    return rows
+
+
+def _compact(cfg: Config) -> None:
+    """Give back the room the deleted rows took. Left as they are, the freed pages would still
+    hold the old invoices, in the file and in every copy made from it later. It is not worth
+    failing over: what was asked for is done."""
+    connection = sqlite3.connect(cfg.db_path, timeout=5)
+    try:
+        connection.execute("VACUUM")
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except sqlite3.Error as exc:
+        journal.record("backup", None, f"The database could not be compacted after the wipe: {exc}", level="detail")
+    finally:
+        connection.close()
 
 
 # --- small things kept between runs --------------------------------------------------------------

@@ -43,6 +43,7 @@ const issuedNote = (data: Data) => (data.kind === 'issued' ? ' (facturi emise)' 
 
 const HOW_A_COPY_WAS_MADE: Record<string, string> = {
   manual: 'la cererea dumneavoastră', auto: 'automat', 'before-restore': 'înaintea restaurării',
+  'before-wipe': 'înaintea ștergerii datelor',
 }
 
 // The causes a failed automatic download names in the journal; any other is in the technical details.
@@ -210,6 +211,10 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
         : `Copia de siguranță în folderul ${text(data.folder)} nu a reușit.`,
   'backup.folder_set': (data) => `Folderul copiilor de siguranță este acum ${text(data.folder)}.`,
   'backup.removed_old': (data) => `${countOf(Number(data.removed), 'Cea mai veche copie a fost ștearsă', 'copii vechi au fost șterse')}, ca să rămână cel mult 25.`,
+  'wipe.finished': (data) =>
+    `Toate datele au fost șterse: clienții, facturile, conturile și regulile. Copia de dinainte este ${text(data.kept_as)}.`,
+  // Why, in English, under "Detalii tehnice": it was refused before anything was deleted, whatever the cause.
+  'wipe.failed': () => 'Ștergerea datelor nu s-a făcut; nu s-a șters nimic.',
   'restore.finished': (data) => `Baza de date a fost restaurată din copia ${text(data.name)}.`,
   'restore.failed': () => 'Restaurarea nu a reușit. Baza de date a rămas cea de dinainte.',
   'restore.not_restarted': () => 'După restaurare programul nu a pornit singur. Faceți dublu clic pe „AutoSaga” de pe Desktop.',

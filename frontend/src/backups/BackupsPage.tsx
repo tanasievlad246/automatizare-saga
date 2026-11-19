@@ -9,6 +9,7 @@ import { BackupFolderCard } from './BackupFolderCard'
 import { BackupStatusCard } from './BackupStatusCard'
 import { RestoreDialog } from './RestoreDialog'
 import { SnapshotsList } from './SnapshotsList'
+import { WipeCard } from './WipeCard'
 
 /** Copies of the database: where they go, when the last one was made, and putting one back. */
 export function BackupsPage() {
@@ -38,6 +39,8 @@ export function BackupsPage() {
           {restoring && <RestoreDialog snapshot={restoring} onClose={() => setRestoring(null)} />}
         </div>
       )}
+      {/* Last on the page, across its whole width: the one action that deletes. */}
+      {status && <WipeCard status={status} />}
     </div>
   )
 }

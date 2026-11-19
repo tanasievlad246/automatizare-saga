@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Iterable
 
 from . import rules as rule_examples
-from .errors import NOT_FOUND, EfacturaError
+from .errors import BACKUP_ERROR, NOT_FOUND, EfacturaError
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sync_runs (
@@ -229,6 +229,17 @@ ISSUED_BACKLOG = "issued_backlog_added"
 SCHEMA_VERSION = 1
 _ACCOUNT_TABLES = {RECEIVED: "accounts", ISSUED: "issued_accounts"}
 
+# What "Șterge toate datele" empties: everything the program gathered and the accountant built.
+# In this order, so that no row is left pointing at one already gone (messages -> sync_runs,
+# saga_import_invoices -> saga_imports). The example accounts and rules come back afterwards.
+WIPED = (
+    "decisions", "saga_import_invoices", "saga_imports", "saga_files", "saga_problems", "jev_calls",
+    "messages", "sync_runs", "rules", "accounts", "issued_accounts", "clients",
+)
+# What it keeps: the settings (folders, the keys typed on screen, the schedule, Jev's questions)
+# and the journal. A new table must be put in one list or the other; a test checks.
+KEPT_BY_WIPE = ("settings", "events")
+
 # Added to `messages` after the first version; existing databases gain them on opening.
 CLASSIFICATION_COLUMNS = {
     # NULL: not subject to classification (saved before it existed, or not a received
@@ -406,6 +417,37 @@ class Store:
             "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
             [(JEV_INSTRUCTIONS, rule_examples.DEFAULT_JEV_INSTRUCTIONS), (_EXAMPLES_ADDED, "1")],
         )
+
+    def wipe(self, expected: dict[str, int]) -> dict[str, int]:
+        """Empty every table in WIPED in one transaction, then put back the example accounts
+        and rules, as on the first day. The settings and the journal are not touched.
+
+        `expected` is how many rows each of those tables holds in the copy made just before.
+        They are counted again here, under the write lock: a row saved after the copy was made
+        (a rule added on another tab) is in no copy, so then nothing is deleted. Returns the
+        counts of what was deleted."""
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            found = {table: self._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in WIPED}
+            differ = [table for table in WIPED if found[table] != expected.get(table)]
+            if differ:
+                raise EfacturaError(
+                    BACKUP_ERROR,
+                    f"The copy and the database do not hold the same rows ({', '.join(differ)}): "
+                    "something changed while the copy was being made.",
+                )
+            for table in WIPED:
+                self._conn.execute(f"DELETE FROM {table}")
+            self._add_examples()
+            self._conn.executemany(
+                "INSERT OR IGNORE INTO issued_accounts (cont, description) VALUES (?, ?)",
+                rule_examples.EXAMPLE_ISSUED_ACCOUNTS.items(),
+            )
+            self._conn.execute("COMMIT")
+        except BaseException:
+            self._conn.execute("ROLLBACK")
+            raise
+        return found
 
     # --- messages -----------------------------------------------------------
 
