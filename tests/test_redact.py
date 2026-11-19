@@ -102,3 +102,34 @@ def test_json_hides_by_key_at_any_depth_and_by_shape_in_any_value():
 
 def test_text_that_is_not_json_is_cleaned_as_text():
     assert redact.json_text("not json, token=abcdef") == f"not json, token={HIDDEN}"
+
+
+def test_an_address_hides_a_secret_after_the_hash_and_after_a_semicolon_too():
+    cleaned = redact.url("https://localhost/callback#code=ABCDEF123456&state=x;token=TOK-998877")
+
+    assert "ABCDEF123456" not in cleaned and "TOK-998877" not in cleaned and "state=x" in cleaned
+
+
+def test_a_header_that_holds_an_address_is_cleaned_as_one():
+    pairs = [("Location", "https://localhost/callback?code=ABCDEF123456"), ("Referer", "https://x.test/?token=T-1234567")]
+
+    cleaned = redact.headers(pairs)
+
+    assert cleaned == [["Location", f"https://localhost/callback?code={HIDDEN}"], ["Referer", f"https://x.test/?token={HIDDEN}"]]
+
+
+@pytest.mark.parametrize("text, leaked", [
+    ("{'access_token': 'opaqueAT12345'}", "opaqueAT12345"),
+    ("{'client_secret': 'S3cr3tValue'}", "S3cr3tValue"),
+    ("x_access_token=XAT-445566", "XAT-445566"),
+    ("oauth_token=OT-445566", "OT-445566"),
+    ("redirected with code=ABCDEF123456 and state=1", "ABCDEF123456"),
+])
+def test_a_named_secret_is_hidden_in_any_quoting_and_with_any_prefix(text, leaked):
+    assert leaked not in redact.clean(text)
+
+
+def test_an_error_code_in_json_and_a_count_of_tokens_stay():
+    text = '{"error": {"code": 402, "message": "x"}, "usage": {"input_tokens": 400}, "error_code=7": 1}'
+
+    assert redact.clean(text) == text

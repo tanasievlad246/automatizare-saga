@@ -2656,8 +2656,11 @@ class Service:
     def _place_saga_files(self, store: Store, cui: str, when: str) -> None:
         folder, files = self._saga_files_now(store, cui)
         log.debug(
-            "Files for SAGA of %s in %s: %s", cui, folder,
-            "; ".join(f"{file.name} with {len(file.ids)} invoice(s)" for file in files) or "none wanted",
+            "Files for SAGA of %s in %s: %s file(s), %s invoice(s)%s", cui, folder, len(files),
+            sum(len(file.ids) for file in files),
+            # The first few by name: with one file per invoice there may be hundreds.
+            ": " + "; ".join(f"{file.name} with {len(file.ids)}" for file in files[:5]) + ("; …" if len(files) > 5 else "")
+            if files else "",
         )
         saga_dir = folder.parent
         known = store.saga_ledger(cui)

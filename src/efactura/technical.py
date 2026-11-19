@@ -16,14 +16,15 @@ The same rules hold as for the journal, and three more:
     No secret is ever kept: everything passes through `redact` before it is written.
 
     What is kept is bounded. A binary body (the ZIP of a download) is never kept, only its type
-    and size. A body is cut at BODY_LIMIT characters and not even looked at above TOO_LARGE
-    bytes. The whole is kept under TOTAL_BYTES and KEEP_RECORDS records, the oldest going first,
-    and nothing older than KEEP_DAYS. It never leaves this computer.
+    and size. A body, a program record and its exception are cut at BODY_LIMIT characters, and
+    a body is not even looked at above TOO_LARGE bytes. The whole is kept under TOTAL_BYTES and
+    KEEP_RECORDS records, the oldest going first, and nothing older than KEEP_DAYS: checked at
+    the first record each process writes, then every TRIM_EVERY records or TRIM_BYTES bytes,
+    and at the running program's quarter-hour housekeeping. It never leaves this computer.
 """
 
 from __future__ import annotations
 
-import itertools
 import json
 import logging
 import sqlite3
@@ -42,16 +43,22 @@ KEEP_DAYS = 7  # sooner than the journal (30): the bodies take far more room tha
 KEEP_RECORDS = 20_000
 TOTAL_BYTES = 10_000_000  # about 10 MB for the whole technical side
 BODY_LIMIT = 32 * 1024  # characters of one body kept
-TOO_LARGE = 2_000_000  # bytes of a body above which it is not read at all
-TRIM_EVERY = 200  # records written between two checks of the whole size
+TOO_LARGE = 1_000_000  # bytes of a body above which it is not read at all (hiding its secrets would take too long)
+TRIM_EVERY = 200  # records written between two checks of the limits
+TRIM_BYTES = 500_000  # or bytes written between two checks, whichever comes first
+LINE_LIMIT = 2000  # characters of a request's summary, error or header value
 PAGE = 500  # records read at a time
 MOST_AT_ONCE = 2000
-WRITE_TIMEOUT = 2  # seconds a record waits for a busy database before it is dropped
+# Seconds a record waits for a database another program is writing to before it is dropped.
+# Shorter than a journal line's: there are many more of them, and each would make the work wait.
+WRITE_TIMEOUT = 0.5
 
 _HEAD = ("id", "at", "trace", "kind", "level", "summary", "head")
 _SERVICES = {"logincert.anaf.ro": "anaf_login", "openrouter.ai": "jev"}
 _BINARY_TYPES = ("zip", "octet-stream", "pdf", "pkcs7", "x-pkcs", "gzip", "x-tar", "x-7z", "msword", "vnd.")
-_written = itertools.count(1)
+# Records and bytes written since the limits were last checked; None until this process checks them first.
+_since_check: list[int] | None = None
+_checking = threading.Lock()
 # When each request in flight was sent: httpx knows it only for a body it read from the network.
 _sent_at: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _sent_at_lock = threading.Lock()
@@ -98,11 +105,14 @@ class TechnicalHandler(logging.Handler):
                 "function": entry.funcName,
                 "has_exception": bool(entry.exc_info),
             }
+            message = redact.clean(entry.getMessage())
+            if len(message) > BODY_LIMIT:
+                message, head["cut"] = message[:BODY_LIMIT], True
             body = (
-                {"exception": redact.clean(logging.Formatter().formatException(entry.exc_info))}
+                {"exception": redact.clean(logging.Formatter().formatException(entry.exc_info))[:BODY_LIMIT]}
                 if entry.exc_info else {}
             )
-            _keep("log", "debug", redact.clean(entry.getMessage()), head, body)
+            _keep("log", "debug", message, head, body)
         except Exception:  # a log record must never raise
             pass
 
@@ -133,20 +143,22 @@ def _keep_exchange(request: httpx.Request, response: httpx.Response | None, erro
         "status": status,
         "duration_ms": duration_ms,
         "service": _service(request.url.host),
-        "error": redact.clean(error) if error else None,
+        "error": redact.clean(error)[:LINE_LIMIT] if error else None,
         "sent": _brief(sent),
         "received": _brief(received) if received is not None else None,
     }
     body = {
-        "request": {"headers": redact.headers(request.headers.multi_items()), "body": sent},
-        "response": None if response is None else {
-            "headers": redact.headers(response.headers.multi_items()), "body": received,
-        },
+        "request": {"headers": _headers(request.headers), "body": sent},
+        "response": None if response is None else {"headers": _headers(response.headers), "body": received},
     }
     level = "error" if status is None or status >= 500 else "warning" if status >= 400 else "info"
     answer = str(status) if status is not None else "no answer"
     took = f" {duration_ms} ms" if duration_ms is not None else ""
-    _keep("http", level, f"{request.method} {address} {answer}{took}", head, body)
+    _keep("http", level, f"{request.method} {address[:LINE_LIMIT]} {answer}{took}", head, body)
+
+
+def _headers(headers: httpx.Headers) -> list[list[str]]:
+    return [[name, value[:LINE_LIMIT]] for name, value in redact.headers(headers.multi_items())]
 
 
 def _content(request: httpx.Request) -> bytes:
@@ -250,12 +262,28 @@ def _insert(database: Path, row: tuple) -> None:
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 row,
             )
-            # The whole size is checked now and then, not only at the quarter-hour
-            # housekeeping: one long download can write a great deal in between.
-            if next(_written) % TRIM_EVERY == 0:
-                _trim(connection)
+            # The limits are applied here too, not only at the running program's housekeeping:
+            # a short command never sees that, and one long download writes a great deal in between.
+            if _check_due(row[-1]):
+                _apply_limits(connection, datetime.now().astimezone())
     finally:
         connection.close()
+
+
+def _check_due(size: int) -> bool:
+    """Is it time to apply the limits? At this process's first record, then every TRIM_EVERY
+    records or TRIM_BYTES bytes, whichever comes first."""
+    global _since_check
+    with _checking:
+        if _since_check is None:
+            _since_check = [0, 0]
+            return True
+        _since_check[0] += 1
+        _since_check[1] += size
+        if _since_check[0] >= TRIM_EVERY or _since_check[1] >= TRIM_BYTES:
+            _since_check = [0, 0]
+            return True
+        return False
 
 
 def _trim(connection: sqlite3.Connection) -> int:
@@ -275,17 +303,20 @@ def prune(db_path: Path, now: datetime) -> int:
     connection = sqlite3.connect(db_path, timeout=5)
     try:
         with connection:
-            aged = connection.execute(
-                "DELETE FROM technical WHERE at < ?", ((now - timedelta(days=KEEP_DAYS)).isoformat(),)
-            )
-            extra = connection.execute(
-                "DELETE FROM technical WHERE id <= (SELECT id FROM technical ORDER BY id DESC LIMIT 1 OFFSET ?)",
-                (KEEP_RECORDS,),
-            )
-            heavy = _trim(connection)
-        return aged.rowcount + extra.rowcount + heavy
+            return _apply_limits(connection, now)
     finally:
         connection.close()
+
+
+def _apply_limits(connection: sqlite3.Connection, now: datetime) -> int:
+    aged = connection.execute(
+        "DELETE FROM technical WHERE at < ?", ((now - timedelta(days=KEEP_DAYS)).isoformat(),)
+    )
+    extra = connection.execute(
+        "DELETE FROM technical WHERE id <= (SELECT id FROM technical ORDER BY id DESC LIMIT 1 OFFSET ?)",
+        (KEEP_RECORDS,),
+    )
+    return aged.rowcount + extra.rowcount + _trim(connection)
 
 
 # --- reading ------------------------------------------------------------------------------------------------

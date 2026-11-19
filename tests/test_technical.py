@@ -543,3 +543,43 @@ def test_a_fake_secret_sent_through_every_path_never_reaches_the_database_or_the
     assert services == {"anaf", "jev"} and any(r["status"] is None for r in http_records(cfg, sync_trace))
     assert len(records(cfg, log_trace)) == 3
     assert redact.HIDDEN in stored
+
+
+# --- found in the review ------------------------------------------------------------------------------
+
+
+def test_the_first_record_of_each_process_applies_the_limits_so_short_commands_do_not_pile_up(cfg, monkeypatch):
+    with sqlite3.connect(cfg.db_path) as database:
+        database.execute(
+            "INSERT INTO technical (at, trace, kind, level, summary, head, body, size) "
+            "VALUES (?, NULL, 'log', 'debug', 'old', '{}', '{}', 3)",
+            ((datetime.now().astimezone() - timedelta(days=8)).isoformat(),),
+        )
+    monkeypatch.setattr(technical, "_since_check", None)  # as in a process that has written nothing yet
+
+    log.debug("first of a new command")
+
+    assert [r["summary"] for r in records(cfg)] == ["first of a new command"]
+
+
+def test_the_limits_are_applied_again_after_a_great_deal_has_been_written(cfg, monkeypatch):
+    monkeypatch.setattr(technical, "TOTAL_BYTES", 3000)
+    monkeypatch.setattr(technical, "TRIM_BYTES", 1500)
+    for number in range(40):
+        log.debug("Record %03d %s", number, "x" * 100)
+
+    with sqlite3.connect(cfg.db_path) as database:
+        (total,) = database.execute("SELECT SUM(size) FROM technical").fetchone()
+    assert total <= 3000 + 1500  # never more than the limit and what was written since the last check
+
+
+def test_a_long_program_record_and_its_exception_are_cut(cfg, monkeypatch):
+    monkeypatch.setattr(technical, "BODY_LIMIT", 200)
+    try:
+        raise ValueError("y" * 1000)
+    except ValueError:
+        log.debug("x" * 1000, exc_info=True)
+
+    (kept,) = records(cfg)
+    assert len(kept["summary"]) <= 200 and kept["cut"] is True
+    assert len(whole(cfg, kept)["body"]["exception"]) <= 200

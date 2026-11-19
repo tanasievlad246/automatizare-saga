@@ -35,20 +35,25 @@ _SECRET_ENDINGS = ("token", "key", "secret", "password")
 _SECRET_HEADERS = frozenset({"authorization", "proxy-authorization", "cookie", "set-cookie", "x-api-key"})
 # In an address or a form, the one-time login code is a secret too. In JSON a "code" is an error code.
 _SECRET_IN_FORMS = frozenset({"code"})
+# Headers whose value is an address: it may carry a login code or a token as a parameter.
+_ADDRESS_HEADERS = frozenset({"location", "content-location", "referer", "refresh"})
 
 _SHAPES = (
     (re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9._~+/=-]{6,}"), r"\1 " + HIDDEN),
     (re.compile(r"(?i)\b(basic)\s+[A-Za-z0-9+/=]{12,}"), r"\1 " + HIDDEN),
     (re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*"), HIDDEN),  # a JWT
     (re.compile(r"\bsk-or-[A-Za-z0-9_-]{8,}"), HIDDEN),  # an OpenRouter key
-    # name=value, name: value, "name": "value"
+    # name=value, name: value, "name": "value", 'name': 'value', with any prefix (x_access_token, oauth_token)
     (
         re.compile(
-            r"(?i)\b((?:access|refresh|id)[_ -]?token|client[_ -]?secret|api[_ -]?key|password|secret|token|pin)"
-            r"(\"?\s*[:=]\s*\"?)([^\s\"'&,;}<>]+)"
+            r"(?i)(?<![a-z0-9])((?:[a-z0-9]+_)*(?:(?:access|refresh|id)[_ -]?token|client[_ -]?secret|api[_ -]?key"
+            r"|password|secret|token|pin))"
+            r"([\"']?\s*[:=]\s*[\"']?)([^\s\"'&,;}<>]+)"
         ),
         r"\1\2" + HIDDEN,
     ),
+    # A login code in text: code=... (in JSON, "code": 402 is an error code and stays)
+    (re.compile(r"(?<![A-Za-z0-9_])(code)=([^\s\"'&,;}<>]+)"), r"\1=" + HIDDEN),
 )
 _SHORTEST_REMEMBERED = 6  # a shorter value could be any ordinary word or number
 _remembered: set[str] = set()
@@ -110,8 +115,12 @@ def value(item):
 
 
 def headers(pairs) -> list[list[str]]:
-    """Headers as [name, value] pairs, in their order, with every secret one hidden."""
-    return [[str(name), HIDDEN if secret_name(name) else clean(str(text))] for name, text in pairs]
+    """Headers as [name, value] pairs, in their order, with every secret one hidden. A header
+    that holds an address is cleaned as one."""
+    return [
+        [str(name), HIDDEN if secret_name(name) else url(str(text)) if str(name).lower() in _ADDRESS_HEADERS else clean(str(text))]
+        for name, text in pairs
+    ]
 
 
 def url(address: str) -> str:
@@ -122,8 +131,9 @@ def url(address: str) -> str:
     except ValueError:
         return clean(str(address))
     netloc = parts.netloc.rsplit("@", 1)[-1]  # user:password@ never stays
-    query = "&".join(_pair(part) for part in parts.query.split("&")) if parts.query else ""
-    return clean(urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment)))
+    # The fragment is read as parameters too: a login may hand its code back there.
+    query, fragment = (_parameters(part) for part in (parts.query, parts.fragment))
+    return clean(urlunsplit((parts.scheme, netloc, parts.path, query, fragment)))
 
 
 def form(text: str) -> str:
@@ -148,6 +158,11 @@ def json_text(text: str) -> str:
 
 def _secret_field(name: str) -> bool:
     return secret_name(name) or name.lower() in _SECRET_IN_FORMS
+
+
+def _parameters(text: str) -> str:
+    """name=value pairs, split at & and at ;, with every secret value hidden."""
+    return re.sub(r"[^&;]+", lambda found: _pair(found.group()), text) if text else ""
 
 
 def _pair(part: str) -> str:

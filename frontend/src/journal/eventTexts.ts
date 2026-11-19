@@ -135,10 +135,15 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
   'page.request': (data) => `Pagina a cerut ${text(data.method)} ${text(data.path)} și a primit răspunsul ${text(data.status)}.`,
 
   'sync.started': (data) => {
-    const days = Number(data.window_days)
+    // The dates, when the line has them: "the last 5 days" asked for at 10:00 start at 10:00
+    // five days before, so they touch six dates, and a range chosen in the past is not "the last".
     // Lines written before the days were named carry only how many.
-    const which = typeof data.start === 'string' && typeof data.end === 'string' ? ` (${daysBetween(data.start, data.end)})` : ''
-    return `A început descărcarea pentru ${who(data)}, pentru ${days === 1 ? 'ultima zi' : `ultimele ${countOf(days, 'o zi', 'zile')}`}${which}.`
+    if (typeof data.start === 'string' && typeof data.end === 'string') {
+      const period = data.start === data.end ? `ziua de ${daysBetween(data.start, data.end)}` : `perioada ${daysBetween(data.start, data.end)}`
+      return `A început descărcarea pentru ${who(data)}, pentru ${period}.`
+    }
+    const days = Number(data.window_days)
+    return `A început descărcarea pentru ${who(data)}, pentru ${days === 1 ? 'ultima zi' : `ultimele ${countOf(days, 'o zi', 'zile')}`}.`
   },
   'sync.finished': (data, line) => {
     // Lines written before the issued invoices were counted apart carry only `new`.

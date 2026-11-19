@@ -256,15 +256,16 @@ describe('an import confirmed in SAGA', () => {
 })
 
 describe('the lines that say more than they used to', () => {
-  it('names the days a download asks for', () => {
-    expect(describeEvent(line('sync.started', { client: 'Alfa SRL', window_days: 5, start: '2026-11-16', end: '2026-11-20' })))
-      .toBe('A început descărcarea pentru Alfa SRL, pentru ultimele 5 zile (16 – 20 noiembrie).')
+  it('names the days a download asks for, rather than how many', () => {
+    // A window of the last 5 days, asked for at 10:00, starts at 10:00 five days before: six dates.
+    expect(describeEvent(line('sync.started', { client: 'Alfa SRL', window_days: 5, start: '2026-11-15', end: '2026-11-20' })))
+      .toBe('A început descărcarea pentru Alfa SRL, pentru perioada 15 – 20 noiembrie.')
     expect(describeEvent(line('sync.started', { cui: '1', window_days: 7, start: '2026-10-28', end: '2026-11-03' })))
-      .toBe('A început descărcarea pentru CUI 1, pentru ultimele 7 zile (28 octombrie – 3 noiembrie).')
+      .toBe('A început descărcarea pentru CUI 1, pentru perioada 28 octombrie – 3 noiembrie.')
     expect(describeEvent(line('sync.started', { cui: '1', window_days: 5, start: '2026-12-29', end: '2027-01-02' })))
-      .toBe('A început descărcarea pentru CUI 1, pentru ultimele 5 zile (29 decembrie 2026 – 2 ianuarie 2027).')
+      .toBe('A început descărcarea pentru CUI 1, pentru perioada 29 decembrie 2026 – 2 ianuarie 2027.')
     expect(describeEvent(line('sync.started', { cui: '1', window_days: 1, start: '2026-11-20', end: '2026-11-20' })))
-      .toBe('A început descărcarea pentru CUI 1, pentru ultima zi (20 noiembrie).')
+      .toBe('A început descărcarea pentru CUI 1, pentru ziua de 20 noiembrie.')
   })
 
   it('says how long a download took and how many of ANAF\'s messages were saved already', () => {
