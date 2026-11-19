@@ -248,12 +248,18 @@ def _keep_the_newest(folder: Path, now: datetime, never_remove: set) -> list[str
     Copies named later than now (made while the clock was ahead) count as the oldest: going
     by their names alone, a copy made today would be the first to go."""
     clock = now.replace(tzinfo=None)
-    newest_first = sorted(
-        snapshots(folder), key=lambda each: (datetime.fromisoformat(each["at"]) <= clock, each["name"]), reverse=True
-    )
+    listed = snapshots(folder)  # newest first by name
+    newest_first = sorted(listed, key=lambda each: (datetime.fromisoformat(each["at"]) <= clock, each["name"]), reverse=True)
+    keep = {each["name"] for each in newest_first[:MAX_SNAPSHOTS]}
+    # The copy made before the latest wipe holds everything that was deleted, and after 25
+    # daily copies it is the only one that does: it stays, and the oldest of the rest goes.
+    last_wipe = next((each["name"] for each in listed if each["kind"] == "before-wipe"), None)
+    if last_wipe and last_wipe not in keep:
+        keep.discard(newest_first[MAX_SNAPSHOTS - 1]["name"])
+        keep.add(last_wipe)
     removed = []
-    for old in newest_first[MAX_SNAPSHOTS:]:
-        if old["name"] in never_remove:
+    for old in newest_first:
+        if old["name"] in keep or old["name"] in never_remove:
             continue
         try:
             (folder / old["name"]).unlink(missing_ok=True)
@@ -288,7 +294,9 @@ def restore(cfg: Config, name: str, now: datetime | None = None) -> dict:
             failure, short = _said(exc), Path(name).name
             _write_restore_record(cfg, {"at": now.isoformat(), "ok": False, "name": short, "error": failure})
             journal.record("backup", "restore.failed", f"Restoring {short} failed: {failure}", level="error", name=short, error=failure)
-            raise EfacturaError(BACKUP_ERROR, f"The restore failed and the database was left as it was. {failure}") from None
+            # A copy made by a newer version keeps its own code: the cure is different (update first).
+            code = SNAPSHOT_TOO_NEW if isinstance(exc, EfacturaError) and exc.code == SNAPSHOT_TOO_NEW else BACKUP_ERROR
+            raise EfacturaError(code, f"The restore failed and the database was left as it was. {failure}") from None
         short = done["name"]
         _write_restore_record(cfg, {"at": now.isoformat(), "ok": True, "name": short, "error": None})
         if done["kept_aside"]:
@@ -573,6 +581,7 @@ def wipe(cfg: Config, now: datetime | None = None) -> dict:
     the files for SAGA is under way.
     """
     now = now or datetime.now().astimezone()
+    deleted = None  # set once the rows are gone; from then on nothing may say they are not
     try:
         with (
             _one_at_a_time(cfg),
@@ -583,20 +592,19 @@ def wipe(cfg: Config, now: datetime | None = None) -> dict:
             kept = snapshot(cfg, "before-wipe", now)["name"]
             (folder,) = _settings(cfg, FOLDER)
             expected = check_snapshot(Path(folder) / kept)
-            store = Store(cfg.db_path)
-            try:
-                deleted = store.wipe(expected)
-            finally:
-                store.close()
+            deleted = _delete_rows(cfg, expected)
+            _compact(cfg)  # while nothing else may start writing
     except Exception as exc:
-        failure = _said(exc)
-        busy = isinstance(exc, EfacturaError) and exc.code == BUSY
-        journal.record("backup", "wipe.failed", f"The data was not deleted: {failure}",
-                       level="warning" if busy else "error", error=failure)
-        if busy:
-            raise
-        raise EfacturaError(BACKUP_ERROR, f"Nothing was deleted. {failure}") from None
-    _compact(cfg)
+        if deleted is None:
+            failure = _said(exc)
+            busy = isinstance(exc, EfacturaError) and exc.code == BUSY
+            journal.record("backup", "wipe.failed", f"The data was not deleted: {failure}",
+                           level="warning" if busy else "error", error=failure)
+            if busy:
+                raise
+            raise EfacturaError(BACKUP_ERROR, f"Nothing was deleted. {failure}") from None
+        # The rows are gone and the copy holds them; only the tidying after went wrong.
+        log.exception("The data was deleted, but what came after did not finish")
     journal.record(
         "backup", "wipe.finished",
         f"Every client, invoice, account and rule was deleted. The copy made just before is {kept}.",
@@ -607,9 +615,21 @@ def wipe(cfg: Config, now: datetime | None = None) -> dict:
     return {"ok": True, "kept_as": kept, "kept_at": kept_at, "deleted": deleted}
 
 
-def check_snapshot(path: Path) -> dict[str, int]:
+def _delete_rows(cfg: Config, expected: dict[str, tuple[int, str]]) -> dict[str, int]:
+    store = Store(cfg.db_path)
+    try:
+        return store.wipe(expected)
+    finally:
+        try:
+            store.close()
+        except sqlite3.Error:
+            log.warning("The database could not be closed after the wipe", exc_info=True)
+
+
+def check_snapshot(path: Path) -> dict[str, tuple[int, str]]:
     """Open a copy in the folder as a restore would, and check all of it: SQLite's full check,
-    every table this program has, and how many rows each table a wipe empties holds."""
+    every table this program has, and the fingerprints (rows and what they hold) of each
+    table a wipe empties."""
     expected_tables = set(stored.WIPED) | set(stored.KEPT_BY_WIPE)
     try:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as scratch:
@@ -620,9 +640,7 @@ def check_snapshot(path: Path) -> dict[str, int]:
                 verdict = connection.execute("PRAGMA integrity_check").fetchone()[0]
                 tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
                 missing = sorted(expected_tables - tables)
-                rows = {} if (missing or verdict != "ok") else {
-                    table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in stored.WIPED
-                }
+                rows = {} if (missing or verdict != "ok") else stored.fingerprints(connection)
             finally:
                 connection.close()
     except (OSError, KeyError, RuntimeError, zipfile.BadZipFile, sqlite3.Error) as exc:
@@ -635,17 +653,21 @@ def check_snapshot(path: Path) -> dict[str, int]:
 
 
 def _compact(cfg: Config) -> None:
-    """Give back the room the deleted rows took. Left as they are, the freed pages would still
-    hold the old invoices, in the file and in every copy made from it later. It is not worth
-    failing over: what was asked for is done."""
-    connection = sqlite3.connect(cfg.db_path, timeout=5)
+    """Give back the room the deleted rows took, and fold the journal file (-wal), which still
+    holds the pages as they were, into the database. The deleted rows were already overwritten;
+    this makes the file small again. Never raises: what was asked for is done."""
     try:
-        connection.execute("VACUUM")
-        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-    except sqlite3.Error as exc:
+        connection = sqlite3.connect(cfg.db_path, timeout=5)
+        try:
+            connection.execute("VACUUM")
+            busy = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0]
+        finally:
+            connection.close()
+    except Exception as exc:
         journal.record("backup", None, f"The database could not be compacted after the wipe: {exc}", level="detail")
-    finally:
-        connection.close()
+        return
+    if busy:  # a page request was reading: the journal file is folded in at a later moment
+        journal.record("backup", None, "After the wipe, the journal file could not be folded in yet.", level="detail")
 
 
 # --- small things kept between runs --------------------------------------------------------------

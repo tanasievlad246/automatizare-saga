@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import time
@@ -10,7 +11,7 @@ from pathlib import Path
 from typing import Iterable
 
 from . import rules as rule_examples
-from .errors import BACKUP_ERROR, NOT_FOUND, EfacturaError
+from .errors import BUSY, NOT_FOUND, EfacturaError
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sync_runs (
@@ -239,6 +240,28 @@ WIPED = (
 # What it keeps: the settings (folders, the keys typed on screen, the schedule, Jev's questions)
 # and the journal. A new table must be put in one list or the other; a test checks.
 KEPT_BY_WIPE = ("settings", "events")
+# Left out of a table's fingerprint: large, and written once with the row, never changed.
+_NOT_FINGERPRINTED = {
+    "messages": {"invoice_xml", "signature_xml", "raw_metadata_json"},
+    "jev_calls": {"request_json", "response_json"},
+}
+
+
+def fingerprints(connection: sqlite3.Connection) -> dict[str, tuple[int, str]]:
+    """For each table a wipe empties: how many rows it holds, and a digest of what they say.
+
+    Two databases with the same fingerprints hold the same rows: a row added, removed or
+    changed (an invoice ticked as imported, a rule renamed) changes its table's digest."""
+    found = {}
+    for table in WIPED:
+        left_out = _NOT_FINGERPRINTED.get(table, set())
+        columns = [row[1] for row in connection.execute(f"PRAGMA table_info({table})") if row[1] not in left_out]
+        digest, count = hashlib.sha256(), 0
+        for row in connection.execute(f"SELECT {', '.join(columns)} FROM {table} ORDER BY rowid"):
+            digest.update(repr(tuple(row)).encode("utf-8"))
+            count += 1
+        found[table] = (count, digest.hexdigest())
+    return found
 
 # Added to `messages` after the first version; existing databases gain them on opening.
 CLASSIFICATION_COLUMNS = {
@@ -418,23 +441,24 @@ class Store:
             [(JEV_INSTRUCTIONS, rule_examples.DEFAULT_JEV_INSTRUCTIONS), (_EXAMPLES_ADDED, "1")],
         )
 
-    def wipe(self, expected: dict[str, int]) -> dict[str, int]:
+    def wipe(self, expected: dict[str, tuple[int, str]]) -> dict[str, int]:
         """Empty every table in WIPED in one transaction, then put back the example accounts
         and rules, as on the first day. The settings and the journal are not touched.
 
-        `expected` is how many rows each of those tables holds in the copy made just before.
-        They are counted again here, under the write lock: a row saved after the copy was made
-        (a rule added on another tab) is in no copy, so then nothing is deleted. Returns the
-        counts of what was deleted."""
+        `expected` is the fingerprints of the copy made just before. They are taken again
+        here, under the write lock: a row saved or changed after the copy was made (a rule
+        edited on another tab) is in no copy, so then nothing is deleted. The deleted rows
+        are overwritten, not only let go of. Returns how many rows each table lost."""
+        self._conn.execute("PRAGMA secure_delete = ON")  # this connection only; it is closed after
         self._conn.execute("BEGIN IMMEDIATE")
         try:
-            found = {table: self._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in WIPED}
-            differ = [table for table in WIPED if found[table] != expected.get(table)]
+            found = fingerprints(self._conn)
+            differ = [table for table in WIPED if found[table] != tuple(expected.get(table) or ())]
             if differ:
                 raise EfacturaError(
-                    BACKUP_ERROR,
+                    BUSY,
                     f"The copy and the database do not hold the same rows ({', '.join(differ)}): "
-                    "something changed while the copy was being made.",
+                    "something changed while the copy was being made. Nothing was deleted; try again.",
                 )
             for table in WIPED:
                 self._conn.execute(f"DELETE FROM {table}")
@@ -447,7 +471,7 @@ class Store:
         except BaseException:
             self._conn.execute("ROLLBACK")
             raise
-        return found
+        return {table: rows for table, (rows, _) in found.items()}
 
     # --- messages -----------------------------------------------------------
 

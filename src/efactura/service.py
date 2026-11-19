@@ -341,7 +341,7 @@ class Service:
                 continue
             try:
                 result = self._sync_waiting(
-                    cui, days=days, start=self._within_reach(start), end=end, cover_gap=cover_gap
+                    cui, days=days, start=self._within_reach(start), end=end, cover_gap=cover_gap, listed_only=True,
                 )
             except EfacturaError as exc:
                 if exc.code == CLIENT_OFF:
@@ -415,6 +415,7 @@ class Service:
         start: str | None = None,
         end: str | None = None,
         cover_gap: bool = False,
+        listed_only: bool = False,
     ) -> dict:
         """List, skip what is already saved, download and save the rest. Then give the
         received invoices just saved an account and write their SAGA files.
@@ -426,6 +427,10 @@ class Service:
 
         With classify=False the messages are only saved, and stay outside classification
         for good (for a first run that brings in invoices already booked by hand).
+
+        listed_only: for a run over the client list. The client must still be in it and on
+        once the lock is taken: the run may have waited for it while the client was switched
+        off, or while every client was deleted ("Șterge toate datele").
         """
         cui = normalize_cui(cui)
         store = self._open_store()
@@ -441,6 +446,8 @@ class Service:
         with self._lock():
             store = self._open_store()
             try:
+                if listed_only and store.client_enabled(cui) is not True:
+                    raise EfacturaError(CLIENT_OFF, "This client was switched off or removed while its download waited.")
                 now = self._now()
                 covered_until = store.last_clean_run_start(cui)
                 window = _plan_window(

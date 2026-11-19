@@ -26,6 +26,7 @@ LATER = NOW + timedelta(hours=3)
 HEALTHY = {"ok": True, "service": "efactura", "version": "0.3.0"}
 KEY = {"X-API-Key": "local-key"}
 BEFORE_WIPE = "autosaga-20261114-090000-before-wipe.zip"
+MARKER = "TEXT-DE-PROBA-CARE-TREBUIE-SA-DISPARA"  # in the made-up invoice, to look for after a wipe
 
 
 @pytest.fixture
@@ -74,7 +75,7 @@ def fill(cfg) -> None:
         when = NOW.isoformat()
         store.save_client(VALID_CUI, "Alfa Construct SRL", when)
         run = store.start_run(VALID_CUI, 60, when)
-        store.insert_message(make_row(sync_run_id=run))
+        store.insert_message(make_row(sync_run_id=run, invoice_xml=f"<Invoice>{MARKER}</Invoice>"))
         store.save_account("6588", "Cont de probă")
         store.save_account("7588", "Venit de probă", kind="issued")
         store.add_rule(name="Regulă de probă", cont="6588", keywords=["proba"])
@@ -219,7 +220,7 @@ def test_nothing_is_deleted_when_the_copy_cannot_be_written(folder, cfg):
     lambda path, tmp_path: rewritten(path, tmp_path, lambda db: db.execute("DROP TABLE rules")),
     lambda path, tmp_path: rewritten(path, tmp_path, lambda db: db.execute("DELETE FROM messages")),
 ], ids=["unreadable", "a table missing", "rows missing"])
-def test_nothing_is_deleted_when_the_copy_does_not_read_back_whole(folder, cfg, tmp_path, monkeypatch, damage):
+def test_nothing_is_deleted_when_the_copy_does_not_read_back_whole(folder, cfg, tmp_path, monkeypatch, damage, request):
     fill(cfg)
     before = counts(cfg.db_path)
     make = backup.snapshot
@@ -234,28 +235,36 @@ def test_nothing_is_deleted_when_the_copy_does_not_read_back_whole(folder, cfg, 
     with pytest.raises(EfacturaError) as refused:
         backup.wipe(cfg, now=NOW)
 
-    assert refused.value.code == "backup_error"
+    # A copy that holds other rows than the database is retried: a new copy is made then.
+    assert refused.value.code == ("busy" if "rows missing" in request.node.name else "backup_error")
     assert counts(cfg.db_path) == before
 
 
-def test_nothing_is_deleted_when_something_was_saved_while_the_copy_was_made(folder, cfg, monkeypatch):
+@pytest.mark.parametrize("change", [
+    lambda store: store.save_client("14399840", "Brutăria Soarelui SRL", NOW.isoformat()),
+    lambda store: store.update_rule(store.rules()[-1]["id"], name="Regulă de probă, schimbată"),
+    lambda store: store.set_uploaded(["3001"], False, NOW.isoformat()),  # fill() ticked it
+], ids=["a client added", "a rule edited", "an invoice unticked as imported in SAGA"])
+def test_nothing_is_deleted_when_something_was_saved_while_the_copy_was_made(folder, cfg, monkeypatch, change):
     fill(cfg)
     make = backup.snapshot
 
-    def with_a_client_added_meanwhile(*args, **kwargs):
+    def with_a_change_meanwhile(*args, **kwargs):
         made = make(*args, **kwargs)
         store = Store(cfg.db_path)
-        store.save_client("14399840", "Brutăria Soarelui SRL", NOW.isoformat())
+        change(store)  # on another tab, while the copy is being written and checked
         store.close()
         return made
 
-    monkeypatch.setattr(backup, "snapshot", with_a_client_added_meanwhile)
+    monkeypatch.setattr(backup, "snapshot", with_a_change_meanwhile)
+    before = counts(cfg.db_path)
 
     with pytest.raises(EfacturaError) as refused:
         backup.wipe(cfg, now=NOW)
 
-    assert refused.value.code == "backup_error"
-    assert counts(cfg.db_path)["clients"] == 2  # neither the one in the copy nor the new one went
+    assert refused.value.code == "busy"  # nothing wrong with the folder: trying again works
+    assert "changed while the copy was being made" in refused.value.message
+    assert all(counts(cfg.db_path)[table] >= rows for table, rows in before.items())  # nothing deleted
 
 
 @pytest.mark.parametrize("held", ["efactura.lock", "update.lock", "restore.lock", "saga-files.lock"],
@@ -430,3 +439,52 @@ def test_the_restore_and_the_wipe_are_both_in_the_journal(folder, cfg, computer)
 
     assert (wiped_line["data"]["kept_as"], wiped_line["data"]["deleted"]["clients"]) == (kept, 1)
     assert events(cfg)[-1] == "restore.finished"
+
+
+def test_the_deleted_invoices_do_not_linger_in_the_file(folder, cfg):
+    fill(cfg)
+
+    backup.wipe(cfg, now=NOW)
+
+    left = b"".join(path.read_bytes() for path in cfg.data_dir.glob("efactura.db*"))
+    assert MARKER.encode() not in left  # not in a free page, nor in the journal file beside it
+
+
+def test_the_wipe_is_not_called_failed_when_only_its_last_tidying_goes_wrong(folder, cfg, monkeypatch):
+    fill(cfg)
+
+    def cannot(cfg):
+        raise RuntimeError("the disk went away")
+
+    monkeypatch.setattr(backup, "_compact", cannot)
+
+    result = backup.wipe(cfg, now=NOW)  # the rows are gone: saying "nothing was deleted" would be false
+
+    assert result["ok"] is True and counts(cfg.db_path)["clients"] == 0
+    assert events(cfg)[-1] == "wipe.finished"
+
+
+def test_the_newest_copy_made_before_a_wipe_is_never_rotated_away(folder, cfg):
+    fill(cfg)
+    kept = backup.wipe(cfg, now=NOW)["kept_as"]
+
+    for hour in range(1, backup.MAX_SNAPSHOTS + 3):  # weeks of daily copies afterwards
+        backup.snapshot(cfg, "auto", now=NOW + timedelta(hours=hour))
+    # One that began before the wipe and ended after it judges by the moment it began.
+    backup.snapshot(cfg, "manual", now=NOW - timedelta(minutes=1))
+
+    names = sorted(path.name for path in folder.iterdir())
+    assert kept in names
+    assert len(names) == backup.MAX_SNAPSHOTS
+
+
+def test_a_newer_copy_is_refused_from_the_terminal_with_its_own_code(folder, cfg, computer, tmp_path):
+    fill(cfg)
+    name = backup.snapshot(cfg, now=NOW)["name"]
+    rewritten(folder / name, tmp_path, lambda db: db.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}"))
+
+    with pytest.raises(EfacturaError) as refused:
+        backup.restore(cfg, name, now=LATER)
+
+    assert refused.value.code == "snapshot_too_new"
+    assert "left as it was" in refused.value.message

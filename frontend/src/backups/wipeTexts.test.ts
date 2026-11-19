@@ -40,9 +40,9 @@ describe('when the wipe cannot be started from the page', () => {
 })
 
 describe('why nothing was deleted', () => {
-  it('names what the program is busy with', () => {
+  it('names what the program was busy with, and a change made on another page meanwhile', () => {
     expect(wipeFailure(new ApiError('busy', 'Invoices are being downloaded or classified.')))
-      .toBe('Nu s-a șters nimic. Acum programul descarcă sau clasifică facturi, se actualizează sau restaurează o copie. Așteptați să se termine, apoi încercați din nou.')
+      .toBe('Nu s-a șters nimic, pentru că programul lucra chiar atunci: descărca sau clasifica facturi, scria fișierele pentru SAGA, se actualiza sau restaura o copie, ori s-a schimbat ceva pe altă pagină. Așteptați să se termine, apoi încercați din nou.')
   })
 
   it('points at the folder when the copy could not be made or checked', () => {

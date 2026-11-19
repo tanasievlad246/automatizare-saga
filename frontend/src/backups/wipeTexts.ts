@@ -28,13 +28,14 @@ export function wipeBlockedBecause(status: BackupStatus): string | null {
 
 /**
  * The sentence for a wipe that did not happen. The program refuses before deleting anything,
- * and says so, for every reason it knows of; with no answer at all, whether it got as far as
- * deleting is not known, and the sentence says how to find out.
+ * and says so, for every reason it knows of: `busy` covers what was running and a change made
+ * while the copy was being made, both cured by trying again. With no answer at all, whether
+ * it got as far as deleting is not known, and the sentence says how to find out.
  */
 export function wipeFailure(error: unknown): string {
   const code = error instanceof ApiError ? error.code : ''
   if (code === 'busy') {
-    return 'Nu s-a șters nimic. Acum programul descarcă sau clasifică facturi, se actualizează sau restaurează o copie. Așteptați să se termine, apoi încercați din nou.'
+    return 'Nu s-a șters nimic, pentru că programul lucra chiar atunci: descărca sau clasifica facturi, scria fișierele pentru SAGA, se actualiza sau restaura o copie, ori s-a schimbat ceva pe altă pagină. Așteptați să se termine, apoi încercați din nou.'
   }
   if (code === 'backup_error') {
     return 'Nu s-a șters nimic. Copia de siguranță nu a putut fi făcută sau verificată. Verificați folderul copiilor și încercați din nou.'
