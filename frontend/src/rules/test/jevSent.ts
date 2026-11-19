@@ -35,11 +35,12 @@ export function jevSent(sent: TrialJev['sent'], accountCount: number): SentRow[]
   return rows
 }
 
-/** "Ciment Portland 40 kg · cantitatea 20 · 570,00 fără TVA · TVA 19%". */
+/** "Ciment Portland 40 kg · „sac 40 kg, gri” · cantitatea 20 · 570,00 fără TVA · TVA 19%". */
 function lineInWords(line: JevLine): string {
   const codes = line.coduri_clasificare ?? []
   return [
     line.descriere,
+    line.detalii && `„${line.detalii}”`,
     line.cantitate && `cantitatea ${formatNumber(line.cantitate)}${line.um ? ` (${line.um})` : ''}`,
     line.valoare_fara_tva && `${formatAmount(line.valoare_fara_tva)} fără TVA`,
     line.cota_tva && `TVA ${formatNumber(line.cota_tva)}%`,

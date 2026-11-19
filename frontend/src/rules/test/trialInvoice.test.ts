@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError } from '../../api'
 import { errorMessage } from '../../errorMessages'
-import { EMPTY, EXAMPLES, REFUSED_HERE, changeLine, clientNote, fromDocument, hasCodes, linesRead, toRequest } from './trialInvoice'
+import { EMPTY, EXAMPLES, REFUSED_HERE, changeLine, clientNote, fromDocument, hasMore, linesRead, toRequest } from './trialInvoice'
 
 const line = (description: string, quantity: string, unitPrice: string) =>
-  ({ description, quantity, unitPrice, sellerCode: '', barcode: '', commodityCodes: '', unit: null, vatPercent: null, value: null })
+  ({ description, details: '', quantity, unitPrice, sellerCode: '', barcode: '', commodityCodes: '', unit: null, vatPercent: null, value: null })
 
 const savedView = (lines: object[]) => ({
   invoice: { cui: '12345674' },
@@ -18,7 +18,7 @@ describe('a trial invoice', () => {
     const sent = toRequest({ ...EMPTY, clientCui: '12345674', supplierName: ' Dedeman SRL ', supplierCui: '2816464', lines: [line('Ciment', ' 20 ', '28,50')] }, 'rules_then_jev')
     expect(sent).toEqual({
       client_cui: '12345674', supplier_name: 'Dedeman SRL', supplier_cui: '2816464', currency: 'RON', credit_note: false, ask: 'rules_then_jev',
-      lines: [{ description: 'Ciment', quantity: '20', unit_price: '28.50', seller_code: null, barcode: null, commodity_codes: [], unit: null, vat_percent: null, value: null }],
+      lines: [{ description: 'Ciment', details: null, quantity: '20', unit_price: '28.50', seller_code: null, barcode: null, commodity_codes: [], unit: null, vat_percent: null, value: null }],
     })
   })
 
@@ -49,21 +49,22 @@ describe('a trial invoice', () => {
 
   it('starts from a saved invoice with its codes shown and its unit, VAT rate, currency and line value kept', () => {
     const trial = fromDocument(savedView([{
-      number: 1, description: 'Ciment', seller_code: 'ART-77', barcode: '5941234567890', commodity_codes: ['44111200', '4411'],
-      unit: 'KGM', unit_name: 'KG', quantity: '20.000', unit_price: '28.5', value: '541.50', vat_percent: '9',
+      number: 1, description: 'Ciment', details: 'Ciment Portland CEM II 42,5R, sac 40 kg', seller_code: 'ART-77', barcode: '5941234567890',
+      commodity_codes: ['44111200', '4411'], unit: 'KGM', unit_name: 'KG', quantity: '20.000', unit_price: '28.5', value: '541.50', vat_percent: '9',
     }]))
     expect(trial).toEqual({
       clientCui: '12345674', supplierName: 'Dedeman SRL', supplierCui: 'RO2816464', currency: 'EUR', creditNote: false, startedFrom: 'FV-1042',
       lines: [{
-        description: 'Ciment', quantity: '20,000', unitPrice: '28,5', sellerCode: 'ART-77', barcode: '5941234567890', commodityCodes: '44111200, 4411',
+        description: 'Ciment', details: 'Ciment Portland CEM II 42,5R, sac 40 kg', quantity: '20,000', unitPrice: '28,5', sellerCode: 'ART-77',
+        barcode: '5941234567890', commodityCodes: '44111200, 4411',
         // The unit code, as Jev was asked with it, not the name SAGA shows.
         unit: 'KGM', vatPercent: '9', value: '541.50',
       }],
     })
     // Sent unchanged, it is the question the real invoice put.
     expect(toRequest(trial, 'rules_then_jev').lines[0]).toEqual({
-      description: 'Ciment', quantity: '20.000', unit_price: '28.5', seller_code: 'ART-77', barcode: '5941234567890',
-      commodity_codes: ['44111200', '4411'], unit: 'KGM', vat_percent: '9', value: '541.50',
+      description: 'Ciment', details: 'Ciment Portland CEM II 42,5R, sac 40 kg', quantity: '20.000', unit_price: '28.5', seller_code: 'ART-77',
+      barcode: '5941234567890', commodity_codes: ['44111200', '4411'], unit: 'KGM', vat_percent: '9', value: '541.50',
     })
   })
 
@@ -79,10 +80,16 @@ describe('a trial invoice', () => {
     expect(changeLine(carried, { description: 'Ciment gri', sellerCode: 'X1' })).toMatchObject({ description: 'Ciment gri', value: '541.50' })
   })
 
-  it('knows whether any row has a code, so the codes are shown', () => {
-    expect(hasCodes(EXAMPLES.materiale)).toBe(false)
-    expect(hasCodes({ ...EMPTY, lines: [line('a', '1', '1'), { ...line('b', '1', '1'), barcode: '594' }] })).toBe(true)
-    expect(hasCodes({ ...EMPTY, lines: [{ ...line('a', '1', '1'), commodityCodes: ' ' }] })).toBe(false)
+  it('knows whether any row has a description or a code, so they are shown', () => {
+    expect(hasMore(EXAMPLES.materiale)).toBe(false)
+    expect(hasMore({ ...EMPTY, lines: [line('a', '1', '1'), { ...line('b', '1', '1'), barcode: '594' }] })).toBe(true)
+    expect(hasMore({ ...EMPTY, lines: [{ ...line('a', '1', '1'), details: 'Compatibil HP 85A' }] })).toBe(true)
+    expect(hasMore({ ...EMPTY, lines: [{ ...line('a', '1', '1'), commodityCodes: ' ', details: ' ' }] })).toBe(false)
+  })
+
+  it('sends a description that is only spaces as none', () => {
+    const [row] = toRequest({ ...EMPTY, lines: [{ ...line('Toner', '1', '1'), details: '  ' }] }, 'rules_then_jev').lines
+    expect(row.details).toBeNull()
   })
 
   it('has two examples, each with something on it', () => {

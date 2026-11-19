@@ -8,7 +8,7 @@ const jev = (more: Partial<TrialJev> = {}): TrialJev => ({
   sent: { question: 'Pe ce cont?', state: { factura: { tip: 'factura', moneda: 'RON' } } }, ...more,
 })
 const entry = (more: Partial<TrialLineAnswer>): TrialLineAnswer => ({
-  line: 2, description: 'Ciment Portland 40 kg', value: '570.00', decided_by: 'nobody', cont: null, account_description: null,
+  line: 2, description: 'Ciment Portland 40 kg', details: null, value: '570.00', decided_by: 'nobody', cont: null, account_description: null,
   rule: null, jev: null, why_not: null, reason: '', follows: null, same_as: null, ...more,
 })
 const asked = { ask: 'rules_then_jev' } as const

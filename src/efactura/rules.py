@@ -9,8 +9,10 @@ A rule reads a Subject: the invoice's supplier and its deciding line. It matches
 of its conditions holds:
 
     keywords            words or phrases in the line description. Case and diacritics are
-                        ignored ("MOTORINĂ" matches "motorina"). Whole words only; end a
-                        keyword with * to match the start of a word ("transport*").
+                        ignored ("MOTORINĂ" matches "motorina"). Whole words only; a * stands
+                        for any letters where it is: "transport*" (starts with), "*cartus"
+                        (ends with), "*cartus*" (contains). A * in the middle is a plain
+                        character.
     item_codes          the supplier's article code or the barcode, exactly as on the invoice.
     commodity_prefixes  the start of a CPV or NC classification code ("0913" covers 09134200).
     supplier_cuis       fiscal codes, without RO; every line from these suppliers matches.
@@ -38,15 +40,30 @@ class Subject:
     """
 
     supplier_cui: str | None
-    description: str
+    description: str  # the line's name, as the invoice parser keeps it
     seller_code: str | None = None
     barcode: str | None = None
     commodity_codes: tuple[str, ...] = ()
+    details: str | None = None  # the line's description beside its name, if it has one
 
     @cached_property
     def text(self) -> str:
-        """The description as keywords are compared with it."""
-        return normalise(self.description)
+        """The name and the description as keywords are compared with them: each a text of
+        its own, so a phrase never runs from one into the other."""
+        return _BETWEEN.join(normalise(part) for part in (self.description, self.details) if part)
+
+    def in_details(self, at: int) -> bool:
+        """Whether a place in `text` is in the description rather than the name."""
+        return bool(self.details) and at > len(normalise(self.description))
+
+    def written(self, start: int, end: int) -> str:
+        """What stands between two places of `text`, as the line writes it: with its
+        diacritics and its capitals ("Cartușe" where `text` has "cartuse")."""
+        part, offset = self.description, 0
+        if self.in_details(start):
+            part, offset = self.details, len(normalise(self.description)) + len(_BETWEEN)
+        places = _places(part)
+        return part[places[start - offset]:places[end - offset - 1] + 1]
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False)
@@ -62,6 +79,7 @@ class Subject:
             seller_code=stored.get("seller_code"),
             barcode=stored.get("barcode"),
             commodity_codes=tuple(stored.get("commodity_codes") or ()),
+            details=stored.get("details"),  # not kept before 0.14.0
         )
 
 
@@ -72,6 +90,10 @@ class RuleMatch:
     condition: str  # supplier_cui, seller_code, barcode, commodity_code or keyword
     found: str  # the supplier's CUI, the code on the line, or the keyword as the rule has it
     prefix: str | None = None  # for a classification code: the start of it the rule names
+    # For a keyword: the whole words of the line it found, as the line writes them
+    # ("Tonercartușul" for "*cartus*"), and whether they are in the line's description.
+    matched: str | None = None
+    in_details: bool = False
 
 
 @dataclass(frozen=True)
@@ -92,8 +114,8 @@ class Rule:
             given = getattr(self, name)
             entries = (given,) if isinstance(given, str) else tuple(given or ())
             kept = tuple(str(entry).strip() for entry in entries if str(entry).strip())
-            if name == "keywords":
-                kept = tuple(keyword for keyword in kept if normalise(keyword.rstrip("*")))
+            if name == "keywords":  # a keyword of stars alone would match every line
+                kept = tuple(keyword for keyword in kept if normalise(keyword.strip("*")))
             object.__setattr__(self, name, kept)
 
     def matches(self, subject: Subject) -> bool:
@@ -119,20 +141,26 @@ class Rule:
             prefix = next((prefix for prefix in self.commodity_prefixes if code.startswith(prefix)), None)
             if prefix is not None:
                 return RuleMatch("commodity_code", code, prefix)
-        keyword = next((
-            keyword for keyword in self.keywords
-            if re.search(rf"(?<!\w){_keyword_regex(keyword)}", subject.text)
-        ), None)
-        return RuleMatch("keyword", keyword) if keyword is not None else None
+        for keyword in self.keywords:
+            found = re.search(_keyword_start(keyword) + _keyword_regex(keyword), subject.text)
+            if found:
+                start, end = _whole_words(subject.text, found)
+                return RuleMatch(
+                    "keyword", keyword, matched=subject.written(start, end), in_details=subject.in_details(start),
+                )
+        return None
 
     @cached_property
     def _any_keyword(self) -> re.Pattern | None:
-        """One pattern that finds any of the keywords, so the line is read once. A keyword
-        starts where a word starts; that is checked once per place, not once per keyword."""
+        """One pattern that finds any of the keywords, so the line is read once. Most
+        keywords start where a word starts; that is checked once per place for all of
+        them, not once per keyword. Those that start with a * are tried anywhere."""
         if not self.keywords:
             return None
-        endings = "|".join(_keyword_regex(keyword) for keyword in self.keywords)
-        return re.compile(rf"(?<!\w)(?:{endings})")
+        at_word = [_keyword_regex(keyword) for keyword in self.keywords if not keyword.startswith("*")]
+        anywhere = [_keyword_regex(keyword) for keyword in self.keywords if keyword.startswith("*")]
+        parts = ([rf"(?<!\w)(?:{'|'.join(at_word)})"] if at_word else []) + anywhere
+        return re.compile("|".join(parts))
 
 
 @dataclass(frozen=True)
@@ -179,11 +207,50 @@ def normalise(text: str) -> str:
 
 
 def _keyword_regex(keyword: str) -> str:
-    """The keyword from where a word starts: up to the end of a word, or, with a * at
-    its end, whatever follows."""
-    prefix = keyword.endswith("*")
-    words = re.escape(normalise(keyword.rstrip("*")))
-    return words + ("" if prefix else r"(?!\w)")
+    """The keyword as a pattern for a line written as `normalise` writes it: up to the end
+    of a word, or, with a * at its end, whatever follows. Where it may start is
+    _keyword_start's part."""
+    words = re.escape(normalise(keyword.strip("*")))
+    return words + ("" if keyword.endswith("*") else r"(?!\w)")
+
+
+def _keyword_start(keyword: str) -> str:
+    """Where a keyword may start: where a word starts, or, with a * at its start, anywhere."""
+    return "" if keyword.startswith("*") else r"(?<!\w)"
+
+
+def _whole_words(text: str, found: re.Match) -> tuple[int, int]:
+    """Where a keyword found something, widened to the words it stands in: a * found part
+    of a word."""
+    start, end = found.span()
+    while start > 0 and _WORD.match(text[start - 1]):
+        start -= 1
+    while end < len(text) and _WORD.match(text[end]):
+        end += 1
+    return start, end
+
+
+def _places(text: str) -> list[int]:
+    """For each character of `normalise(text)`, the place in `text` it comes from, worked
+    out the same way: decomposed, without its accents, in lower case, single spaces."""
+    places, pending = [], False
+    for at, character in enumerate(text or ""):
+        for part in unicodedata.normalize("NFKD", character):
+            if unicodedata.combining(part):
+                continue
+            for lower in part.lower():
+                if lower.isspace():
+                    pending = bool(places)
+                    continue
+                if pending:
+                    places.append(at)  # the single space normalise writes
+                    pending = False
+                places.append(at)
+    return places
+
+
+_WORD = re.compile(r"\w")
+_BETWEEN = " · "  # between the name and the description, in Subject.text: no word runs across it
 
 
 # --- what a new database starts with: examples, to be replaced on the rules screen -------

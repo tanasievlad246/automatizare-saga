@@ -10,7 +10,7 @@ export type StartFrom = 'empty' | 'saved' | 'materiale' | 'combustibil'
 
 /** The trial invoice written out, and the two buttons that put it through the program. */
 export function TrialInvoiceForm({
-  trial, onChange, clients, asking, onAsk, onStartFrom, codesShown, onCodesShown,
+  trial, onChange, clients, asking, onAsk, onStartFrom, moreShown, onMoreShown,
 }: {
   trial: TrialInvoice
   onChange: (trial: TrialInvoice) => void
@@ -20,8 +20,8 @@ export function TrialInvoiceForm({
   onAsk: (ask: TrialAsk) => void
   onStartFrom: (start: StartFrom) => void
   /** Whether the codes of the lines are unfolded. The caller opens them when a start brings codes. */
-  codesShown: boolean
-  onCodesShown: (shown: boolean) => void
+  moreShown: boolean
+  onMoreShown: (shown: boolean) => void
 }) {
   const set = (changed: Partial<TrialInvoice>) => onChange({ ...trial, ...changed })
   const setLine = (index: number, changed: Partial<TrialLine>) =>
@@ -80,13 +80,14 @@ export function TrialInvoiceForm({
         {trial.lines.map((line, index) => (
           <div key={index} className="flex flex-col gap-2 border-b pb-3 last:border-b-0">
             <div className="grid grid-cols-[minmax(0,1fr)_6rem_7.5rem] gap-2.5 min-[40rem]:grid-cols-[minmax(0,1fr)_6rem_7.5rem_5rem]">
-              <Input aria-label="Descriere" placeholder="Ce scrie pe factură" className="col-span-3 min-[40rem]:col-span-1" value={line.description} onChange={(event) => setLine(index, { description: event.target.value })} />
+              <Input aria-label="Denumire" placeholder="Ce scrie pe factură" className="col-span-3 min-[40rem]:col-span-1" value={line.description} onChange={(event) => setLine(index, { description: event.target.value })} />
               <Input aria-label="Cantitate" inputMode="decimal" placeholder="Cantitate" value={line.quantity} onChange={(event) => setLine(index, { quantity: event.target.value })} />
               <Input aria-label="Preț fără TVA" inputMode="decimal" placeholder="Preț fără TVA" value={line.unitPrice} onChange={(event) => setLine(index, { unitPrice: event.target.value })} />
               <Button variant="link" onClick={() => removeLine(index)}>Șterge</Button>
             </div>
-            {codesShown && (
+            {moreShown && (
               <div className="grid grid-cols-[repeat(auto-fit,minmax(min(11rem,100%),1fr))] gap-2.5">
+                <Input aria-label="Descrierea de pe factură" placeholder="Descrierea de pe factură, dacă linia are una" className="[grid-column:1/-1]" value={line.details} onChange={(event) => setLine(index, { details: event.target.value })} />
                 <Input aria-label="Codul furnizorului" placeholder="Codul furnizorului" value={line.sellerCode} onChange={(event) => setLine(index, { sellerCode: event.target.value })} />
                 <Input aria-label="Cod de bare" placeholder="Cod de bare" value={line.barcode} onChange={(event) => setLine(index, { barcode: event.target.value })} />
                 <Input aria-label="Coduri CPV sau NC" placeholder="Coduri CPV sau NC, cu virgulă" value={line.commodityCodes} onChange={(event) => setLine(index, { commodityCodes: event.target.value })} />
@@ -104,8 +105,8 @@ export function TrialInvoiceForm({
         )}
       </div>
 
-      <Button variant="link" className="h-auto min-h-11 shrink self-start whitespace-normal px-0 text-left" aria-expanded={codesShown} onClick={() => onCodesShown(!codesShown)}>
-        {codesShown ? '⌄' : '›'} Coduri de pe factură (codul furnizorului, cod de bare, cod CPV sau NC)
+      <Button variant="link" className="h-auto min-h-11 shrink self-start whitespace-normal px-0 text-left" aria-expanded={moreShown} onClick={() => onMoreShown(!moreShown)}>
+        {moreShown ? '⌄' : '›'} Mai multe de pe factură (descriere, codul furnizorului, cod de bare, cod CPV sau NC)
       </Button>
 
       <div className="flex flex-wrap gap-2.5">

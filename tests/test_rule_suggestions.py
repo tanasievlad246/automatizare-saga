@@ -86,6 +86,7 @@ def test_an_invoice_jev_decided_gets_a_proposed_rule(service, anaf):
     assert proposal_on(service, "3001") == {
         "cont": "302",
         "line": "Ciment Portland 40 kg",
+        "details": None,
         "words": ["ciment", "portland"],
         "ticked": ["ciment"],
         "supplier_cui": "87654321",

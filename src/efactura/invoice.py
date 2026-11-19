@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation
 from xml.etree import ElementTree
 
 from .errors import ANAF_ERROR, EfacturaError
+from .rules import normalise
 
 CBC = "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}"
 CAC = "{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}"
@@ -168,7 +169,7 @@ class Party:
 @dataclass(frozen=True)
 class Line:
     number: int  # position on the invoice, from 1
-    description: str
+    description: str  # the item's name (cbc:Name); its description when it has no name
     seller_code: str | None
     barcode: str | None
     commodity_codes: tuple[str, ...]  # CPV / NC classification codes
@@ -178,6 +179,9 @@ class Line:
     value: Decimal  # without VAT
     vat_percent: Decimal | None
     vat_category: str | None  # S standard, AE reverse charge, Z zero, E exempt, O outside scope
+    # The item's description (cbc:Description) beside its name; None when the line has none,
+    # or when it says what the name says (case and diacritics aside).
+    details: str | None = None
 
 
 @dataclass(frozen=True)
@@ -314,10 +318,12 @@ def _line(node, position: int, quantity_tag: str) -> Line:
     per = _amount(_text(node, f"{CAC}Price/{CBC}BaseQuantity"))
     if per:  # the price is for `per` units
         price = price / per
+    name = _text(item, f"{CBC}Name") if item is not None else None
+    written = _text(item, f"{CBC}Description") if item is not None else None
     return Line(
         number=position,
-        description=(_text(item, f"{CBC}Name") or _text(item, f"{CBC}Description") or "")
-        if item is not None else "",
+        description=name or written or "",
+        details=written if name and written and normalise(written) != normalise(name) else None,
         seller_code=_text(item, f"{CAC}SellersItemIdentification/{CBC}ID") if item is not None else None,
         barcode=_text(item, f"{CAC}StandardItemIdentification/{CBC}ID") if item is not None else None,
         commodity_codes=tuple(

@@ -1,7 +1,8 @@
 import type { InvoiceView, TrialAsk, TrialInvoice, TrialLine } from '../../types'
 
 const BLANK_LINE: TrialLine = {
-  description: '', quantity: '', unitPrice: '', sellerCode: '', barcode: '', commodityCodes: '', unit: null, vatPercent: null, value: null,
+  description: '', details: '', quantity: '', unitPrice: '', sellerCode: '', barcode: '', commodityCodes: '', unit: null, vatPercent: null,
+  value: null,
 }
 
 export const EMPTY: TrialInvoice = {
@@ -64,6 +65,7 @@ export function toRequest(trial: TrialInvoice, ask: TrialAsk) {
     ask,
     lines: written.map((row) => ({
       description: row.description.trim(),
+      details: orNull(row.details),
       quantity: number(row.quantity),
       unit_price: number(row.unitPrice),
       seller_code: orNull(row.sellerCode),
@@ -86,6 +88,7 @@ export function fromDocument(view: InvoiceView): TrialInvoice {
   const document = view.document
   const lines = (document?.lines ?? []).map((row) => ({
     description: row.description,
+    details: row.details ?? '',
     quantity: row.quantity.replace('.', ','),
     unitPrice: row.unit_price.replace('.', ','),
     sellerCode: row.seller_code ?? '',
@@ -112,9 +115,11 @@ export function changeLine(line: TrialLine, changed: Partial<TrialLine>): TrialL
   return { ...line, ...changed, ...(recomputed ? { value: null } : {}) }
 }
 
-/** Whether any row has a code, so the codes are shown without being asked for. */
-export function hasCodes(trial: TrialInvoice): boolean {
-  return trial.lines.some((row) => !blank(row.sellerCode) || !blank(row.barcode) || !blank(row.commodityCodes))
+/** Whether any row has a description or a code, so they are shown without being asked for. */
+export function hasMore(trial: TrialInvoice): boolean {
+  return trial.lines.some(
+    (row) => !blank(row.details) || !blank(row.sellerCode) || !blank(row.barcode) || !blank(row.commodityCodes),
+  )
 }
 
 /** The form started again from an empty invoice or an example; the client chosen stays. */

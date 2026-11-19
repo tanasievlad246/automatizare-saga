@@ -133,6 +133,7 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
       [data.by_jev, 'o linie de la Jev', 'linii de la Jev'],
       [data.by_person, 'o linie aleasă de dumneavoastră', 'linii alese de dumneavoastră'],
       [data.following, 'o linie cu contul liniei celei mai mari', 'linii cu contul liniei celei mai mari'],
+      [data.as_invoice, 'o linie cu contul facturii, păstrat la împărțire', 'linii cu contul facturii, păstrat la împărțire'],
     ]
       .filter(([count]) => Number(count) > 0)
       .map(([count, one, many]) => countOf(Number(count), String(one), String(many)))

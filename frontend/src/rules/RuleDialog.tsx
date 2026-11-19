@@ -82,7 +82,7 @@ export function RuleDialog({
           <ListField
             id="rule-keywords"
             label="Cuvinte de pe factură"
-            hint="Despărțiți-le prin virgulă. Un * la sfârșit înseamnă orice terminație: transport*"
+            hint="Despărțiți-le prin virgulă. Se caută în denumirea liniei și în descrierea ei. O steluță ține locul oricăror litere: transport* (începe cu „transport”), *cartus (se termină cu „cartus”), *cartus* (conține „cartus”)."
             entries={fields.keywords}
             onChange={(keywords) => set({ keywords })}
           />

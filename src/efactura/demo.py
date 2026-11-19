@@ -74,6 +74,14 @@ TODAY = {
         # Paper again, and a repair: Jev decides both, so rules are proposed from them.
         ("Birotică Expert SRL", "RO30112233", "BE-0467", [line("Hârtie A4 80g", "240.00", quantity="20", price="12.00")]),
         ("Service Auto Nord SRL", "RO50990011", "SA 3340", [line("Revizie utilaj", "1500.00")]),
+        # Lines with a description beside their name: the rule "*cartus*" finds the toner by
+        # its description; Jev decides the paper and is unsure of the coffee.
+        ("Birotică Expert SRL", "RO30112233", "BE-0503", [
+            line("Toner imprimantă", "540.00", quantity="6", price="90.00",
+                 description="Cartuș toner compatibil HP 85A, negru, 1.600 de pagini"),
+            line("Hârtie copiator", "320.00", quantity="10", price="32.00", description="Hârtie A4 80 g/mp, top 500 coli"),
+            line("Cafea boabe 1 kg", "89.00", percent="9"),
+        ]),
     ],
     "14399840": [
         ("Ambalaje Pro SRL", "RO40778899", "AP 771", [line("Pungi hârtie 500 buc", "310.00", quantity="2", price="155.00")]),
@@ -82,6 +90,11 @@ TODAY = {
         ("Telefonie Mobilă SA", "RO10556677", "TM 87001", [line("Abonament telefonie mobilă", "150.00")]),
         # The line says nothing telling, so the rule proposed is for the supplier.
         ("Contabil Expert SRL", "RO70445566", "CE 0911", [line("Servicii conform contract", "600.00")]),
+        # This client has one account per invoice: decided by its largest line, ready to be split.
+        ("Birotică Expert SRL", "RO30112233", "BE-0511", [
+            line("Toner imprimantă", "360.00", quantity="4", price="90.00", description="Cartuș toner compatibil HP 85A"),
+            line("Cafea boabe 1 kg", "89.00", percent="9"),
+        ]),
     ],
     "18547290": [
         ("Papetărie Centrală SRL", "RO60223344", "PC 118", [line("Hârtie copiator A4", "95.00", quantity="5", price="19.00")]),
@@ -119,6 +132,7 @@ JEV_ANSWERS = {
     "hârtie": {"choice": "302", "confidence": 0.91},
     "pungi": {"choice": "302", "confidence": 0.93},
     "revizie": {"choice": "628", "confidence": 0.88},
+    "cafea": {"choice": "623", "confidence": 0.41, "probabilities_extra": {"302": 0.35, "628": 0.2}},
     # What a client sold: income accounts.
     "reparații": {"choice": "704", "confidence": 0.9},
     "cărămidă": {"choice": "707", "confidence": 0.55, "probabilities_extra": {"704": 0.3}},
@@ -179,6 +193,9 @@ def build(folder: Path, now: datetime | None = None) -> Config:
         setup.save_client(cui, name)
     setup.save_account("302", "Materiale consumabile: papetărie, ambalaje, materiale de construcții folosite în lucrări.")
     setup.save_account("611", "Întreținere și reparații: revizii, reparații la utilaje și vehicule.")
+    setup.save_account("623", "Protocol, reclamă și publicitate: cafea, apă și gustări pentru oaspeți, cadouri.")
+    setup.save_rule(name="consumabile", cont="302", keywords=["*cartus*"])
+    setup.set_client_per_line("14399840", False)
     setup.save_rule(name="chirie birou", cont="612", supplier_cuis=["11112222"], client_cui="12345674")
     setup.save_rule(name="manoperă", cont="704", keywords=["manoperă", "montaj*", "lucrări"], direction="issued")
 

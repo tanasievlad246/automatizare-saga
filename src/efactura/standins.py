@@ -398,7 +398,7 @@ class FakeOpenRouter:
     """Answers like POST https://openrouter.ai/api/alpha/decisions.
 
     `valid_keys` is the set of keys it accepts; None accepts any key (demo mode).
-    `answers` maps a word found in the invoice's line descriptions to the answer Jev gives;
+    `answers` maps a word found in the invoice's lines (name or description) to the answer Jev gives;
     anything else gets `default`.
     """
 
@@ -431,7 +431,7 @@ class FakeOpenRouter:
             return httpx.Response(401, json={"error": {"code": 401, "message": "No auth credentials found"}})
 
         lines = body["state"].get("linii") or [body["state"]["linia"]]  # an invoice, or one line of it
-        described = " ".join(item["descriere"] for item in lines).lower()
+        described = " ".join(f"{item['descriere']} {item.get('detalii') or ''}" for item in lines).lower()
         for word, status in self.fail_for.items():
             if word.lower() in described:
                 return httpx.Response(

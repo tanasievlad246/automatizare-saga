@@ -76,13 +76,13 @@ from .invoice import (
 )
 from .rules import (
     CONDITIONS, DEFAULT_JEV_ISSUED_INSTRUCTIONS, DEFAULT_JEV_ISSUED_LINE_INSTRUCTIONS, DEFAULT_JEV_LINE_INSTRUCTIONS,
-    Rule, Rulebook, Subject, any_of,
+    Rule, Rulebook, RuleMatch, Subject, any_of, normalise,
 )
 from .store import (
     ISSUED as ISSUED_KIND, JEV_INSTRUCTIONS, JEV_ISSUED_INSTRUCTIONS, JEV_ISSUED_LINE_INSTRUCTIONS,
     JEV_LINE_INSTRUCTIONS, KINDS, RECEIVED as RECEIVED_KIND, RULE_TEST, Store,
 )
-from .suggestions import propose, ticked_words, words_of
+from .suggestions import propose, ticked_words, words_of_line
 
 log = logging.getLogger(__name__)
 
@@ -162,6 +162,31 @@ SAGA_ARCHIVE_DIR = "saga-archive"
 class _JevCouldNotDecide(Exception):
     """Jev was reached but gave nothing usable for this one invoice (it refused the
     request, or its answer made no sense). The next invoice may well be fine."""
+
+
+# Where a decision comes from, as the history of an invoice's account says it.
+DOWNLOAD = "download"  # a download, by hand or by itself
+AGAIN = "again"  # "Clasifică din nou facturile de verificat"
+REDECIDE = "redecide"  # one invoice, or one line, decided again on purpose
+PERSON = "person"  # a person chose, or accepted Jev's proposal
+SPLIT = "split"  # a person split an invoice with one account into lines
+
+
+@dataclass(frozen=True)
+class _Pass:
+    """How one decision is made, and what the history says made it."""
+
+    source: str = DOWNLOAD
+    jev_allowed: bool = True
+    skip_rules: bool = False  # "Doar cu Jev": the rules are not tried
+    line: int | None = None  # only this line of an invoice decided line by line; the others stay
+    per_line: bool | None = None  # line by line, or one account; None: as the client is set
+
+    @property
+    def again(self) -> bool:
+        """Sent back on purpose with classify_again: what is decided stays, and an invoice that
+        goes back to a person is only a detail in the journal."""
+        return self.source == AGAIN
 
 
 class Service:
@@ -676,18 +701,35 @@ class Service:
 
     # --- classification -------------------------------------------------------
 
-    def classify(self, message_id: str, force: bool = False) -> dict:
-        """Give one saved invoice its account: the rules first, Jev if they cannot decide.
+    def classify(
+        self, message_id: str, force: bool = False, ask: str = "rules_then_jev", line: int | None = None,
+        per_line: bool | None = None,
+    ) -> dict:
+        """Give one saved invoice its account: the rules first, Jev if they cannot decide;
+        with `ask` "jev_only", Jev alone. Decided from the start, the lines a person chose
+        included, line by line or with one account as `per_line` says (None: as the client is
+        set). `line`: that line alone, on an invoice decided line by line.
 
         Without force this only works on invoices that are waiting or in review. An invoice
         saved outside classification, or one already classified, needs force.
         """
+        if ask not in TRIAL_ASKS:
+            raise EfacturaError(INVALID_INPUT, f"ask must be one of: {', '.join(TRIAL_ASKS)}.")
+        how = _Pass(source=REDECIDE, skip_rules=ask == "jev_only", line=line, per_line=per_line)
         with self._lock():
             store = self._open_store()
             try:
-                row, _ = self._classifiable(store, message_id, force, classified_ok=force)
+                row, invoice = self._classifiable(store, message_id, force, classified_ok=force)
+                if line is not None:
+                    if _stored_lines(row) is None:
+                        raise EfacturaError(
+                            INVALID_INPUT,
+                            "This invoice has one account for all its lines. Split it into lines first (split).",
+                        )
+                    if line not in {item.number for item in invoice.lines}:
+                        raise EfacturaError(INVALID_INPUT, f"The invoice has no line {line}.")
                 try:
-                    self._classify_one(store, message_id, _new_tally())
+                    self._classify_one(store, message_id, _new_tally(), how)
                 finally:
                     self._write_saga_files(store, row["cui"])
                 return {"ok": True, "invoice": self._present(store.get_message(message_id))}
@@ -743,13 +785,13 @@ class Service:
                 if entries is not None:
                     entries = _aligned(entries, invoice)
                     _choose_on_lines(entries, cont, accept, line)
-                    self._record_lines(store, row, invoice, entries)
+                    self._record_lines(store, row, invoice, entries, how=_Pass(source=PERSON))
                     self._write_saga_files(store, row["cui"])
                     return {"ok": True, "invoice": self._present(store.get_message(message_id))}
                 if line is not None:
                     raise EfacturaError(
                         INVALID_INPUT,
-                        "This invoice has one account for all its lines. Classify it again to decide it line by line.",
+                        "This invoice has one account for all its lines. Split it into lines first (split).",
                     )
                 if accept:
                     if not row["suggested_cont"]:
@@ -761,7 +803,53 @@ class Service:
                     )
                 else:
                     method, reason = "human", "Set by a person."
-                self._finish(store, row, invoice, cont, method, reason)
+                self._finish(store, row, invoice, cont, method, reason, how=_Pass(source=PERSON))
+                self._write_saga_files(store, row["cui"])
+                return {"ok": True, "invoice": self._present(store.get_message(message_id))}
+            finally:
+                store.close()
+
+    def split_into_lines(self, message_id: str) -> dict:
+        """A person turns an invoice with one account into one decided line by line, whatever
+        the client's switch: every line starts with the invoice's account. The largest line
+        keeps how it was chosen; a discount, or a line worth nothing, follows the largest line;
+        every other line keeps the account as its own (FROM_INVOICE). SAGA's file says the
+        same until a line gets another account."""
+        with self._lock():
+            store = self._open_store()
+            try:
+                row, invoice = self._classifiable(store, message_id, force=True, classified_ok=True)
+                if _stored_lines(row) is not None:
+                    raise EfacturaError(INVALID_INPUT, "This invoice is decided line by line already.")
+                if len(invoice.lines) < 2:
+                    raise EfacturaError(INVALID_INPUT, "This invoice has one line: there is nothing to split.")
+                if row["classification_status"] != CLASSIFIED or not row["cont"]:
+                    raise EfacturaError(INVALID_INPUT, "This invoice has no account yet. Choose it first, then split it.")
+                # The rule and what it found, from the history, when it holds this account.
+                last = next((entry for entry in store.decisions(message_id) if entry["line"] is None), None)
+                noted = last["said"] if last and last["cont"] == row["cont"] else {}
+                largest = deciding_line(invoice).number
+                entries = []
+                for item in invoice.lines:
+                    if item.number == largest:
+                        entries.append(_line_entry(
+                            item.number, row["cont"], row["classification_method"], row["classification_reason"],
+                            rule=noted.get("rule"), match=noted.get("match"), probabilities=noted.get("probabilities"),
+                            suggested_cont=row["suggested_cont"], confidence=row["confidence"],
+                            confidence_threshold=row["confidence_threshold"],
+                            # Jev's answer, as a line Jev was asked about: "Clasifică din nou" keeps it.
+                            asked=row["classification_method"] == "jev",
+                        ))
+                    elif follows_largest(invoice, item):
+                        entries.append(_line_entry(
+                            item.number, None, FOLLOWS, f"Takes the account of line {largest}, the largest on the invoice.",
+                        ))
+                    else:
+                        entries.append(_line_entry(
+                            item.number, row["cont"], FROM_INVOICE,
+                            "The account of the whole invoice, kept when a person split it into lines.",
+                        ))
+                self._record_lines(store, row, invoice, entries, how=_Pass(source=SPLIT))
                 self._write_saga_files(store, row["cui"])
                 return {"ok": True, "invoice": self._present(store.get_message(message_id))}
             finally:
@@ -1392,6 +1480,7 @@ class Service:
                 "jev_line_instructions": store.get_setting(JEV_LINE_INSTRUCTIONS) or DEFAULT_JEV_LINE_INSTRUCTIONS,
                 **_issued_questions(store),
                 "min_confidence": _min_confidence(store),
+                "jev_configured": bool(self.cfg.openrouter_api_key),  # whether Jev can be asked at all
             }
         finally:
             store.close()
@@ -1898,6 +1987,16 @@ class Service:
             "rule_suggestion": rule_suggestion,
         }
 
+    def decision_history(self, message_id: str) -> dict:
+        """How an invoice got its account, each time it changed, the newest first."""
+        store = self._open_store()
+        try:
+            if store.get_message(message_id) is None:
+                raise EfacturaError(NOT_FOUND, f"No saved message with id: {message_id}")
+            return {"ok": True, "decisions": store.decisions(message_id)}
+        finally:
+            store.close()
+
     def _classify_waiting(self, store: Store, cui: str, result: dict) -> None:
         """Classify what this sync saved, plus anything left waiting by an earlier one.
 
@@ -1926,8 +2025,9 @@ class Service:
         counts = {CLASSIFIED: 0, REVIEW: 0, PENDING: 0}
         left_out, jev_down = 0, False
         for message_id in ids:
+            how = _Pass(source=AGAIN if again else DOWNLOAD, jev_allowed=jev and not jev_down)
             try:
-                status = self._classify_one(store, message_id, tally, jev_allowed=jev and not jev_down, again=again)
+                status = self._classify_one(store, message_id, tally, how)
             except EfacturaError as exc:
                 if exc.code == NOT_CLASSIFIABLE:
                     # Waiting again would change nothing: it leaves classification, with why.
@@ -2044,42 +2144,59 @@ class Service:
             )
         return row, invoice
 
-    def _classify_one(
-        self, store: Store, message_id: str, tally: dict, jev_allowed: bool = True, again: bool = False,
-    ) -> str:
+    def _classify_one(self, store: Store, message_id: str, tally: dict, how: _Pass = _Pass()) -> str:
         """Decide one invoice and return its new status.
 
-        `again`: an invoice that waits for a person or for Jev, sent back on purpose
+        `how.again`: an invoice that waits for a person or for Jev, sent back on purpose
         (classify_again). The lines a person chose stay, and so does a line Jev was sure of
         unless a rule now matches it. Without Jev allowed, whatever no rule decides is left
         as it was. One that goes back to a person is a detail in the journal."""
+        again, jev_allowed = how.again, how.jev_allowed
         row = store.get_message(message_id, include_xml=True)
         invoice = parse_invoice(row["invoice_xml"] or "")
         if invoice is None:
             raise EfacturaError(NOT_CLASSIFIABLE, "The saved XML cannot be read as an invoice.")
 
-        to_review = partial(self._to_review, quiet=again)
+        to_review = partial(self._to_review, how=how)
         issued = _is_issued(row["message_type"])
         rulebook = _rulebook_for(store, row["cui"], issued=issued)
         # One line is one account either way: such an invoice is decided, shown and booked whole.
-        per_line = store.client_per_line(row["cui"]) and len(invoice.lines) > 1
+        # Unless told, one decided line by line stays so, whatever the client's switch says: a
+        # person may have split it. One with one account follows the switch.
+        if how.per_line is not None:
+            shaped = how.per_line
+        else:
+            shaped = _stored_lines(row) is not None or store.client_per_line(row["cui"])
+        per_line = (shaped or how.line is not None) and len(invoice.lines) > 1
         chosen = {
             entry["line"]: entry for entry in _stored_lines(row) or () if entry["method"] in BY_A_PERSON
         } if again and per_line else {}
         earlier = _same_invoice_saved_before(store, row)
+        sent_twice = _sent_twice(earlier) if earlier else None
+        if how.line is not None:
+            # One line on purpose. An invoice held back for a person stays held back: that line
+            # waits for the person too, with the reason, and the other lines stay as they are.
+            held_back = sent_twice or _parties_misfit(row["cui"], invoice, issued)
+            if held_back:
+                entries = _aligned(_stored_lines(row) or [], invoice)
+                follows = follows_largest(invoice, next(item for item in invoice.lines if item.number == how.line))
+                entries = [
+                    _line_entry(entry["line"], None, FOLLOWS if follows else None, held_back) if entry["line"] == how.line
+                    else entry
+                    for entry in entries
+                ]
+                return self._record_lines(store, row, invoice, entries, why=held_back, how=how)
+            return self._classify_lines(store, row, invoice, rulebook, tally, how)
         if earlier:
             # Booking it automatically would enter the invoice in SAGA a second time.
-            why = (
-                f"The same invoice (supplier, number and date) is already saved as message "
-                f"{earlier}. Decide whether it has to be booked again."
-            )
+            why = sent_twice
             if per_line:  # every line waits for the person, as it would have been decided
                 open_lines = [
                     chosen.get(item.number)
                     or _line_entry(item.number, None, FOLLOWS if follows_largest(invoice, item) else None, why)
                     for item in invoice.lines
                 ]
-                return self._record_lines(store, row, invoice, open_lines, why=why, quiet=again)
+                return self._record_lines(store, row, invoice, open_lines, why=why, how=how)
             return to_review(store, row, why)
         misfit = _parties_misfit(row["cui"], invoice, issued)
         if misfit:
@@ -2088,27 +2205,27 @@ class Service:
             return to_review(store, row, misfit)
 
         if per_line:
-            return self._classify_lines(store, row, invoice, rulebook, tally, jev_allowed, again, chosen)
+            return self._classify_lines(store, row, invoice, rulebook, tally, how, chosen)
 
-        decision = decide_by_rules(invoice, rulebook)
+        decision = None if how.skip_rules else decide_by_rules(invoice, rulebook)
         if decision:
             return self._finish(
                 store, row, invoice, decision.cont, "rules",
                 f'Rule "{decision.rule}" matched line {decision.line}, the largest on the invoice.',
+                how=how, noted={"rule": decision.rule, "match": _match_said(decision.match)},
             )
         if again and not jev_allowed:
             return row["classification_status"]  # no rule decides it: left as it was, Jev's word too
         if not invoice.lines:
             return to_review(store, row, "The invoice has no lines to decide from.")
+        no_rule = "The rules were skipped" if how.skip_rules else "No rule matched"
         if not self.cfg.openrouter_api_key:
             return to_review(
                 store, row,
-                "No rule matched, and OpenRouter is not set up ([openrouter] api_key in config.toml).",
+                f"{no_rule}, and OpenRouter is not set up ([openrouter] api_key in config.toml).",
             )
         if not rulebook.accounts:
-            return to_review(
-                store, row, "No rule matched, and there are no accounts for Jev to choose from."
-            )
+            return to_review(store, row, f"{no_rule}, and there are no accounts for Jev to choose from.")
         if not jev_allowed:
             _note_error(store, message_id, "Not sent to Jev: OpenRouter failed earlier in this run.")
             return PENDING
@@ -2124,13 +2241,14 @@ class Service:
         except _JevCouldNotDecide as exc:
             return to_review(store, row, f"Jev could not decide this invoice: {exc}")
         cont, reason, jev_said = _judged(answer, _min_confidence(store))
+        noted = {"probabilities": answer.probabilities}
         if cont is None:
-            return to_review(store, row, reason, **jev_said)
-        return self._finish(store, row, invoice, cont, "jev", reason, **jev_said)
+            return to_review(store, row, reason, noted=noted, **jev_said)
+        return self._finish(store, row, invoice, cont, "jev", reason, how=how, noted=noted, **jev_said)
 
     def _classify_lines(
-        self, store: Store, row: dict, invoice: Invoice, rulebook: Rulebook, tally: dict, jev_allowed: bool,
-        again: bool = False, chosen: dict[int, dict] | None = None,
+        self, store: Store, row: dict, invoice: Invoice, rulebook: Rulebook, tally: dict, how: _Pass,
+        chosen: dict[int, dict] | None = None,
     ) -> str:
         """Decide each line on its own: the rules first; a discount or a line worth nothing
         takes the account of the largest line; Jev for the rest, one question per distinct
@@ -2139,30 +2257,42 @@ class Service:
         only about the others, so a long invoice is not paid for again from the start. The
         invoice has more than one line.
 
-        `again` (see _classify_one): the lines in `chosen`, which a person chose, are kept as
-        they are, and Jev's earlier account for a line no rule matches now. When Jev is not
+        `how.again` (see _classify_one): the lines in `chosen`, which a person chose, are kept
+        as they are, and Jev's earlier account for a line no rule matches now. When Jev is not
         asked this time (not allowed, no key, no accounts), every line no rule decides stays
-        as it was, and an invoice that was decided whole stays whole, with Jev's proposal."""
+        as it was, and an invoice that was decided whole stays whole, with Jev's proposal.
+
+        `how.line`: only that line is decided, the others stay as they are; with the rules
+        skipped, Jev is asked about it whatever it is, a discount included. `how.skip_rules`:
+        no rule is tried."""
+        again, jev_allowed = how.again, how.jev_allowed
         largest = deciding_line(invoice).number
+        by_number = {item.number: item for item in invoice.lines}
         waiting = row["classification_status"] == PENDING
         stored = _stored_lines(row)
-        entries = dict(chosen or {})
-        for number, rule in rules_by_line(invoice, rulebook).items():
+        if how.line is not None:
+            entries = {entry["line"]: entry for entry in _aligned(stored or [], invoice) if entry["line"] != how.line}
+        else:
+            entries = dict(chosen or {})
+        for number, rule in ({} if how.skip_rules else rules_by_line(invoice, rulebook)).items():
             if number not in entries:
                 entries[number] = _line_entry(
-                    number, rule.cont, "rules", f'Rule "{rule.name}" matched line {number}.', rule=rule.name
+                    number, rule.cont, "rules", f'Rule "{rule.name}" matched line {number}.', rule=rule.name,
+                    match=_match_said(rule.match(line_subject(invoice, by_number[number]))),
                 )
+        asked_for_this_line = how.line is not None and how.skip_rules
         for item in invoice.lines:
-            if item.number not in entries and follows_largest(invoice, item):
+            if item.number not in entries and follows_largest(invoice, item) and not asked_for_this_line:
                 entries[item.number] = _line_entry(
                     item.number, None, FOLLOWS, f"Takes the account of line {largest}, the largest on the invoice."
                 )
         asked = [item for item in invoice.lines if item.number not in entries]
         why_not = None
+        no_rule = "The rules were skipped" if how.skip_rules else "No rule matched this line"
         if asked and not self.cfg.openrouter_api_key:
-            why_not = "No rule matched this line, and OpenRouter is not set up ([openrouter] api_key in config.toml)."
+            why_not = f"{no_rule}, and OpenRouter is not set up ([openrouter] api_key in config.toml)."
         elif asked and not rulebook.accounts:
-            why_not = "No rule matched this line, and there are no accounts for Jev to choose from."
+            why_not = f"{no_rule}, and there are no accounts for Jev to choose from."
         if again and asked and (not jev_allowed or (why_not and not waiting)):
             # Jev is not asked this time: what no rule decides now stays as it was.
             if waiting:
@@ -2175,13 +2305,14 @@ class Service:
                 entries[item.number] = kept.get(item.number) or _line_entry(
                     item.number, reason=why_not or "No rule matched this line, and Jev was not asked this time."
                 )
-            return self._record_lines(store, row, invoice, [entries[item.number] for item in invoice.lines], quiet=True)
+            return self._record_lines(store, row, invoice, [entries[item.number] for item in invoice.lines], how=how)
         if asked and not why_not and not jev_allowed:
             _note_error(store, row["id"], "Not sent to Jev: OpenRouter failed earlier in this run.")
             return PENDING
         answered = [entry for entry in stored or () if entry.get("asked")]
-        if waiting:
-            # Answers kept by an earlier run that OpenRouter stopped.
+        if waiting and how.line is None:
+            # Answers kept by an earlier run that OpenRouter stopped. One line asked about on
+            # purpose is asked again.
             earlier = {entry["line"]: entry for entry in answered}
         elif again:
             earlier = {entry["line"]: entry for entry in answered if entry["cont"]}  # Jev was sure of these
@@ -2214,7 +2345,7 @@ class Service:
                         elif again and answered_now:
                             # Sent back on purpose: what Jev answered so far is paid for and kept, the
                             # other lines stay as they were. Left as it was if nothing was answered.
-                            self._record_lines(store, row, invoice, _merged(invoice, entries, stored), quiet=True)
+                            self._record_lines(store, row, invoice, _merged(invoice, entries, stored), how=how)
                         raise
                     else:
                         answered_now = True
@@ -2224,16 +2355,19 @@ class Service:
                 entries[item.number] = _line_entry(
                     item.number, cont, "jev" if cont else None, reason, asked=asked, **jev_said
                 )
-        return self._record_lines(store, row, invoice, [entries[item.number] for item in invoice.lines], quiet=again)
+        return self._record_lines(store, row, invoice, [entries[item.number] for item in invoice.lines], how=how)
 
     def _record_lines(
         self, store: Store, row: dict, invoice: Invoice, entries: list[dict], why: str | None = None,
-        quiet: bool = False,
+        how: _Pass = _Pass(),
     ) -> str:
-        """Record each line's account. The invoice is ready for SAGA once every line has one;
-        until then it waits for a person, for `why` when it is given. Its own `cont` and the
-        fields beside it are those of its largest line, so whatever reads one account per
-        invoice keeps working."""
+        """Record each line's account, and in the invoice's history each line that changed.
+        The invoice is ready for SAGA once every line has one; until then it waits for a
+        person, for `why` when it is given. Its own `cont` and the fields beside it are those
+        of its largest line, so whatever reads one account per invoice keeps working. An
+        invoice sent back on purpose (`how.again`) that waits for a person is a detail in
+        the journal."""
+        quiet = how.again
         largest = deciding_line(invoice).number
         head = next(entry for entry in entries if entry["line"] == largest)
         for entry in entries:
@@ -2258,6 +2392,7 @@ class Service:
                 row["id"], classification_status=REVIEW, cont=None, classification_method=None,
                 classification_reason=reason, classified_at=None, **common,
             )
+            self._note_decisions(store, row, how, entries)
             journal.record(
                 "accounts", "account.to_review", f"Message {row['id']} needs a person: {reason}",
                 level="detail" if quiet else "warning", **details, reason=reason, lines_left=len(to_choose),
@@ -2270,14 +2405,22 @@ class Service:
             classification_method=head["method"], classification_reason=reason,
             classified_at=self._now().isoformat(), **common, **forgotten,
         )
+        self._note_decisions(store, row, how, entries)
         methods = [entry["method"] for entry in entries]
         journal.record(
             "accounts", "account.by_lines", f"Message {row['id']} booked line by line: {reason}",
             **details, cont=head["cont"], accounts=sorted({entry["cont"] for entry in entries}),
             by_rules=methods.count("rules"), by_jev=methods.count("jev"),
             by_person=methods.count("human") + methods.count("jev_accepted"), following=methods.count(FOLLOWS),
+            as_invoice=methods.count(FROM_INVOICE),
         )
         return CLASSIFIED
+
+    def _note_decisions(self, store: Store, row: dict, how: _Pass, entries: list[dict]) -> None:
+        """Add to the invoice's history what changed: `entries` have just replaced what `row`,
+        as it was read before, held. Written after the invoice, so the history never tells
+        of a change that was not saved."""
+        store.add_decisions(_changes(row, entries, how, self._now().isoformat()))
 
     def _ask_jev(
         self, store: Store, row: dict, request: dict, rulebook: Rulebook, tally: dict, line: int | None = None,
@@ -2337,10 +2480,12 @@ class Service:
 
     def _finish(
         self, store: Store, row: dict, invoice: Invoice, cont: str, method: str, reason: str,
-        **jev_said,
+        how: _Pass = _Pass(), noted: dict | None = None, **jev_said,
     ) -> str:
         """Record the decision: `cont` on every line. The files for SAGA follow from what is
-        recorded (_write_saga_files), so SAGA never finds a decision that was not."""
+        recorded (_write_saga_files), so SAGA never finds a decision that was not. `noted`
+        is what only the history keeps: the rule and what it found, or how likely Jev found
+        each account."""
         subject = subject_of(invoice)
         forgotten = _not_now_forgotten(store, row["id"], cont)
         store.set_classification(
@@ -2357,6 +2502,7 @@ class Service:
             **forgotten,
             **jev_said,
         )
+        self._note_decisions(store, row, how, [_line_entry(None, cont, method, reason, **(noted or {}), **jev_said)])
         journal.record(
             "accounts", {"rules": "account.by_rule", "jev": "account.by_jev"}.get(method, "account.by_person"),
             f"Message {row['id']} booked on {cont} ({method}).",
@@ -2366,9 +2512,12 @@ class Service:
         )
         return CLASSIFIED
 
-    def _to_review(self, store: Store, row: dict, reason: str, quiet: bool = False, **jev_said) -> str:
-        """The invoice waits for a person, for `reason`. `quiet`: written in the journal as a
-        detail, for an invoice that was waiting for one already."""
+    def _to_review(
+        self, store: Store, row: dict, reason: str, how: _Pass = _Pass(), noted: dict | None = None, **jev_said,
+    ) -> str:
+        """The invoice waits for a person, for `reason`. Sent back on purpose (`how.again`),
+        it is written in the journal as a detail: it was waiting for one already."""
+        quiet = how.again
         store.set_classification(
             row["id"],
             classification_status=REVIEW,
@@ -2380,6 +2529,7 @@ class Service:
             line_accounts=None,
             **jev_said,
         )
+        self._note_decisions(store, row, how, [_line_entry(None, reason=reason, **(noted or {}), **jev_said)])
         journal.record(
             "accounts", "account.to_review", f"Message {row['id']} needs a person: {reason}",
             level="detail" if quiet else "warning",
@@ -2994,9 +3144,12 @@ def _trial_invoice(
         # discount, a price per several units). It decides which line counts, as it did there.
         value = _trial_number(item.get("value"), "value", number)
         codes = item.get("commodity_codes") or []
+        details = _trial_text(item.get("details"), "details text", number)
         built.append(Line(
             number=number,
             description=description,
+            # As the invoice parser keeps it: not when it says what the name says.
+            details=details if details and normalise(details) != normalise(description) else None,
             seller_code=_trial_text(item.get("seller_code"), "seller code", number),
             barcode=_trial_text(item.get("barcode"), "barcode", number),
             commodity_codes=tuple(code for code in (_trial_text(c, "commodity code", number) for c in codes) if code),
@@ -3054,7 +3207,8 @@ _TRIAL_LINE_SAYS = ("decided_by", "cont", "account_description", "rule", "jev", 
 def _trial_line(item: Line, **said) -> dict:
     """One line of a trial invoice: what it is, and how it was decided."""
     return {
-        "line": item.number, "description": item.description, "value": format(item.value, "f"),
+        "line": item.number, "description": item.description, "details": item.details,
+        "value": format(item.value, "f"),
         "decided_by": "nobody", "cont": None, "account_description": None, "rule": None, "jev": None,
         "why_not": None, "reason": "",
         "follows": None,  # the largest line, whose account a discount takes
@@ -3073,6 +3227,8 @@ def _rule_said(matching: list[Rule], subject: Subject, number: int) -> dict:
         "condition": found.condition if found else None,
         "found": found.found if found else None,
         "prefix": found.prefix if found else None,
+        "matched": found.matched if found else None,  # the words of the line a keyword found
+        "in_details": found.in_details if found else False,  # found in the line's description
         "client_only": rule.client_cui is not None,
         "also": [other.name for other in matching[1:]],
     }
@@ -3103,10 +3259,11 @@ def _trial_lines_summary(lines: list[dict]) -> str:
 
 
 def _suggestion_dict(subject: Subject, cont: str, supplier_name: str | None) -> dict:
-    words = words_of(subject.description)
+    words = words_of_line(subject)
     return {
         "cont": cont,
         "line": subject.description,
+        "details": subject.details,  # the line's description, which words come from too
         "words": list(words),
         "ticked": list(ticked_words(words)),
         "supplier_cui": subject.supplier_cui,
@@ -3147,21 +3304,90 @@ def _evidence(rule: Rule, classified: list[tuple[str, Subject]]) -> dict:
 
 
 FOLLOWS = "follows"  # a line that takes the account of the invoice's largest line
-BY_A_PERSON = ("human", "jev_accepted")  # how a line a person decided is marked
+FROM_INVOICE = "invoice"  # a line that kept the whole invoice's account when a person split it
+BY_A_PERSON = ("human", "jev_accepted", FROM_INVOICE)  # lines a person decided: classify_again keeps them
 
 
 def _line_entry(
-    number: int, cont: str | None = None, method: str | None = None, reason: str | None = None,
+    number: int | None, cont: str | None = None, method: str | None = None, reason: str | None = None,
     rule: str | None = None, suggested_cont: str | None = None, confidence: float | None = None,
     confidence_threshold: float | None = None, probabilities: dict | None = None, asked: bool = False,
+    match: dict | None = None,
 ) -> dict:
-    """One line's account as it is stored and shown: who chose it, why, what Jev said and
-    how likely it found each account. `asked`: Jev was asked about this line."""
+    """One line's account as it is stored and shown: who chose it, why (the rule, and which of
+    its conditions the line meets), what Jev said and how likely it found each account.
+    `asked`: Jev was asked about this line. With `number` None, the whole invoice, as its
+    history keeps it."""
     return {
-        "line": number, "cont": cont, "method": method, "rule": rule, "reason": reason or "",
+        "line": number, "cont": cont, "method": method, "rule": rule, "match": match, "reason": reason or "",
         "suggested_cont": suggested_cont, "confidence": confidence, "confidence_threshold": confidence_threshold,
         "probabilities": probabilities, "asked": asked,
     }
+
+
+def _match_said(match: RuleMatch | None) -> dict | None:
+    """Which condition of a rule a line meets, and with what, as it is kept."""
+    return asdict(match) if match is not None else None
+
+
+# What a decision is, for telling whether it changed: not how likely Jev found each account,
+# which a second question changes a little without changing the decision.
+_DECIDED = ("cont", "method", "reason", "suggested_cont", "confidence", "confidence_threshold")
+# A download or "Clasifică din nou" leaving a line as it was does not write it again because
+# Jev, asked again, is a little more or less sure: its figures are left out of the comparison.
+_FIGURES = re.compile(r"\d+(?:\.\d+)?")
+
+
+def _same_decision(old: dict, new: dict, automatic: bool) -> bool:
+    if not automatic:
+        return all(old.get(key) == new.get(key) for key in _DECIDED)
+    return all(old.get(key) == new.get(key) for key in ("cont", "method", "suggested_cont")) and (
+        _FIGURES.sub("#", old.get("reason") or "") == _FIGURES.sub("#", new.get("reason") or "")
+    )
+# What the history keeps of a decision beside the account, the method and the reason.
+_SAID = ("rule", "match", "suggested_cont", "confidence", "confidence_threshold", "probabilities")
+
+
+def _held(row: dict) -> dict[int | None, dict]:
+    """The decisions a saved invoice holds, by line (None: the whole invoice). An invoice
+    that waits for Jev, or was never decided, holds none."""
+    if row.get("classification_status") not in (CLASSIFIED, REVIEW):
+        return {}
+    whole = _line_entry(
+        None, row.get("cont"), row.get("classification_method"), row.get("classification_reason"),
+        suggested_cont=row.get("suggested_cont"), confidence=row.get("confidence"),
+        confidence_threshold=row.get("confidence_threshold"),
+    )
+    entries = _stored_lines(row)
+    if entries is not None:
+        # The invoice as a whole is its largest line's: what it had before, should it be made whole.
+        return {None: whole, **{entry["line"]: entry for entry in entries}}
+    return {None: whole}
+
+
+def _changes(row: dict, entries: list[dict], how: _Pass, at: str) -> list[dict]:
+    """The rows of the history for `entries` (by line, or one with line None for the whole
+    invoice): those whose decision differs from what the saved row held, each with what it
+    had before. What a person asked to have decided again (the invoice, or `how.line`) is
+    written even when it comes out the same: the history then shows that it was done."""
+    held = _held(row)
+    changed = []
+    for entry in entries:
+        old = held.get(entry["line"])
+        asked_for = how.source == REDECIDE and how.line in (None, entry["line"])
+        if old is not None and not asked_for and _same_decision(old, entry, how.source in (DOWNLOAD, AGAIN)):
+            continue
+        before = old or held.get(None)  # a line split off a whole invoice had the invoice's account
+        changed.append({
+            "message_id": row["id"], "at": at, "source": how.source, "line": entry["line"],
+            "cont": entry["cont"], "method": entry["method"], "reason": entry["reason"] or "",
+            "said": {
+                **{key: entry.get(key) for key in _SAID},
+                "jev_only": how.skip_rules,
+                "before": {key: before.get(key) for key in ("cont", "method", "rule")} if before else None,
+            },
+        })
+    return changed
 
 
 def _stored_lines(row: dict) -> list[dict] | None:
@@ -3245,9 +3471,12 @@ def _choose_on_lines(entries: list[dict], cont: str | None, accept: bool, line: 
         chosen = entries
     for entry in chosen:
         if not accept:
-            entry.update(cont=cont, method="human", reason="Set by a person.")
+            entry.update(cont=cont, method="human", reason="Set by a person.", rule=None, match=None)
         elif entry["suggested_cont"]:
-            entry.update(cont=entry["suggested_cont"], method="jev_accepted", reason="Jev's suggestion, accepted by a person.")
+            entry.update(
+                cont=entry["suggested_cont"], method="jev_accepted", reason="Jev's suggestion, accepted by a person.",
+                rule=None, match=None,
+            )
         else:
             raise EfacturaError(INVALID_INPUT, f"Jev suggested no account for line {entry['line']}; give a cont.")
     if accept and not chosen:
@@ -3268,7 +3497,7 @@ def _lines_left(left: list[dict]) -> str:
 def _lines_summary(entries: list[dict]) -> str:
     """"3 lines: 2 by rules, 1 by Jev." """
     names = {"rules": "by rules", "jev": "by Jev", "jev_accepted": "by a person", "human": "by a person",
-             FOLLOWS: "as the largest line"}
+             FOLLOWS: "as the largest line", FROM_INVOICE: "as the whole invoice"}
     counts: dict[str, int] = {}
     for entry in entries:
         name = names.get(entry["method"], "by a person")
@@ -3388,6 +3617,14 @@ def _same_file(one: Path, other: Path) -> bool:
         return one.samefile(other)
     except OSError:
         return False
+
+
+def _sent_twice(earlier: str) -> str:
+    """Why an invoice saved before under another ANAF id waits for a person."""
+    return (
+        f"The same invoice (supplier, number and date) is already saved as message "
+        f"{earlier}. Decide whether it has to be booked again."
+    )
 
 
 def _same_invoice_saved_before(store: Store, row: dict) -> str | None:

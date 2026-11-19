@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Invoice, LineAccount } from '../types'
-import { accountsUsed, linesLeft, linesLeftNote, listAccount, whoChoseLine } from './lineAccounts'
+import { accountsUsed, largestLine, linesLeft, linesLeftNote, listAccount, whoChoseLine } from './lineAccounts'
 
 const entry = (over: Partial<LineAccount>): LineAccount => ({
   line: 1, cont: null, method: null, rule: null, reason: '',
@@ -16,6 +16,7 @@ describe('who chose the account of a line', () => {
     expect(whoChoseLine(entry({ cont: '628', method: 'jev_accepted' }))).toBe('propus de Jev, acceptat de dumneavoastră')
     expect(whoChoseLine(entry({ cont: '628', method: 'human' }))).toBe('ales de dumneavoastră')
     expect(whoChoseLine(entry({ cont: '605', method: 'follows' }))).toBe('ca linia cea mai mare')
+    expect(whoChoseLine(entry({ cont: '302', method: 'invoice' }))).toBe('contul facturii, păstrat la împărțire')
   })
 
   it('says what Jev proposed for a line that waits', () => {
@@ -87,5 +88,13 @@ describe('the account column of a list', () => {
     expect(listAccount(invoice({ line_accounts: [entry({ line: 1 })] }))).toEqual({ main: null, more: 'o linie fără cont' })
     expect(listAccount(invoice({ line_accounts: [entry({ line: 1 }), entry({ line: 2, method: 'follows' })] })))
       .toEqual({ main: null, more: 'o linie fără cont' })
+  })
+})
+
+describe('the largest line', () => {
+  it('is the one worth most whatever its sign, the first of equals, as the program decides it', () => {
+    expect(largestLine([{ number: 1, value: '40.00' }, { number: 2, value: '-450.00' }, { number: 3, value: '100' }])).toBe(2)
+    expect(largestLine([{ number: 1, value: '10' }, { number: 2, value: '10.00' }])).toBe(1)
+    expect(largestLine([])).toBeNull()
   })
 })

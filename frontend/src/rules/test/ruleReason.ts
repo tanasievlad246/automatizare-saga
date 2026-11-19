@@ -1,4 +1,4 @@
-import type { TrialRule } from '../../types'
+import type { RuleMatch, TrialRule } from '../../types'
 
 /** "„a”", "„a” și „b”", "„a”, „b” și „c”". */
 export function quotedList(names: string[]): string {
@@ -22,12 +22,33 @@ export function ruleReason(rule: TrialRule, clientName?: string): string[] {
   return sentences
 }
 
-function because({ condition, found, prefix }: TrialRule): string {
+function because(rule: TrialRule): string {
+  return rule.condition ? matchWords({ ...rule, condition: rule.condition, found: rule.found ?? '' }) : ''
+}
+
+/** What a rule found, as `matchWords` reads it: the condition and the words or code. */
+type Found = Pick<RuleMatch, 'condition' | 'found' | 'prefix'> & { matched?: string | null; in_details?: boolean }
+
+/**
+ * Which condition of a rule a line meets, and with what, after the rule's name:
+ * ": pe linie scrie „motorina”, unul din cuvintele regulii". `on` 'largest': the line is the
+ * largest of an invoice with one account.
+ */
+export function matchWords({ condition, found, prefix, matched, in_details }: Found, on: 'line' | 'largest' = 'line'): string {
   switch (condition) {
-    case 'keyword':
-      return found?.endsWith('*')
-        ? `: pe linie scrie un cuvânt care începe cu „${found.slice(0, -1)}”`
-        : `: pe linie scrie „${found}”, unul din cuvintele regulii`
+    case 'keyword': {
+      const where = on === 'largest'
+        ? (in_details ? 'în descrierea liniei celei mai mari' : 'pe linia cea mai mare')
+        : (in_details ? 'în descrierea liniei' : 'pe linie')
+      const [starts, ends] = [found.startsWith('*'), found.endsWith('*') && found.length > 1]
+      const core = found.replace(/^\*+|\*+$/g, '')
+      if (!starts && !ends) return `: ${where} scrie „${found}”, unul din cuvintele regulii`
+      const what = starts && ends ? 'conține' : starts ? 'se termină cu' : 'începe cu'
+      if (!matched) return `: ${where} scrie un cuvânt care ${what} „${core}”`
+      return starts && ends
+        ? `: ${where} scrie „${matched}”, iar regula caută cuvinte care conțin „${core}”`
+        : `: ${where} scrie „${matched}”, care ${what} „${core}”`
+    }
     case 'supplier_cui':
       return `: factura vine de la CUI-ul ${found}, iar regula ia toate liniile acestui furnizor`
     case 'seller_code':

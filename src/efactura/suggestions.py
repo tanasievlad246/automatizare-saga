@@ -89,9 +89,14 @@ def ticked_words(words: tuple[str, ...]) -> tuple[str, ...]:
     return (telling,) if telling else ()
 
 
+def words_of_line(subject: Subject) -> tuple[str, ...]:
+    """The words a rule could look for on a line: those of its name, then of its description."""
+    return words_of(" ".join(part for part in (subject.description, subject.details) if part))
+
+
 def propose(subject: Subject, cont: str) -> Proposal | None:
     """The rule to propose for an invoice booked on `cont`; None when nothing sets it apart."""
-    words = ticked_words(words_of(subject.description))
+    words = ticked_words(words_of_line(subject))
     if words:
         return Proposal(cont, keywords=words)
     if subject.supplier_cui:

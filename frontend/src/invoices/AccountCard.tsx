@@ -3,12 +3,17 @@ import { Check } from 'lucide-react'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { api } from '../api'
 import { errorMessage, showError } from '../errorMessages'
 import { formatPercent } from '../format'
 import type { Invoice, InvoiceView } from '../types'
 import { AccountChooser, firstPhrase } from './AccountChooser'
+import { AFTER_A_DECISION } from './afterADecision'
+import { DecideAgainDialog } from './DecideAgainDialog'
+import { DECIDE_AGAIN, SPLIT, splitNote } from './decideAgainTexts'
+import { ImportedSteps } from './ImportedSteps'
 import { misfitReason } from './issuedInvoices'
 
 const WHO_CHOSE: Record<string, (invoice: Invoice) => string> = {
@@ -19,24 +24,23 @@ const WHO_CHOSE: Record<string, (invoice: Invoice) => string> = {
 }
 
 /**
- * The account of one invoice: what it is and who chose it, or the question when nobody has.
- * `splittable`: the client's invoices are now decided line by line and this one, which has
- * several lines, got one account before.
+ * The account of one invoice: what it is and who chose it, or the question when nobody has; and
+ * the ways to have it decided again, or, with several lines, split into lines. `lines`: how many
+ * lines the invoice has. `jevReady`: an OpenRouter key is set.
  */
 export function AccountCard({
-  invoice, jev, accounts, splittable = false,
-}: { invoice: Invoice; jev: InvoiceView['jev']; accounts: Record<string, string>; splittable?: boolean }) {
+  invoice, jev, accounts, lines, jevReady,
+}: { invoice: Invoice; jev: InvoiceView['jev']; accounts: Record<string, string>; lines: number; jevReady: boolean }) {
   const queryClient = useQueryClient()
   const [changing, setChanging] = useState(false)
+  const [decidingAgain, setDecidingAgain] = useState(false)
   const afterChange = {
     // Returned, so the buttons stay busy until the invoice has been read again: a second
     // press must not repeat the request (and ask Jev twice).
     onSuccess: () => {
       setChanging(false)
       // A new account can also bring, change or remove a proposed rule.
-      return Promise.all(
-        ['invoice', 'invoices', 'clients', 'proposed-rules'].map((key) => queryClient.invalidateQueries({ queryKey: [key] })),
-      )
+      return Promise.all(AFTER_A_DECISION.map((key) => queryClient.invalidateQueries({ queryKey: [key] })))
     },
     onError: (error: unknown) => {
       showError(error)
@@ -56,14 +60,23 @@ export function AccountCard({
     mutationFn: () => api.classify(invoice.id, outsideClassification),
     ...afterChange,
   })
-  // Decided again from the start, with the rules and Jev, line by line this time.
-  const redecide = useMutation({ mutationFn: () => api.classify(invoice.id, true), ...afterChange })
-  const confirmRedecide = () => {
-    if (window.confirm(
-      'Regulile și Jev aleg din nou contul fiecărei linii. Contul de acum se pierde, iar liniile despre care Jev nu este sigur vin la verificat. Continuați?',
-    )) redecide.mutate()
-  }
-  const busy = accept.isPending || choose.isPending || decide.isPending || redecide.isPending
+  // At once and at no cost: every line starts with this account, then each is changed or decided again.
+  const split = useMutation({
+    mutationFn: () => api.splitIntoLines(invoice.id),
+    ...afterChange,
+    onSuccess: () => afterChange.onSuccess().then(() => toast.success(SPLIT.done)),
+  })
+  const busy = accept.isPending || choose.isPending || decide.isPending || split.isPending
+  const decideAgain = (
+    <>
+      <Button variant="outline" className="self-start" disabled={busy} onClick={() => setDecidingAgain(true)}>
+        {DECIDE_AGAIN.open}
+      </Button>
+      {decidingAgain && (
+        <DecideAgainDialog invoice={invoice} lines={lines} jevReady={jevReady} onClose={() => setDecidingAgain(false)} />
+      )}
+    </>
+  )
   const chooser = (
     <AccountChooser
       accounts={accounts}
@@ -134,6 +147,7 @@ export function AccountCard({
             </>
           )}
           {chooser}
+          <div className="border-t pt-3.5">{decideAgain}</div>
         </div>
       </section>
     )
@@ -162,17 +176,18 @@ export function AccountCard({
       )}
 
       {invoice.uploaded_to_accounting ? (
-        <p className="text-muted-foreground">Factura este importată în SAGA, așa că aici contul nu se mai schimbă.</p>
+        <ImportedSteps perLine={false} />
       ) : invoice.cont && !changing ? (
         <>
-          <Button variant="outline" className="self-start" onClick={() => setChanging(true)}>Schimbă contul</Button>
-          {splittable && (
-            <div className="flex flex-col gap-1.5 border-t pt-3">
-              <p className="text-muted-foreground">
-                Clientul are clasificarea pe fiecare linie, dar această factură a primit un singur cont înainte.
-              </p>
-              <Button variant="outline" className="h-auto min-h-11 self-start py-2 text-left whitespace-normal" disabled={busy} onClick={confirmRedecide}>
-                {redecide.isPending ? 'Se alege…' : 'Clasifică din nou, pe fiecare linie'}
+          <div className="flex flex-wrap gap-2.5">
+            <Button variant="outline" onClick={() => setChanging(true)}>Schimbă contul</Button>
+            {decideAgain}
+          </div>
+          {lines > 1 && (
+            <div className="flex flex-col gap-2 border-t pt-3">
+              <p className="text-[0.95rem] text-muted-foreground">{splitNote(lines, invoice.cont)}</p>
+              <Button variant="outline" className="self-start" disabled={busy} onClick={() => split.mutate()}>
+                {SPLIT.button}
               </Button>
             </div>
           )}

@@ -54,6 +54,9 @@ describe('a line of the journal, in Romanian', () => {
     expect(describeEvent(line('account.by_lines', {
       invoice_number: 'PS 7', lines: 23, by_rules: 0, by_jev: 0, by_person: 22, following: 1, accounts: ['6024'],
     }))).toBe('Factura PS 7 are un cont pe fiecare linie: 22 de linii alese de dumneavoastră, o linie cu contul liniei celei mai mari. Contul: 6024.')
+    expect(describeEvent(line('account.by_lines', {
+      invoice_number: 'BE 418', lines: 3, by_rules: 1, by_jev: 0, by_person: 0, following: 0, as_invoice: 2, accounts: ['302'],
+    }))).toBe('Factura BE 418 are un cont pe fiecare linie: o linie după o regulă, 2 linii cu contul facturii, păstrat la împărțire. Contul: 302.')
   })
 
   it('says how many lines are left when an invoice decided line by line is to check', () => {

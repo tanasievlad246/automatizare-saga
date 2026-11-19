@@ -62,7 +62,7 @@ def test_a_rule_that_fits_decides_and_jev_is_not_asked(desk, openrouter):
     assert (result["decided_by"], result["cont"], result["account_description"]) == ("rule", "6022", "Combustibil")
     assert result["rule"] == {
         "name": "combustibil", "line": 1, "condition": "keyword", "found": "motorina", "prefix": None,
-        "client_only": False, "also": [],
+        "matched": "Motorina", "in_details": False, "client_only": False, "also": [],
     }
     assert result["deciding_line"] == "Motorina Euro 5"
     assert result["jev"] is None and result["suggestion"] is None and openrouter.requests == []
@@ -436,6 +436,18 @@ def test_a_row_with_only_a_description_is_one_at_no_price_and_a_rule_on_a_word_d
     assert (by_rule["decided_by"], by_rule["rule"]["name"]) == ("rule", "telefon")
     assert (asked["cantitate"], asked["valoare_fara_tva"]) == ("1", "0")
     assert reply.status_code == 200 and reply.json()["decided_by"] == "rule"
+
+
+def test_the_route_carries_a_lines_description_to_the_rules(cfg, desk):
+    desk.save_rule(name="consumabile", cont="302", keywords=["*cartus*"])
+    api = TestClient(create_app(cfg, service_factory=lambda cfg: desk))
+
+    reply = api.post("/rules/test", headers=KEY, json={
+        "lines": [{"description": "Toner imprimanta", "details": "Tonercartus compatibil HP 85A"}],
+    }).json()
+
+    assert (reply["decided_by"], reply["lines"][0]["details"]) == ("rule", "Tonercartus compatibil HP 85A")
+    assert (reply["rule"]["matched"], reply["rule"]["in_details"]) == ("Tonercartus", True)
 
 
 @pytest.mark.parametrize("typed, read", [

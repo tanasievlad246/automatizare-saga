@@ -30,6 +30,7 @@ export function TrialLineCard({ entry, context, accounts, currency, jevOpen }: {
         </span>
         <span className="min-w-0 pt-0.5 font-semibold [overflow-wrap:anywhere]">
           <span className="sr-only">Linia {entry.line}: </span>{entry.description}
+          {entry.details && <span className="block text-[0.9rem] font-normal text-muted-foreground">{entry.details}</span>}
         </span>
         <span className="ml-auto whitespace-nowrap pt-0.5 text-muted-foreground tabular-nums">{formatMoney(entry.value, currency)}</span>
       </div>

@@ -87,12 +87,25 @@ export type Invoice = {
   saga_import?: SagaImportRef | null // on one invoice's screen: the confirmed import it went to SAGA in
 }
 
+/** Which condition of a rule a line meets, and with what. */
+export type RuleMatch = {
+  condition: 'supplier_cui' | 'seller_code' | 'barcode' | 'commodity_code' | 'keyword'
+  found: string // the CUI, the code on the line, or the keyword as the rule has it ("*cartus*")
+  prefix: string | null // for a classification code: the start the rule names
+  matched: string | null // for a keyword: the words of the line it found, without diacritics
+  in_details: boolean // found in the line's description, not its name
+}
+
+/** Who chose a line's account. follows: the largest line's; invoice: the whole invoice's, kept when it was split. */
+export type LineMethod = 'rules' | 'jev' | 'jev_accepted' | 'human' | 'follows' | 'invoice'
+
 /** The account of one line of an invoice decided line by line. `line` is its number on the invoice. */
 export type LineAccount = {
   line: number
   cont: string | null // null while it waits for a person
-  method: 'rules' | 'jev' | 'jev_accepted' | 'human' | 'follows' | null // follows: the largest line's account
+  method: LineMethod | null
   rule: string | null
+  match?: RuleMatch | null // missing on lines decided before 0.14.0
   reason: string // the program's English explanation
   suggested_cont: string | null
   confidence: number | null
@@ -111,7 +124,8 @@ export type Party = {
 
 export type InvoiceLine = {
   number: number
-  description: string
+  description: string // the item's name; its description when it has no name
+  details: string | null // the item's description beside its name, when it says more
   seller_code: string | null
   barcode: string | null
   commodity_codes: string[] // CPV or NC
@@ -156,6 +170,7 @@ export type InvoiceView = {
 export type RuleSuggestion = {
   cont: string
   line: string // the invoice's largest line, where the words come from
+  details?: string | null // that line's description, where words come from too
   from_line?: number // in "Testează regulile": the number of the line the words come from
   words: string[]
   ticked: string[] // the words to start with
@@ -226,6 +241,7 @@ export type RulesOverview = {
   jev_issued_instructions: string // the same two, for the invoices a client issued
   jev_issued_line_instructions: string
   min_confidence: number
+  jev_configured: boolean // an OpenRouter key is set, so Jev can be asked
 }
 
 /** How a rule would have done on the invoices given an account lately. */
@@ -315,6 +331,7 @@ export type UpdateStatus = {
 /** One line of a trial invoice as the form holds it: everything typed, nothing converted yet. */
 export type TrialLine = {
   description: string
+  details: string // the line's description beside its name; may stay empty
   quantity: string
   unitPrice: string
   sellerCode: string
@@ -362,7 +379,7 @@ export type JevState = {
   linii_omise?: number
 }
 export type JevLine = {
-  nr: number; descriere: string; cod_furnizor?: string; coduri_clasificare?: string[]; um?: string
+  nr: number; descriere: string; detalii?: string; cod_furnizor?: string; coduri_clasificare?: string[]; um?: string
   cantitate?: string; valoare_fara_tva?: string; cota_tva?: string
 }
 
@@ -373,6 +390,8 @@ export type TrialRule = {
   condition: 'supplier_cui' | 'seller_code' | 'barcode' | 'commodity_code' | 'keyword' | null
   found: string | null // the CUI, the code on the line, or the keyword as the rule has it
   prefix: string | null // for a classification code: the start the rule names
+  matched?: string | null // for a keyword: the words of the line it found
+  in_details?: boolean // found in the line's description
   client_only: boolean
   also: string[] // rules further down the list that match too
 }
@@ -387,6 +406,7 @@ export type TrialWhyNot =
 export type TrialLineAnswer = {
   line: number
   description: string
+  details: string | null
   value: string
   decided_by: 'rule' | 'jev' | 'follows' | 'nobody'
   cont: string | null
@@ -441,4 +461,28 @@ export type ScheduleStatus = {
   running: { started_at: string; done: number; total: number } | null
   last_run: ScheduleRun | null
   clients_on: number; clients_off: number
+}
+
+/** Where a change of an invoice's account came from. */
+export type DecisionSource = 'download' | 'again' | 'redecide' | 'person' | 'split'
+
+/** One change in the history of an invoice's account: a line (or, with `line` null, the whole invoice). */
+export type Decision = {
+  id: number
+  at: string
+  source: DecisionSource
+  line: number | null
+  cont: string | null // null: it waits for a person
+  method: LineMethod | null
+  reason: string // the program's English explanation
+  said: {
+    rule: string | null
+    match: RuleMatch | null
+    suggested_cont: string | null
+    confidence: number | null
+    confidence_threshold: number | null
+    probabilities: Record<string, number> | null
+    jev_only: boolean
+    before: { cont: string | null; method: LineMethod | null; rule: string | null } | null // null: nothing before
+  }
 }

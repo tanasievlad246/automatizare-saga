@@ -57,7 +57,11 @@ export function RenderedInvoice({
             const waiting = lineColumn !== null && !entry?.cont
             return (
               <TableRow key={line.number} className={cn(waiting && 'bg-attention/40 hover:bg-attention/50')}>
-                <TableCell className="font-semibold">{line.description}</TableCell>
+                <TableCell className="font-semibold">
+                  {line.description}
+                  {/* The item's description, when it says more than its name. */}
+                  {line.details && <div className="mt-0.5 text-[0.9rem] font-normal text-muted-foreground">{line.details}</div>}
+                </TableCell>
                 <TableCell className="text-right whitespace-nowrap">
                   {formatNumber(line.quantity)} {line.unit_name?.toLowerCase()}
                 </TableCell>

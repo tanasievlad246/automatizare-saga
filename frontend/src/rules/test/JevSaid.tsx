@@ -1,6 +1,6 @@
 import { Fragment } from 'react'
-import { cn } from '@/lib/utils'
 import { formatPercent } from '../../format'
+import { JevOdds } from '../JevOdds'
 import type { TrialJev } from '../../types'
 import { spentOnJev } from './describeLine'
 import { jevOdds } from './jevOdds'
@@ -31,26 +31,7 @@ export function JevSaid({ jev, accounts, open, wholeInvoice }: {
           <>
             {/* Under "Rezultatul" (h2), and for one account per invoice under "Linia după care s-a hotărât" (h3). */}
             <Heading className="text-[1.05rem] font-semibold">Cât de potrivit i se pare fiecare cont</Heading>
-            <ul className="flex flex-col gap-1.5">
-              {odds.rows.map((row) => (
-                // On a narrow screen the account and what it is for take a line of their own, above the bar.
-                <li key={row.key} className="grid grid-cols-[minmax(0,1fr)_3rem] items-center gap-x-2.5 gap-y-1 text-[0.95rem] sm:grid-cols-[minmax(0,1fr)_minmax(3rem,7rem)_3rem]">
-                  <span className="col-span-2 min-w-0 break-words sm:col-span-1">
-                    <span className={cn(!row.none && 'font-bold')}>{row.label}</span>
-                    {row.description && <span className="text-muted-foreground"> · {row.description}</span>}
-                    {row.chosen && <span className="sr-only"> (ales de Jev)</span>}
-                  </span>
-                  <span aria-hidden className="h-2.5 overflow-hidden rounded-full bg-muted">
-                    <span
-                      className={cn('block h-full rounded-full', row.none ? 'bg-attention-foreground/60' : row.chosen ? 'bg-primary' : 'bg-muted-foreground/50')}
-                      style={{ width: `${Math.max(2, Math.round(row.share * 100))}%` }}
-                    />
-                  </span>
-                  <span className="text-right font-semibold tabular-nums">{formatPercent(row.share)}</span>
-                </li>
-              ))}
-            </ul>
-            {odds.below && <p className="text-[0.9rem] text-muted-foreground">{odds.below}</p>}
+            <JevOdds probabilities={jev.probabilities} accounts={accounts} choice={jev.choice} />
             <p className="text-[0.9rem] text-muted-foreground">
               Jev nu scrie motive. Arată doar cât de potrivit i se pare fiecare cont din lista dumneavoastră, după descrierea contului.
               {jev.confidence !== null && ` Cât de sigur este (${formatPercent(jev.confidence)}) este o cifră separată, pe care programul o compară cu pragul.`}

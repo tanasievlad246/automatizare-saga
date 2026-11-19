@@ -1117,7 +1117,7 @@ def test_invoice_view_gathers_everything_the_screen_shows(service, anaf, cfg, in
     assert document["lines"] == [{
         "number": 1, "description": "Piese de schimb", "seller_code": None, "barcode": None,
         "commodity_codes": [], "unit": "H87", "unit_name": "BUC", "quantity": "1",
-        "unit_price": "900.00", "value": "900.00", "vat_percent": "19", "vat_category": "S",
+        "unit_price": "900.00", "value": "900.00", "vat_percent": "19", "vat_category": "S", "details": None,
     }]
     assert (document["total_without_vat"], document["total_vat"], document["total_payable"]) == (
         "900.00", "171.00", "1071.00"
@@ -1317,10 +1317,11 @@ def test_each_line_gets_its_own_account_when_the_client_classifies_line_by_line(
     assert (row["classification_status"], row["cont"], row["classification_method"]) == ("classified", "6022", "rules")
     assert line_accounts(per_line) == [
         {"line": 1, "cont": "6022", "method": "rules", "rule": "combustibil",
+         "match": {"condition": "keyword", "found": "motorina", "prefix": None, "matched": "Motorina", "in_details": False},
          "reason": 'Rule "combustibil" matched line 1.',
          "suggested_cont": None, "confidence": None, "confidence_threshold": None,
          "probabilities": None, "asked": False},
-        {"line": 2, "cont": "626", "method": "jev", "rule": None,
+        {"line": 2, "cont": "626", "method": "jev", "rule": None, "match": None,
          "reason": "Jev chose 626 with confidence 0.93.",
          "suggested_cont": "626", "confidence": 0.93, "confidence_threshold": 0.8,
          "probabilities": {"626": 0.93}, "asked": True},

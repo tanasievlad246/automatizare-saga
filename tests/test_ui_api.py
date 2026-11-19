@@ -78,6 +78,7 @@ def test_rules_route_shows_accounts_rules_and_the_question(api):
     assert [rule["name"] for rule in overview["rules"]] == ["combustibil"]
     assert overview["jev_instructions"] == "Alege contul facturii."
     assert overview["jev_line_instructions"] == DEFAULT_JEV_LINE_INSTRUCTIONS
+    assert overview["jev_configured"] is True  # the page offers "Doar cu Jev" only then
 
 
 def test_an_account_can_be_added_and_removed_over_the_api(api):
@@ -661,6 +662,37 @@ def test_invoice_view_route(api, anaf):
     assert view.json()["document"]["lines"][0]["description"] == "Motorina"
     assert "<Cont>6022</Cont>" in view.json()["saga_xml"]
     assert api.get("/invoices/nope/view").status_code == 404
+
+
+def test_an_invoice_is_split_and_decided_again_through_the_api(api, anaf, openrouter):
+    api.post("/clients", json={"cui": VALID_CUI, "name": "Alfa Construct SRL"})
+    api.put(f"/clients/{VALID_CUI}/per-line", json={"enabled": False})
+    anaf.add("3001", xml=rich_invoice_xml(lines=FUEL + PARTS))
+    api.post("/sync", json={"cui": VALID_CUI})
+
+    split = api.post("/invoices/3001/split")
+    again = api.post("/invoices/3001/classify", json={"force": True, "ask": "jev_only", "line": 1, "per_line": True})
+
+    assert split.status_code == 200
+    assert [entry["method"] for entry in split.json()["invoice"]["line_accounts"]] == ["invoice", "jev"]
+    assert again.status_code == 200
+    assert again.json()["invoice"]["line_accounts"][0]["method"] == "jev"
+    assert api.post("/invoices/3001/split").json()["error"]["code"] == "invalid_input"  # split already
+    assert api.post("/invoices/3001/classify", json={"ask": "maybe"}).status_code == 400
+    assert api.post("/invoices/3001/classify", json={"force": True, "line": "1"}).status_code == 400
+
+
+def test_the_history_of_an_invoices_account_has_a_route(api, anaf):
+    api.post("/clients", json={"cui": VALID_CUI, "name": "Alfa Construct SRL"})
+    anaf.add("3001", xml=rich_invoice_xml(lines=FUEL))
+    api.post("/sync", json={"cui": VALID_CUI})
+
+    answer = api.get("/invoices/3001/decisions")
+
+    assert answer.status_code == 200
+    (row,) = answer.json()["decisions"]
+    assert (row["source"], row["cont"], row["method"], row["said"]["rule"]) == ("download", "6022", "rules", "combustibil")
+    assert api.get("/invoices/nope/decisions").status_code == 404
 
 
 def test_costs_route_groups_by_the_period_asked_for(api, anaf):

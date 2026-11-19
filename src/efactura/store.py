@@ -173,6 +173,22 @@ CREATE TABLE IF NOT EXISTS saga_import_invoices (
     PRIMARY KEY (import_id, message_id)
 );
 CREATE INDEX IF NOT EXISTS idx_saga_import_invoices_message ON saga_import_invoices (message_id);
+
+-- How an invoice got its account, each time it changed: by whom, why, and what it had before.
+-- Kept as long as the invoice; the journal is cleared after 30 days.
+CREATE TABLE IF NOT EXISTS decisions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id TEXT NOT NULL,
+    at         TEXT NOT NULL,
+    source     TEXT NOT NULL,              -- download | again | redecide | person | split
+    line       INTEGER,                    -- NULL: the whole invoice
+    cont       TEXT,                       -- NULL: no account, it waits for a person
+    method     TEXT,                       -- rules | jev | jev_accepted | human | follows | invoice; NULL while it waits
+    reason     TEXT NOT NULL DEFAULT '',   -- the program's English explanation
+    said       TEXT NOT NULL DEFAULT '{}'  -- JSON: rule, match, suggested_cont, confidence,
+                                           -- confidence_threshold, probabilities, jev_only, before
+);
+CREATE INDEX IF NOT EXISTS idx_decisions_message ON decisions (message_id, id);
 CREATE INDEX IF NOT EXISTS idx_saga_imports_cui ON saga_imports (cui, imported_at);
 """
 
@@ -986,6 +1002,27 @@ class Store:
 
     def jev_calls(self) -> list[dict]:
         return [dict(row) for row in self._conn.execute("SELECT * FROM jev_calls ORDER BY id")]
+
+    def add_decisions(self, rows: list[dict]) -> None:
+        """Add to the history of invoices' accounts: each row has message_id, at, source,
+        line, cont, method, reason and said (an object)."""
+        if not rows:
+            return
+        with self._conn:
+            self._conn.executemany(
+                "INSERT INTO decisions (message_id, at, source, line, cont, method, reason, said) "
+                "VALUES (:message_id, :at, :source, :line, :cont, :method, :reason, :said)",
+                [{**row, "said": json.dumps(row["said"], ensure_ascii=False)} for row in rows],
+            )
+
+    def decisions(self, message_id: str) -> list[dict]:
+        """The history of one invoice's account, the newest first."""
+        rows = self._conn.execute(
+            "SELECT id, at, source, line, cont, method, reason, said FROM decisions "
+            "WHERE message_id = ? ORDER BY id DESC",
+            (message_id,),
+        )
+        return [{**dict(row), "said": json.loads(row["said"])} for row in rows]
 
     def last_jev_call(self, message_id: str) -> dict | None:
         row = self._conn.execute(

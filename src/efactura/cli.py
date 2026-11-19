@@ -227,6 +227,13 @@ def _parser() -> argparse.ArgumentParser:
         "--force", action="store_true",
         help="also an invoice saved outside classification, or one already classified",
     )
+    classify.add_argument("--jev-only", action="store_true", help="skip the rules: Jev alone decides")
+    classify.add_argument("--line", type=int, help="only this line, on an invoice decided line by line")
+
+    split = commands.add_parser(
+        "split", help="turn an invoice with one account into one decided line by line, each line keeping that account"
+    )
+    split.add_argument("id")
 
     again = commands.add_parser(
         "classify-again", help="send a client's invoices to check, or waiting for Jev, back through the rules and Jev"
@@ -445,7 +452,11 @@ def _dispatch(args: argparse.Namespace, cfg: Config, config_path: Path) -> dict 
                     args.only_new,
                 )
             case "classify":
-                return service.classify(args.id, force=args.force)
+                return service.classify(
+                    args.id, force=args.force, ask="jev_only" if args.jev_only else "rules_then_jev", line=args.line,
+                )
+            case "split":
+                return service.split_into_lines(args.id)
             case "classify-again":
                 if args.all == bool(args.cui):
                     raise EfacturaError(INVALID_INPUT, "Give a client's CUI, or --all for every client.")

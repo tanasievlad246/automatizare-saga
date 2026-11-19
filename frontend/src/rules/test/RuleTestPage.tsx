@@ -10,7 +10,7 @@ import { SavedInvoicePicker } from './SavedInvoicePicker'
 import { TrialAnswer } from './TrialAnswer'
 import { TrialInvoiceForm } from './TrialInvoiceForm'
 import type { StartFrom } from './TrialInvoiceForm'
-import { EXAMPLES, REFUSED_HERE, fromDocument, hasCodes, linesRead, startedFrom, toRequest } from './trialInvoice'
+import { EXAMPLES, REFUSED_HERE, fromDocument, hasMore, linesRead, startedFrom, toRequest } from './trialInvoice'
 
 /** A made-up invoice put through the path a real one takes, to see which account it would get. */
 export function RuleTestPage() {
@@ -18,10 +18,10 @@ export function RuleTestPage() {
   const [trial, setTrial] = useState<TrialInvoice>(EXAMPLES.materiale)
   // The codes are rarely there, so they stay folded away, but they open by themselves when a
   // start brings some (a saved invoice picked). Folding them again is the person's choice.
-  const [codesShown, setCodesShown] = useState(false) // the example the screen opens with has none
+  const [moreShown, setMoreShown] = useState(false) // the example the screen opens with has none
   const start = (next: TrialInvoice) => {
     setTrial(next)
-    if (hasCodes(next)) setCodesShown(true)
+    if (hasMore(next)) setMoreShown(true)
   }
   const [choosing, setChoosing] = useState(false)
   // `lines`, `currency` and `clientName` are those of the invoice that was asked about, not of the form as it is now.
@@ -88,8 +88,8 @@ export function RuleTestPage() {
               ask.mutate(how)
             }}
             onStartFrom={startFrom}
-            codesShown={codesShown}
-            onCodesShown={setCodesShown}
+            moreShown={moreShown}
+            onMoreShown={setMoreShown}
           />
           {ask.error && <ErrorNotice error={ask.error} here={REFUSED_HERE} />}
         </div>

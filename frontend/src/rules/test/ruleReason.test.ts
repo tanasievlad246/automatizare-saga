@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { TrialRule } from '../../types'
-import { ruleReason } from './ruleReason'
+import { matchWords, ruleReason } from './ruleReason'
 
 const rule = (more: Partial<TrialRule>): TrialRule => ({
   name: 'combustibil', line: 1, condition: 'keyword', found: 'motorina', prefix: null, client_only: false, also: [], ...more,
@@ -14,6 +14,42 @@ describe('why a rule gave a line its account', () => {
   it('says a word ending in a star is the start of a word on the line', () => {
     expect(ruleReason(rule({ name: 'telecom', found: 'abonament telefon*' }))[0]).toBe(
       'Regula „telecom”: pe linie scrie un cuvânt care începe cu „abonament telefon”.',
+    )
+  })
+
+  it('says the words a star found, and what the star stands for', () => {
+    expect(ruleReason(rule({ name: 'telecom', found: 'abonament telefon*', matched: 'abonament telefonie' }))[0]).toBe(
+      'Regula „telecom”: pe linie scrie „abonament telefonie”, care începe cu „abonament telefon”.',
+    )
+    expect(ruleReason(rule({ name: 'consumabile', found: '*cartus', matched: 'tonercartus' }))[0]).toBe(
+      'Regula „consumabile”: pe linie scrie „tonercartus”, care se termină cu „cartus”.',
+    )
+    expect(ruleReason(rule({ name: 'consumabile', found: '*cartus*', matched: 'cartuse' }))[0]).toBe(
+      'Regula „consumabile”: pe linie scrie „cartuse”, iar regula caută cuvinte care conțin „cartus”.',
+    )
+  })
+
+  it('says a star at the start without the words found as the rule has it', () => {
+    expect(ruleReason(rule({ name: 'consumabile', found: '*cartus*' }))[0]).toBe(
+      'Regula „consumabile”: pe linie scrie un cuvânt care conține „cartus”.',
+    )
+    expect(ruleReason(rule({ name: 'consumabile', found: '*cartus' }))[0]).toBe(
+      'Regula „consumabile”: pe linie scrie un cuvânt care se termină cu „cartus”.',
+    )
+  })
+
+  it('says when the word is in the line\'s description', () => {
+    expect(ruleReason(rule({ name: 'consumabile', found: 'compatibil', matched: 'compatibil', in_details: true }))[0]).toBe(
+      'Regula „consumabile”: în descrierea liniei scrie „compatibil”, unul din cuvintele regulii.',
+    )
+  })
+
+  it('says, for an invoice with one account, that the word is on its largest line', () => {
+    expect(matchWords({ condition: 'keyword', found: 'motorina', prefix: null, matched: 'motorina', in_details: false }, 'largest')).toBe(
+      ': pe linia cea mai mare scrie „motorina”, unul din cuvintele regulii',
+    )
+    expect(matchWords({ condition: 'keyword', found: '*cartus*', prefix: null, matched: 'cartus', in_details: true }, 'largest')).toBe(
+      ': în descrierea liniei celei mai mari scrie „cartus”, iar regula caută cuvinte care conțin „cartus”',
     )
   })
 

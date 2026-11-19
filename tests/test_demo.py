@@ -99,6 +99,29 @@ def test_the_demo_has_invoices_a_client_issued(cfg):
     assert [entry["cont"] for entry in lines["AC-2030"]] == ["704", None]  # Jev is unsure of the bricks
 
 
+def test_the_demo_has_lines_with_descriptions_decided_by_a_rule_with_stars_on_both_sides(cfg):
+    desk = demo.service(cfg)
+    listed = {each["invoice_number"]: each for each in desk.invoices(cui=CLIENT)["invoices"]}
+
+    toner = listed["BE-0503"]
+    lines = desk.invoice_view(toner["id"])["document"]["lines"]
+    assert lines[0]["details"].startswith("Cartuș toner compatibil")
+    first = toner["line_accounts"][0]
+    assert (first["cont"], first["rule"], first["match"]["found"], first["match"]["in_details"]) == ("302", "consumabile", "*cartus*", True)
+    assert toner["line_accounts"][2]["cont"] is None  # Jev is unsure of the coffee
+    assert {row["source"] for row in desk.decision_history(toner["id"])["decisions"]} == {"download"}
+
+
+def test_the_demo_has_an_invoice_with_one_account_and_several_lines_to_split(cfg):
+    desk = demo.service(cfg)
+    listed = {each["invoice_number"]: each for each in desk.invoices(cui="14399840")["invoices"]}
+
+    whole = listed["BE-0511"]
+    assert (whole["cont"], whole["line_accounts"]) == ("302", None)
+    split = desk.split_into_lines(whole["id"])["invoice"]
+    assert [entry["method"] for entry in split["line_accounts"]] == ["rules", "invoice"]
+
+
 def test_the_demo_has_invoices_that_ask_for_another_sum_than_they_are_worth(cfg):
     desk = demo.service(cfg)
     listed = {each["invoice_number"]: each for each in desk.invoices(cui="18547290")["invoices"]}

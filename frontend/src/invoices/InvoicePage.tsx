@@ -11,19 +11,23 @@ import { formatDate, formatMoney } from '../format'
 import { placeOf } from '../listPlace'
 import { ProposedRuleCard } from '../rules/ProposedRuleCard'
 import { AccountCard } from './AccountCard'
+import { DecisionHistory } from './history/DecisionHistory'
+import { HISTORY_TAB } from './history/decisionTexts'
 import { InvoiceStateBadges } from './InvoiceStateBadges'
 import { isIssued } from './issuedInvoices'
 import { LineAccountDialog, type LineTarget } from './LineAccountDialog'
 import { LineAccountsCard } from './LineAccountsCard'
+import { largestLine } from './lineAccounts'
 import { RenderedInvoice } from './RenderedInvoice'
 import { SagaFileCard } from './SagaFileCard'
 import { XmlViewer } from './XmlViewer'
 
-type Shown = 'factura' | 'anaf' | 'saga'
+type Shown = 'factura' | 'anaf' | 'saga' | 'istoric'
 const WAYS_TO_SEE_IT: { value: Shown; label: string }[] = [
   { value: 'factura', label: 'Factura' },
   { value: 'anaf', label: 'Fișierul de la ANAF (XML)' },
   { value: 'saga', label: 'XML pentru SAGA' },
+  { value: 'istoric', label: HISTORY_TAB },
 ]
 
 /**
@@ -36,7 +40,7 @@ export function InvoicePage() {
   const [choosing, setChoosing] = useState<number | 'all' | null>(null)
   const { data: view, error } = useQuery({ queryKey: ['invoice', id], queryFn: () => api.invoiceView(id) })
   const rules = useQuery({ queryKey: ['rules'], queryFn: api.rules }).data
-  const perLine = useQuery({ queryKey: ['clients'], queryFn: api.clients }).data?.clients.find((each) => each.cui === cui)?.per_line ?? false
+  const jevReady = rules?.jev_configured ?? false
 
   const back = (
     <Link to={placeOf(`/clienti/${cui}`)} className="inline-flex min-h-11 items-center gap-1.5 self-start font-semibold no-underline">
@@ -61,11 +65,17 @@ export function InvoicePage() {
   const lineAccounts = invoice.line_accounts
   const chosenLine = typeof choosing === 'number' ? document?.lines.find((line) => line.number === choosing) : undefined
   const chosenEntry = lineAccounts?.find((entry) => entry.line === choosing)
+  // The lines that take the largest line's account change with it: its window says so.
+  const largest = document ? largestLine(document.lines) : null
+  const followers = (lineAccounts ?? []).filter((entry) => entry.method === 'follows').map((entry) => entry.line)
   const target: LineTarget | null =
     choosing === 'all'
       ? 'all'
       : chosenLine && chosenEntry
-        ? { entry: chosenEntry, description: chosenLine.description, value: chosenLine.value }
+        ? {
+            entry: chosenEntry, description: chosenLine.description, details: chosenLine.details, value: chosenLine.value,
+            followers: chosenLine.number === largest ? followers : [],
+          }
         : null
   return (
     <div className="flex flex-col gap-5">
@@ -89,7 +99,7 @@ export function InvoicePage() {
           <div className="border-b px-4 py-3.5">
             <PillTabs
               label="Cum se vede factura"
-              options={WAYS_TO_SEE_IT}
+              options={document ? WAYS_TO_SEE_IT : WAYS_TO_SEE_IT.filter((way) => way.value !== 'istoric')}
               value={shown}
               onChange={setShown}
             />
@@ -119,6 +129,13 @@ export function InvoicePage() {
               whenMissing="Fișierul de la ANAF nu a fost păstrat."
             />
           )}
+          {shown === 'istoric' && document && (
+            <DecisionHistory
+              invoiceId={invoice.id}
+              names={Object.fromEntries(document.lines.map((line) => [line.number, line.description]))}
+              accounts={accounts}
+            />
+          )}
           {shown === 'saga' && (
             <XmlViewer
               xml={view.saga_xml}
@@ -138,13 +155,14 @@ export function InvoicePage() {
         ) : (
         <div className="flex min-w-0 flex-col gap-5">
             {lineAccounts ? (
-              <LineAccountsCard invoice={invoice} accounts={accounts} issued={issued} onChooseAll={() => setChoosing('all')} />
+              <LineAccountsCard invoice={invoice} accounts={accounts} issued={issued} jevReady={jevReady} onChooseAll={() => setChoosing('all')} />
             ) : (
               <AccountCard
                 invoice={invoice}
                 jev={view.jev}
                 accounts={accounts}
-                splittable={perLine && (document?.lines.length ?? 0) > 1}
+                lines={document.lines.length}
+                jevReady={jevReady}
               />
             )}
             {view.rule_suggestion && (
@@ -159,7 +177,10 @@ export function InvoicePage() {
         </div>
         )}
         {target && (
-          <LineAccountDialog key={String(choosing)} invoice={invoice} target={target} accounts={accounts} onClose={() => setChoosing(null)} />
+          <LineAccountDialog
+            key={String(choosing)} invoice={invoice} target={target} accounts={accounts} jevReady={jevReady}
+            onClose={() => setChoosing(null)}
+          />
         )}
       </div>
       </div>

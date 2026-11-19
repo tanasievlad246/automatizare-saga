@@ -1,19 +1,24 @@
+import { useState } from 'react'
 import { Link } from 'react-router'
 import { Notice } from '@/components/Notice'
 import { Button } from '@/components/ui/button'
 import { countOf } from '../format'
 import type { Invoice } from '../types'
 import { firstPhrase } from './AccountChooser'
+import { DecideAgainDialog } from './DecideAgainDialog'
+import { DECIDE_AGAIN } from './decideAgainTexts'
+import { ImportedSteps } from './ImportedSteps'
 import { accountsUsed, linesLeft, linesLeftNote } from './lineAccounts'
 
 /**
  * The accounts of an invoice decided line by line, added up: each account with how many
- * lines are on it, what still waits, and one account for every line at once. Each line's own
- * account is in the table of lines.
+ * lines are on it, what still waits, one account for every line at once, and every line decided
+ * again. Each line's own account is in the table of lines. `jevReady`: an OpenRouter key is set.
  */
 export function LineAccountsCard({
-  invoice, accounts, issued = false, onChooseAll,
-}: { invoice: Invoice; accounts: Record<string, string>; issued?: boolean; onChooseAll: () => void }) {
+  invoice, accounts, issued = false, jevReady, onChooseAll,
+}: { invoice: Invoice; accounts: Record<string, string>; issued?: boolean; jevReady: boolean; onChooseAll: () => void }) {
+  const [decidingAgain, setDecidingAgain] = useState(false)
   // An invoice the client issued is booked on income accounts.
   const title = issued ? 'Conturile de venit ale facturii' : 'Conturile facturii'
   const entries = invoice.line_accounts ?? []
@@ -68,11 +73,19 @@ export function LineAccountsCard({
         left > 0 && !imported && <Notice tone="attention">{linesLeftNote(left)}</Notice>
       )}
       {imported ? (
-        <p className="text-muted-foreground">Factura este importată în SAGA, așa că aici conturile nu se mai schimbă.</p>
+        <ImportedSteps perLine />
       ) : (
-        <Button variant="outline" className="h-auto min-h-11 self-start py-2 text-left whitespace-normal" onClick={onChooseAll}>
-          Pune același cont pe toate liniile
-        </Button>
+        <div className="flex flex-wrap gap-2.5">
+          <Button variant="outline" className="h-auto min-h-11 py-2 text-left whitespace-normal" onClick={onChooseAll}>
+            Pune același cont pe toate liniile
+          </Button>
+          <Button variant="outline" className="h-auto min-h-11 py-2" onClick={() => setDecidingAgain(true)}>
+            {DECIDE_AGAIN.open}
+          </Button>
+        </div>
+      )}
+      {decidingAgain && (
+        <DecideAgainDialog invoice={invoice} lines={entries.length} jevReady={jevReady} onClose={() => setDecidingAgain(false)} />
       )}
     </section>
   )

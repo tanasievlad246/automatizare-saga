@@ -1,11 +1,12 @@
 // Every call the page makes to the Python program, in one place.
 
 import type {
-  AppSettings, AuthStatus, BackupStatus, ClassifyAgainResult, Client, CostGroup, Costs, ImportResult, Invoice, InvoiceKind, InvoiceView, JevCall, JournalLine,
+  AppSettings, AuthStatus, BackupStatus, ClassifyAgainResult, Client, CostGroup, Costs, Decision, ImportResult, Invoice, InvoiceKind,
+  InvoiceView, JevCall, JournalLine,
   ProposedRules,
   RuleEvidence, RuleFields, RuleTestResult, RulesOverview, SagaFilePer, SagaImport, SagaImportDetail, SagaState, SchedulePeriod,
   ScheduleStatus, Secret,
-  SyncResult, UpdateStatus,
+  SyncResult, TrialAsk, UpdateStatus,
 } from './types'
 
 /** What the program answers when it refuses: a stable code and an English explanation. */
@@ -108,7 +109,16 @@ export const api = {
   issuedInvoices: (cui: string) =>
     call<{ invoices: Invoice[] }>('GET', `/invoices${query({ cui, type: 'trimisa' })}`),
   invoiceView: (id: string) => call<InvoiceView>('GET', `/invoices/${id}/view`),
-  classify: (id: string, force = false) => call('POST', `/invoices/${id}/classify`, { force }),
+  /**
+   * Decided again from the start: the rules then Jev, or with `ask` 'jev_only' Jev alone. `line`: that line
+   * alone; `perLine`: line by line or with one account (left out: as the client is set).
+   */
+  classify: (id: string, force = false, how: { ask?: TrialAsk; line?: number; perLine?: boolean } = {}) =>
+    call('POST', `/invoices/${id}/classify`, { force, ask: how.ask, line: how.line, per_line: how.perLine }),
+  /** An invoice with one account becomes one decided line by line, each line starting with that account. */
+  splitIntoLines: (id: string) => call('POST', `/invoices/${id}/split`),
+  /** How the invoice got its account, each time it changed, the newest first. */
+  decisions: (id: string) => call<{ decisions: Decision[] }>('GET', `/invoices/${id}/decisions`),
   /** The client's invoices to check, or waiting for Jev, back through the rules and, with `jev`, Jev. */
   classifyAgain: (cui: string, jev: boolean) => call<ClassifyAgainResult>('POST', `/clients/${cui}/classify-again`, { jev }),
   /** Without `line`: Jev's proposal for the invoice, or for every line left on an invoice decided line by line. */

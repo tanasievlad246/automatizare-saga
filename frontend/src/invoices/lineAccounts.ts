@@ -7,11 +7,13 @@ const CHOSEN_BY: Record<string, (entry: LineAccount) => string> = {
   jev_accepted: () => 'propus de Jev, acceptat de dumneavoastră',
   human: () => 'ales de dumneavoastră',
   follows: () => 'ca linia cea mai mare',
+  invoice: () => 'contul facturii, păstrat la împărțire',
 }
 
 // Why a line waits, from the program's English reason; the first that fits.
 const WAITING_BECAUSE: [(reason: string) => boolean, string][] = [
   [(reason) => reason.startsWith('The same invoice'), 'factura pare trimisă de două ori'],
+  [(reason) => reason.startsWith('The rules were skipped') && reason.includes('OpenRouter is not set up'), 'regulile au fost sărite, iar Jev nu este pornit'],
   [(reason) => reason.includes('OpenRouter is not set up'), 'nicio regulă nu se potrivește, iar Jev nu este pornit'],
   [(reason) => reason.includes('no accounts for Jev'), 'nicio regulă nu se potrivește, iar Jev nu are conturi din care să aleagă'],
   [(reason) => reason.startsWith('Jev declined'), 'Jev nu a vrut să răspundă'],
@@ -30,7 +32,22 @@ export function whoChoseLine(entry: LineAccount): string {
       ? `Jev propune ${entry.suggested_cont}, fără să spună cât de sigur este`
       : `Jev propune ${entry.suggested_cont}, sigur doar ${formatPercent(entry.confidence)}`
   }
-  return WAITING_BECAUSE.find(([fits]) => fits(entry.reason))?.[1] ?? 'alegeți contul acestei linii'
+  return whyWaiting(entry.reason) ?? 'alegeți contul acestei linii'
+}
+
+/** Why a line (or an invoice) waits for a person, from the program's English reason; null when it is not one of these. */
+export function whyWaiting(reason: string): string | null {
+  return WAITING_BECAUSE.find(([fits]) => fits(reason))?.[1] ?? null
+}
+
+/** The number of the largest line, whatever its sign, the first of equals: the one the program decides by. */
+export function largestLine(lines: { number: number; value: string }[]): number | null {
+  let largest: { number: number; size: number } | null = null
+  for (const line of lines) {
+    const size = Math.abs(Number(line.value))
+    if (largest === null || size > largest.size) largest = { number: line.number, size }
+  }
+  return largest?.number ?? null
 }
 
 /** The accounts the lines are on, with how many lines each; the most used first, then in line order. */

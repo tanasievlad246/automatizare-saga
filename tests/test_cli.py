@@ -10,7 +10,7 @@ from efactura.auth import Tokens
 from efactura.config import load_config
 from efactura.service import Service
 
-from helpers import VALID_CUI, FakeAnaf, invoice_xml
+from helpers import VALID_CUI, FakeAnaf, invoice_xml, line, rich_invoice_xml
 
 NOW = datetime(2026, 11, 11, 9, 30, tzinfo=timezone(timedelta(hours=2)))
 
@@ -246,6 +246,22 @@ def test_classify_again_answers_for_one_client_or_for_all(run, config_path, logg
     }
     assert json.loads(every)["clients"] == []  # nothing waits for an account
     assert neither_code == 1 and json.loads(neither)["error"]["code"] == "invalid_input"
+
+
+def test_an_invoice_is_split_into_lines_and_one_line_decided_again(run, config_path, logged_in, anaf):
+    service = Service(load_config(config_path))
+    service.save_client(VALID_CUI, "Alfa Construct SRL")
+    service.set_client_per_line(VALID_CUI, False)
+    anaf.add("3001", xml=rich_invoice_xml(lines=[line("Motorina", "450.00"), line("Spalare auto", "40.00")]))
+    run("sync", VALID_CUI)
+
+    split_code, split, _ = run("split", "3001")
+    again_code, again, _ = run("classify", "3001", "--force", "--jev-only", "--line", "2")
+
+    assert (split_code, again_code) == (0, 0)
+    assert [entry["method"] for entry in json.loads(split)["invoice"]["line_accounts"]] == ["rules", "invoice"]
+    second = json.loads(again)["invoice"]["line_accounts"][1]
+    assert second["cont"] is None and second["reason"].startswith("The rules were skipped")  # no OpenRouter key here
 
 
 # --- login -------------------------------------------------------------------

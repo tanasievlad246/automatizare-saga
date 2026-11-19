@@ -121,6 +121,9 @@ class UploadedRequest(BaseModel):
 
 class ClassifyRequest(BaseModel):
     force: bool = False
+    ask: Literal["rules_then_jev", "jev_only"] = "rules_then_jev"  # jev_only: the rules are skipped
+    line: StrictInt | None = None  # that line alone, of an invoice decided line by line
+    per_line: StrictBool | None = None  # line by line, or one account; left out: as the client is set
 
 
 class SetContRequest(BaseModel):
@@ -164,7 +167,8 @@ class RulePreviewRequest(BaseModel):
 
 
 class TrialLine(BaseModel):
-    description: str
+    description: str  # the line's name, as the invoice writes it
+    details: str | None = None  # the line's description beside its name
     quantity: Union[str, int, float, None] = None  # missing or blank: 1
     unit_price: Union[str, int, float, None] = None  # missing or blank: 0
     seller_code: str | None = None
@@ -476,7 +480,17 @@ def create_app(
         summary="Give one saved invoice its account",
     )
     def classify(message_id: str, body: ClassifyRequest | None = None):
-        return call(lambda s: s.classify(message_id, force=bool(body and body.force)))
+        body = body or ClassifyRequest()
+        return call(lambda s: s.classify(
+            message_id, force=body.force, ask=body.ask, line=body.line, per_line=body.per_line,
+        ))
+
+    @router.post(
+        "/invoices/{message_id}/split", dependencies=documented_key,
+        summary="Turn an invoice with one account into one decided line by line",
+    )
+    def split_into_lines(message_id: str):
+        return call(lambda s: s.split_into_lines(message_id))
 
     @router.get("/review", dependencies=documented_key, summary="Invoices a person must decide")
     def review(cui: str | None = None):
@@ -546,6 +560,13 @@ def create_app(
     )
     def invoice_view(message_id: str):
         return call(lambda s: s.invoice_view(message_id))
+
+    @router.get(
+        "/invoices/{message_id}/decisions", dependencies=documented_key,
+        summary="How the invoice got its account, each time it changed, the newest first",
+    )
+    def decision_history(message_id: str):
+        return call(lambda s: s.decision_history(message_id))
 
     # --- rules and accounts (the "Reguli de clasificare" screen) ---
 

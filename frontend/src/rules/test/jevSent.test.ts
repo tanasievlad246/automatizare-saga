@@ -40,6 +40,18 @@ describe('what was sent to Jev, in words', () => {
     expect(rows.at(-1)?.value).toBe('contul de la „Reguli de clasificare”, cu descrierea lui, și „Niciunul din listă”')
   })
 
+  it('says the description of a line after its name when it was sent', () => {
+    const rows = jevSent({
+      question: QUESTION,
+      state: {
+        factura: { tip: 'factura', moneda: 'RON' },
+        linia: { nr: 1, descriere: 'Cartușe toner', detalii: 'Cartuș compatibil HP 85A', cantitate: '6' },
+      },
+    }, 1)
+
+    expect(rows.find((row) => row.label === 'Linia')?.value).toBe('Cartușe toner · „Cartuș compatibil HP 85A” · cantitatea 6')
+  })
+
   it('says plainly when the supplier was sent without a name or a CUI', () => {
     const supplier = (nume: string | null, cui: string | null) => jevSent({
       question: QUESTION, state: { furnizor: { nume, cui }, factura: { tip: 'factura', moneda: 'RON' }, linia: { nr: 1, descriere: 'Ciment' } },

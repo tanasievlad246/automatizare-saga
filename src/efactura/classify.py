@@ -10,7 +10,7 @@ from decimal import Decimal
 from .errors import JEV_ERROR, EfacturaError
 from .invoice import Invoice, Line
 from .rules import (
-    DEFAULT_JEV_ISSUED_LINE_INSTRUCTIONS, DEFAULT_JEV_LINE_INSTRUCTIONS, Rule, Rulebook, Subject, normalise,
+    DEFAULT_JEV_ISSUED_LINE_INSTRUCTIONS, DEFAULT_JEV_LINE_INSTRUCTIONS, Rule, Rulebook, RuleMatch, Subject, normalise,
 )
 
 # Jev always picks one of the options it is given, so "none of them" has to be an option.
@@ -27,6 +27,7 @@ class Decision:
     cont: str
     rule: str  # the rule that decided
     line: int  # the line it decided on
+    match: RuleMatch | None = None  # which of the rule's conditions that line meets, and with what
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,7 @@ def subject_of(invoice: Invoice) -> Subject | None:
         seller_code=heaviest.seller_code,
         barcode=heaviest.barcode,
         commodity_codes=heaviest.commodity_codes,
+        details=heaviest.details,
     )
 
 
@@ -62,7 +64,7 @@ def decide_by_rules(invoice: Invoice, rulebook: Rulebook) -> Decision | None:
     rule = rulebook.rule_for(subject) if subject else None
     if rule is None:
         return None
-    return Decision(cont=rule.cont, rule=rule.name, line=deciding_line(invoice).number)
+    return Decision(cont=rule.cont, rule=rule.name, line=deciding_line(invoice).number, match=rule.match(subject))
 
 
 # --- line by line ------------------------------------------------------------------
@@ -76,6 +78,7 @@ def line_subject(invoice: Invoice, item: Line) -> Subject:
         seller_code=item.seller_code,
         barcode=item.barcode,
         commodity_codes=item.commodity_codes,
+        details=item.details,
     )
 
 
@@ -101,9 +104,10 @@ def follows_largest(invoice: Invoice, item: Line) -> bool:
 
 
 def same_question(item: Line) -> tuple:
-    """Lines that would put the same question to Jev: the same words, codes and unit."""
+    """Lines that would put the same question to Jev: the same words (name and description),
+    codes and unit."""
     return (
-        normalise(item.description), item.seller_code, item.barcode,
+        normalise(item.description), normalise(item.details or ""), item.seller_code, item.barcode,
         tuple(item.commodity_codes), (item.unit or "").upper(),
     )
 
@@ -239,6 +243,7 @@ def _describe(item: Line) -> dict:
     described = {
         "nr": item.number,
         "descriere": item.description,
+        "detalii": item.details,  # the line's description beside its name; left out when it has none
         "cod_furnizor": item.seller_code,
         "coduri_clasificare": list(item.commodity_codes),
         "um": item.unit,
