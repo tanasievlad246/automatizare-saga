@@ -25,7 +25,7 @@ from typing import Callable
 
 import httpx
 
-from . import __version__, auth, certificate_login, jev, journal, saga, schedule
+from . import __version__, auth, certificate_login, jev, journal, redact, saga, schedule, technical
 from .anaf import LIMITING_EVERY_CALL, TYPE_PREFIXES, AnafService, normalize_cui, parse_created_at, type_slug
 from .classify import (
     QUESTION,
@@ -205,6 +205,10 @@ class Service:
 
             http = demo.client(cfg, now)
         self._http = http or httpx.Client(timeout=httpx.Timeout(60.0))
+        # Every exchange with ANAF and OpenRouter goes to the journal's technical side, and no
+        # key this program holds is ever written there or in the journal.
+        technical.watch(self._http)
+        _remember_keys(self.cfg)
         self._now = now or (lambda: datetime.now().astimezone())
         journal.configure(self.cfg.db_path)  # the journal lives in the same database
 
@@ -241,7 +245,10 @@ class Service:
         with _FileLock(self.cfg.lock_path, wait=wait):
             tokens = auth.exchange_code(self.cfg, self._http, code, now)
             auth.save_tokens(self.cfg.token_file, tokens)
-            journal.record("anaf", "anaf.connected", "Connected to ANAF with the certificate.")
+            journal.record(
+                "anaf", "anaf.connected", "Connected to ANAF with the certificate.",
+                valid_until=tokens.access_expires_at.isoformat(),
+            )
         log.info("Logged in; access valid until %s", tokens.access_expires_at.isoformat())
         return {"ok": True, **_login_summary(tokens, now)}
 
@@ -451,6 +458,12 @@ class Service:
                 journal.record(
                     "sync", "sync.started", f"Download started for {cui}, {window.days} day(s) back.",
                     cui=cui, client=client, window_days=window.days,
+                    start=window.begin.date().isoformat(), end=_last_day(window).isoformat(),
+                )
+                log.debug(
+                    "Window for %s: %s to %s (%s day(s)); everything saved up to %s; reaches back to it: %s",
+                    cui, window.begin.isoformat(timespec="minutes"), window.finish.isoformat(timespec="minutes"),
+                    window.days, covered_until or "never", window.reaches_back,
                 )
                 try:
                     result = self._run_sync(store, cui, window, run_id, now, classify)
@@ -461,6 +474,7 @@ class Service:
                     journal.record(
                         "sync", "sync.failed", f"Download for {cui} failed: {detail}", level="error",
                         cui=cui, client=client, error=detail, duration_ms=_since(began),
+                        code=exc.code if isinstance(exc, EfacturaError) else INTERNAL_ERROR,
                     )
                     try:
                         store.finish_run(
@@ -512,6 +526,10 @@ class Service:
         known = store.existing_ids(e["id"] for e in entries)
         unseen = [e for e in entries if e["id"] not in known]
         folder = self.cfg.invoices_dir / self.cfg.folder_name(now)
+        log.debug(
+            "%s message(s) listed for %s: %s already saved, %s to download into %s",
+            len(entries), cui, len(entries) - len(unseen), len(unseen), folder,
+        )
 
         saved: list[dict] = []
         failed: list[dict] = []
@@ -533,7 +551,7 @@ class Service:
             failed.append(_failure(entry, error))
             journal.record(
                 "sync", "sync.message_failed", f"Message {entry['id']} could not be saved: {error.message}",
-                level="warning", id=entry["id"], cui=cui, error=error.message,
+                level="warning", id=entry["id"], cui=cui, error=error.message, code=error.code,
             )
             log.warning("Message %s failed: %s: %s", entry["id"], error.code, error.message)
             if error.message == LIMITING_EVERY_CALL:
@@ -576,6 +594,11 @@ class Service:
         archive = anaf_service.download(message_id)
         extracted = extract_zip(archive)
         fields = parse_invoice_fields(extracted.xml)
+        log.debug(
+            "Message %s (%s) downloaded: a ZIP of %s bytes, an XML of %s; invoice %s of %s from supplier %s",
+            message_id, message_type or "no type", len(archive), len(extracted.xml),
+            fields["invoice_number"], fields["invoice_issue_date"], fields["supplier_cui"],
+        )
 
         duplicate_of = None
         if fields["invoice_number"] and fields["supplier_cui"]:
@@ -622,7 +645,12 @@ class Service:
         except Exception:
             path.unlink(missing_ok=True)
             raise
-        return self._present(store.get_message(message_id))
+        saved = store.get_message(message_id)
+        log.debug(
+            "Message %s saved to %s; %s", message_id, path.relative_to(self.cfg.data_dir).as_posix(),
+            "waits for an account" if saved.get("classification_status") == PENDING else "stays out of classification",
+        )
+        return self._present(saved)
 
     # --- the local database ---------------------------------------------------
 
@@ -2004,7 +2032,9 @@ class Service:
         not be classified simply waits for the next run.
         """
         tally = _new_tally()
-        counts, _, _ = self._classify_each(store, store.pending_classification(cui), tally)
+        waiting = store.pending_classification(cui)
+        log.debug("%s invoice(s) of %s wait for an account", len(waiting), cui)
+        counts, _, _ = self._classify_each(store, waiting, tally)
 
         self._write_saga_files(store, cui)
         result["new"] = [self._present(store.get_message(entry["id"])) for entry in result["new"]]
@@ -2208,6 +2238,11 @@ class Service:
             return self._classify_lines(store, row, invoice, rulebook, tally, how, chosen)
 
         decision = None if how.skip_rules else decide_by_rules(invoice, rulebook)
+        log.debug(
+            "Message %s, %s line(s), one account for the invoice: %s", message_id, len(invoice.lines),
+            f"rule {decision.rule!r} matched line {decision.line}, account {decision.cont}" if decision
+            else "the rules were skipped" if how.skip_rules else "no rule matched",
+        )
         if decision:
             return self._finish(
                 store, row, invoice, decision.cont, "rules",
@@ -2231,6 +2266,10 @@ class Service:
             return PENDING
 
         request = jev_request(invoice, rulebook, self.cfg.jev_model)
+        log.debug(
+            "Message %s goes to Jev: %s line(s) sent, %s left out to fit, %s account(s) to choose from",
+            message_id, len(request["state"]["linii"]), request["state"]["linii_omise"], len(rulebook.accounts),
+        )
         if not request["state"]["linii"]:
             # Not even the deciding line fits beside the list of accounts.
             return to_review(
@@ -2468,7 +2507,16 @@ class Service:
             )
             tally["jev_cost_usd"] += call.cost_usd or 0
             if answer is not None:
+                log.debug(
+                    "Jev's answer for %s: %s, confidence %s, %s other account(s) weighed",
+                    about, answer.choice or ("a refusal" if answer.refused else "none of these"),
+                    answer.confidence, max(len(answer.probabilities) - 1, 0),
+                )
                 return answer
+            log.debug(
+                "Jev's call %s of %s for %s failed (%s): %s", attempt + 1, JEV_ATTEMPTS, about,
+                "worth trying again" if call.transient else "not worth trying again", error,
+            )
             if not call.transient or attempt == JEV_ATTEMPTS - 1:
                 break
             _pause(JEV_RETRY_DELAY)
@@ -2607,6 +2655,10 @@ class Service:
 
     def _place_saga_files(self, store: Store, cui: str, when: str) -> None:
         folder, files = self._saga_files_now(store, cui)
+        log.debug(
+            "Files for SAGA of %s in %s: %s", cui, folder,
+            "; ".join(f"{file.name} with {len(file.ids)} invoice(s)" for file in files) or "none wanted",
+        )
         saga_dir = folder.parent
         known = store.saga_ledger(cui)
         wanted: dict[str, Path] = {}
@@ -2722,7 +2774,12 @@ class Service:
         now = self._now()
         tokens = auth.load_tokens(self.cfg.token_file)
         if auth.token_state(tokens, now) == auth.VALID and not force_refresh:
+            log.debug("The saved ANAF access is used; valid until %s", tokens.access_expires_at.isoformat())
             return tokens.access_token
+        log.debug(
+            "The ANAF access is renewed: %s",
+            "ANAF rejected the one sent" if force_refresh else f"it is {auth.token_state(tokens, now)}",
+        )
         with nullcontext() if lock_held else self._lock():
             if not lock_held:
                 # Another process may have renewed the login while this one was deciding.
@@ -2739,28 +2796,50 @@ class Service:
                 )
             renewed = auth.refresh_tokens(self.cfg, self._http, tokens, now)
             auth.save_tokens(self.cfg.token_file, renewed)
-            journal.record("anaf", "anaf.renewed", "The ANAF login was renewed without the certificate.")
+            journal.record(
+                "anaf", "anaf.renewed", "The ANAF login was renewed without the certificate.",
+                valid_until=renewed.access_expires_at.isoformat(),
+            )
         log.info("Login renewed; access valid until %s", renewed.access_expires_at.isoformat())
         return renewed.access_token
 
 def configure_logging(cfg: Config) -> None:
-    """Log to the data folder. Nothing is logged to standard output: that is for the JSON."""
+    """Log to the data folder. Nothing is logged to standard output: that is for the JSON.
+
+    Information and up goes to the text file and to the journal, where the page shows it.
+    Debug records go to the journal's technical side only, which keeps them a few days."""
     logger = logging.getLogger("efactura")
+    has_file = False
     for existing in list(logger.handlers):
         if isinstance(existing, logging.FileHandler):
             if existing.baseFilename == os.path.abspath(cfg.log_path):
-                return
+                has_file = True
+                continue
             logger.removeHandler(existing)
             existing.close()
-    cfg.data_dir.mkdir(parents=True, exist_ok=True)
-    handler = logging.FileHandler(cfg.log_path, encoding="utf-8")
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
-    # The same lines go into the journal, where the page can show them.
+    if not has_file:
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        handler = logging.FileHandler(cfg.log_path, encoding="utf-8")
+        handler.setLevel(logging.INFO)
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
     journal.configure(cfg.db_path)
+    _remember_keys(cfg)
     if not any(isinstance(existing, journal.JournalHandler) for existing in logger.handlers):
         logger.addHandler(journal.JournalHandler())
+    if not any(isinstance(existing, technical.TechnicalHandler) for existing in logger.handlers):
+        logger.addHandler(technical.TechnicalHandler())
+
+
+def _remember_keys(cfg: Config) -> None:
+    """The keys this program holds are never written in the journal or its technical side."""
+    redact.remember(cfg.client_id, cfg.client_secret, cfg.api_key, cfg.openrouter_api_key)
+
+
+def _last_day(window: "_Window"):
+    """The last day a window reaches into: one that ends at midnight stops the day before."""
+    return (window.finish - timedelta(microseconds=1)).date()
 
 
 def _window_days(

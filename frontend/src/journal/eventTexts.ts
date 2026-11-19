@@ -2,7 +2,7 @@
 // is known to write become Romanian sentences; anything else keeps the English line.
 
 import { newInvoices } from '../newInvoices'
-import { countDoing, countOf, formatPercent, formatUsd } from '../format'
+import { countDoing, countOf, formatPercent, formatUsdExact } from '../format'
 import { describePeriod, describeWhen } from '../schedule/scheduleTexts'
 import type { JournalLine, SchedulePeriod } from '../types'
 
@@ -52,6 +52,82 @@ const AUTO_FAILURES: Record<string, string> = {
   anaf_error: 'ANAF a răspuns cu o eroare',
   invalid_input: 'ANAF nu mai păstrează facturile din perioada aleasă',
 }
+// The same for one client's download, by the code of the error that stopped it.
+const SYNC_FAILURES: Record<string, string> = {
+  ...AUTO_FAILURES,
+  network_error: 'nu am putut ajunge la ANAF. Verificați conexiunea la internet',
+  no_spv_rights: 'certificatul nu are drept în SPV pentru această firmă',
+  busy: 'o altă descărcare era în curs',
+}
+// Why one message could not be saved, by its code.
+const MESSAGE_FAILURES: Record<string, string> = {
+  anaf_limit_reached: 'ANAF a limitat numărul de cereri',
+  anaf_error: 'ANAF a răspuns cu o eroare',
+  network_error: 'nu am putut ajunge la ANAF',
+  no_spv_rights: 'certificatul nu are drept să îl descarce',
+  internal_error: 'nu a putut fi scris pe calculator',
+}
+
+const DAY_AND_MONTH = new Intl.DateTimeFormat('ro-RO', { day: 'numeric', month: 'long' })
+const WHOLE_DATE = new Intl.DateTimeFormat('ro-RO', { day: 'numeric', month: 'long', year: 'numeric' })
+const dateOf = (iso: string) => new Date(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10)), 12)
+
+/** "16 – 20 noiembrie", "28 octombrie – 3 noiembrie", with the years only when they differ. */
+function daysBetween(start: string, end: string): string {
+  const [first, last] = [dateOf(start), dateOf(end)]
+  if (start === end) return DAY_AND_MONTH.format(first)
+  if (first.getFullYear() !== last.getFullYear()) return `${WHOLE_DATE.format(first)} – ${WHOLE_DATE.format(last)}`
+  if (first.getMonth() === last.getMonth()) return `${first.getDate()} – ${DAY_AND_MONTH.format(last)}`
+  return `${DAY_AND_MONTH.format(first)} – ${DAY_AND_MONTH.format(last)}`
+}
+
+/** " Este valabilă până la 18 februarie 2027." when the line says so. */
+const validUntil = (data: Data) =>
+  typeof data.valid_until === 'string' ? ` Este valabilă până la ${WHOLE_DATE.format(new Date(data.valid_until))}.` : ''
+
+/** " ANAF avea 12 mesaje în perioadă; 9 erau deja salvate." for a line that counted them. */
+function whatAnafHad(data: Data): string {
+  if (typeof data.listed !== 'number') return ''
+  if (data.listed === 0) return ' ANAF nu avea niciun mesaj în perioadă.'
+  const known = Math.max(0, data.listed - (Number(data.new) || 0) - (Number(data.failed) || 0))
+  const had = `ANAF avea ${countOf(data.listed, 'un mesaj', 'mesaje')} în perioadă`
+  return known ? ` ${had}; ${countDoing(known, 'unul era deja salvat', 'erau deja salvate')}.` : ` ${had}.`
+}
+
+const LIST_ENDPOINT = 'listaMesajePaginatieFactura'
+const DOWNLOAD_ENDPOINT = 'descarcare'
+
+/** What a call to ANAF asked for: "lista mesajelor (pagina 1)", "mesajul 3401874512". */
+function anafSent(data: Data): string | null {
+  if (data.endpoint === LIST_ENDPOINT) return `lista mesajelor${data.page ? ` (pagina ${text(data.page)})` : ''}`
+  if (data.endpoint === DOWNLOAD_ENDPOINT) return data.id ? `mesajul ${text(data.id)}` : 'un mesaj'
+  return null
+}
+
+/** The call to ANAF the answer was to: "cererea listei de mesaje (pagina 2)", "descărcarea mesajului 3401874513". */
+function anafAsked(data: Data): string | null {
+  if (data.endpoint === LIST_ENDPOINT) return `cererea listei de mesaje${data.page ? ` (pagina ${text(data.page)})` : ''}`
+  if (data.endpoint === DOWNLOAD_ENDPOINT) return data.id ? `descărcarea mesajului ${text(data.id)}` : 'descărcarea unui mesaj'
+  return null
+}
+
+/** " pentru factura FV-2", " pentru linia 2 a facturii FV-2", " pentru linia 2". */
+function jevAbout(data: Data): string {
+  const number = text(data.invoice_number)
+  if (typeof data.line === 'number') return ` pentru linia ${data.line}${number ? ` a facturii ${number}` : ''}`
+  return number ? ` pentru factura ${number}` : ''
+}
+
+/** Why OpenRouter gave nothing Jev could use, from the code it answered with. */
+function jevRefusal(data: Data): string {
+  const status = typeof data.status === 'number' ? data.status : null
+  if (status === null) return text(data.error).startsWith('Could not reach') ? ': nu am putut ajunge la OpenRouter' : ''
+  if (status === 401 || status === 403) return `: cheia OpenRouter nu a fost acceptată (codul ${status})`
+  if (status === 402 && text(data.error).includes('no credit')) return ': contul OpenRouter nu mai are credit (codul 402)'
+  if (status === 429) return ': OpenRouter a primit prea multe cereri deodată (codul 429)'
+  if (status >= 500) return `: OpenRouter are o problemă (codul ${status})`
+  return status >= 400 ? `: OpenRouter a răspuns cu codul ${status}` : ''
+}
 
 const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
   'program.started': (data) => `Programul a pornit. Versiunea ${text(data.version)}.`,
@@ -60,16 +136,27 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
 
   'sync.started': (data) => {
     const days = Number(data.window_days)
-    return `A început descărcarea pentru ${who(data)}, pentru ${days === 1 ? 'ultima zi' : `ultimele ${countOf(days, 'o zi', 'zile')}`}.`
+    // Lines written before the days were named carry only how many.
+    const which = typeof data.start === 'string' && typeof data.end === 'string' ? ` (${daysBetween(data.start, data.end)})` : ''
+    return `A început descărcarea pentru ${who(data)}, pentru ${days === 1 ? 'ultima zi' : `ultimele ${countOf(days, 'o zi', 'zile')}`}${which}.`
   },
-  'sync.finished': (data) => {
+  'sync.finished': (data, line) => {
     // Lines written before the issued invoices were counted apart carry only `new`.
     const came = newInvoices(Number(data.received ?? data.new), Number(data.issued) || 0)
     const failed = Number(data.failed) ? countOf(Number(data.failed), 'una nereușită', 'nereușite') : 'niciuna nereușită'
-    return `Descărcarea pentru ${who(data)} s-a terminat: ${[...(came.length ? came : ['nicio factură nouă']), failed].join(', ')}.`
+    const took = line.duration_ms === null ? '' : ` în ${formatDuration(line.duration_ms)}`
+    return `Descărcarea pentru ${who(data)} s-a terminat${took}: ${[...(came.length ? came : ['nicio factură nouă']), failed].join(', ')}.` +
+      whatAnafHad(data)
   },
-  'sync.failed': (data) => `Descărcarea pentru ${who(data)} nu a reușit.`,
-  'sync.message_failed': () => 'Un mesaj de la ANAF nu a putut fi salvat. Se încearcă din nou la următoarea descărcare.',
+  'sync.failed': (data) => {
+    const cause = SYNC_FAILURES[text(data.code)]
+    return `Descărcarea pentru ${who(data)} nu a reușit${cause ? `: ${cause}` : ''}.`
+  },
+  'sync.message_failed': (data) => {
+    if (!data.id) return 'Un mesaj de la ANAF nu a putut fi salvat. Se încearcă din nou la următoarea descărcare.'
+    const cause = MESSAGE_FAILURES[text(data.code)]
+    return `Mesajul ${text(data.id)} de la ANAF nu a putut fi salvat${cause ? `: ${cause}` : ''}. Se încearcă din nou la următoarea descărcare.`
+  },
 
   'schedule.saved': (data) => {
     if (!data.enabled) return 'Descărcarea automată a fost oprită.'
@@ -103,11 +190,21 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
 
   'sync.record_unsaved': () => 'Descărcarea automată s-a terminat, dar rezultatul ei nu a putut fi salvat.',
 
-  'anaf.call': (_, line) => `ANAF a răspuns${line.duration_ms === null ? '' : ` în ${formatDuration(line.duration_ms)}`}.`,
-  'anaf.unreachable': () => 'Nu am putut ajunge la ANAF. Verificați conexiunea la internet.',
-  'anaf.connected': () => 'Conectarea la ANAF a reușit.',
+  'anaf.call': (data, line) => {
+    const took = line.duration_ms === null ? '' : formatDuration(line.duration_ms)
+    const sent = anafSent(data)
+    const asked = anafAsked(data)
+    if (sent && (data.status === undefined || data.status === 200)) return `ANAF a trimis ${sent}${took ? ` în ${took}` : ''}.`
+    if (asked) return `ANAF a răspuns cu codul ${text(data.status)} la ${asked}${took ? `, în ${took}` : ''}.`
+    return `ANAF a răspuns${took ? ` în ${took}` : ''}.`
+  },
+  'anaf.unreachable': (data) => {
+    const what = data.endpoint === LIST_ENDPOINT ? ' pentru lista mesajelor' : data.endpoint === DOWNLOAD_ENDPOINT && data.id ? ` pentru mesajul ${text(data.id)}` : ''
+    return `Nu am putut ajunge la ANAF${what}. Verificați conexiunea la internet.`
+  },
+  'anaf.connected': (data) => `Conectarea la ANAF a reușit.${validUntil(data)}`,
   'anaf.certificate_asked': () => 'Programul a cerut certificatul de la Windows.',
-  'anaf.renewed': () => 'Conectarea la ANAF a fost reînnoită automat, fără tokenul USB.',
+  'anaf.renewed': (data) => `Conectarea la ANAF a fost reînnoită automat, fără tokenul USB.${validUntil(data)}`,
 
   'classification.again': (data) => {
     const parts = [
@@ -148,9 +245,10 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
 
   // A cost the program did not write is unknown. Turned into a number, a missing one would
   // read "NaN $" and an empty one "0,00 $".
+  // The cost as it is, a tiny one by its first two digits, as "Costuri Jev" shows a single call.
   'jev.answered': (data, line) =>
-    `Jev a răspuns${typeof data.line === 'number' ? ` pentru linia ${data.line}` : ''}${line.duration_ms === null ? '' : ` în ${formatDuration(line.duration_ms)}`}. Cost: ${typeof data.cost_usd === 'number' ? formatUsd(data.cost_usd) : 'necunoscut'}.`,
-  'jev.failed': () => 'Jev nu a dat un răspuns care să poată fi folosit.',
+    `Jev a răspuns${jevAbout(data)}${line.duration_ms === null ? '' : ` în ${formatDuration(line.duration_ms)}`}. Cost: ${typeof data.cost_usd === 'number' ? formatUsdExact(data.cost_usd) : 'necunoscut'}.`,
+  'jev.failed': (data) => `Jev nu a dat un răspuns care să poată fi folosit${jevAbout(data)}${jevRefusal(data)}.`,
 
   'rule.tested': (data) =>
     data.decided_by === 'rule' || data.decided_by === 'jev'

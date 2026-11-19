@@ -51,3 +51,27 @@ describe('choosing a folder in Windows’ own dialog', () => {
     ])
   })
 })
+
+describe('the technical side of the journal', () => {
+  it('asks for the counts with the lines only when the technical view is on', async () => {
+    const asked = program({ ok: true, events: [], has_more: false })
+    await api.journal({ area: 'sync', technical: true })
+    expect(asked[0].address).toBe('/api/events?area=sync&technical=true')
+  })
+
+  it('reads one operation\'s records a page at a time, and one record whole', async () => {
+    const asked = program({ ok: true, records: [], has_more: false })
+    await api.technical('a1b2c3')
+    await api.technical('a1b2c3', 77)
+    await api.technicalRecord(41)
+    expect(asked.map((call) => call.address)).toEqual([
+      '/api/events/technical?trace=a1b2c3&limit=2000',
+      '/api/events/technical?trace=a1b2c3&before=77&limit=2000',
+      '/api/events/technical/41',
+    ])
+  })
+
+  it('puts the technical records in the saved file only when the view is on', () => {
+    expect(api.journalFileAddress({ trace: 'a1', technical: true })).toBe('/api/events/export?trace=a1&technical=true&details=false')
+  })
+})

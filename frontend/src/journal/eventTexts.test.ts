@@ -254,3 +254,92 @@ describe('an import confirmed in SAGA', () => {
     expect(describeEvent(line('saga.imported', { cui: '1', invoices: 25, source: 'screen' }))).toContain('25 de facturi marcate')
   })
 })
+
+describe('the lines that say more than they used to', () => {
+  it('names the days a download asks for', () => {
+    expect(describeEvent(line('sync.started', { client: 'Alfa SRL', window_days: 5, start: '2026-11-16', end: '2026-11-20' })))
+      .toBe('A început descărcarea pentru Alfa SRL, pentru ultimele 5 zile (16 – 20 noiembrie).')
+    expect(describeEvent(line('sync.started', { cui: '1', window_days: 7, start: '2026-10-28', end: '2026-11-03' })))
+      .toBe('A început descărcarea pentru CUI 1, pentru ultimele 7 zile (28 octombrie – 3 noiembrie).')
+    expect(describeEvent(line('sync.started', { cui: '1', window_days: 5, start: '2026-12-29', end: '2027-01-02' })))
+      .toBe('A început descărcarea pentru CUI 1, pentru ultimele 5 zile (29 decembrie 2026 – 2 ianuarie 2027).')
+    expect(describeEvent(line('sync.started', { cui: '1', window_days: 1, start: '2026-11-20', end: '2026-11-20' })))
+      .toBe('A început descărcarea pentru CUI 1, pentru ultima zi (20 noiembrie).')
+  })
+
+  it('says how long a download took and how many of ANAF\'s messages were saved already', () => {
+    const finished = { client: 'Alfa SRL', cui: '1', listed: 12, new: 3, received: 3, issued: 0, failed: 0 }
+    expect(describeEvent(line('sync.finished', finished, { duration_ms: 4200 })))
+      .toBe('Descărcarea pentru Alfa SRL s-a terminat în 4,2 s: 3 facturi noi, niciuna nereușită. ANAF avea 12 mesaje în perioadă; 9 erau deja salvate.')
+    expect(describeEvent(line('sync.finished', { ...finished, listed: 2, new: 1, received: 1, failed: 0 })))
+      .toBe('Descărcarea pentru Alfa SRL s-a terminat: o factură nouă, niciuna nereușită. ANAF avea 2 mesaje în perioadă; unul era deja salvat.')
+    expect(describeEvent(line('sync.finished', { ...finished, listed: 1, new: 1, received: 1 })))
+      .toBe('Descărcarea pentru Alfa SRL s-a terminat: o factură nouă, niciuna nereușită. ANAF avea un mesaj în perioadă.')
+    expect(describeEvent(line('sync.finished', { ...finished, listed: 0, new: 0, received: 0 })))
+      .toBe('Descărcarea pentru Alfa SRL s-a terminat: nicio factură nouă, niciuna nereușită. ANAF nu avea niciun mesaj în perioadă.')
+  })
+
+  it('says why a download failed when the program knows', () => {
+    expect(describeEvent(line('sync.failed', { client: 'Beta SRL', code: 'anaf_limit_reached' }, { level: 'error' })))
+      .toBe('Descărcarea pentru Beta SRL nu a reușit: ANAF a limitat numărul de cereri pentru azi.')
+    expect(describeEvent(line('sync.failed', { client: 'Beta SRL', code: 'network_error' })))
+      .toBe('Descărcarea pentru Beta SRL nu a reușit: nu am putut ajunge la ANAF. Verificați conexiunea la internet.')
+    expect(describeEvent(line('sync.failed', { client: 'Beta SRL', code: 'no_spv_rights' })))
+      .toBe('Descărcarea pentru Beta SRL nu a reușit: certificatul nu are drept în SPV pentru această firmă.')
+    expect(describeEvent(line('sync.failed', { client: 'Beta SRL', code: 'something_new' })))
+      .toBe('Descărcarea pentru Beta SRL nu a reușit.')
+  })
+
+  it('names the message that could not be saved, and why', () => {
+    expect(describeEvent(line('sync.message_failed', { id: '3401874513', code: 'anaf_limit_reached' })))
+      .toBe('Mesajul 3401874513 de la ANAF nu a putut fi salvat: ANAF a limitat numărul de cereri. Se încearcă din nou la următoarea descărcare.')
+    expect(describeEvent(line('sync.message_failed', { id: '3401874513' })))
+      .toBe('Mesajul 3401874513 de la ANAF nu a putut fi salvat. Se încearcă din nou la următoarea descărcare.')
+    expect(describeEvent(line('sync.message_failed', {})))
+      .toBe('Un mesaj de la ANAF nu a putut fi salvat. Se încearcă din nou la următoarea descărcare.')
+  })
+
+  it('says what ANAF sent, or what it answered when it did not', () => {
+    const call = (data: Record<string, unknown>, duration_ms: number | null = 300) =>
+      describeEvent(line('anaf.call', data, { duration_ms, level: 'detail', area: 'anaf' })).replace(/\s/g, ' ')
+    expect(call({ endpoint: 'listaMesajePaginatieFactura', status: 200, page: 1 })).toBe('ANAF a trimis lista mesajelor (pagina 1) în 0,3 s.')
+    expect(call({ endpoint: 'descarcare', status: 200, id: '3401874512' }, 45)).toBe('ANAF a trimis mesajul 3401874512 în 45 ms.')
+    expect(call({ endpoint: 'descarcare', status: 429, id: '3401874513' }, 88))
+      .toBe('ANAF a răspuns cu codul 429 la descărcarea mesajului 3401874513, în 88 ms.')
+    expect(call({ endpoint: 'listaMesajePaginatieFactura', status: 500, page: 2 }, null))
+      .toBe('ANAF a răspuns cu codul 500 la cererea listei de mesaje (pagina 2).')
+    expect(call({ status: 200 })).toBe('ANAF a răspuns în 0,3 s.')
+    expect(describeEvent(line('anaf.unreachable', { endpoint: 'descarcare', id: '3401874512' })))
+      .toBe('Nu am putut ajunge la ANAF pentru mesajul 3401874512. Verificați conexiunea la internet.')
+    expect(describeEvent(line('anaf.unreachable', { endpoint: 'listaMesajePaginatieFactura', page: 1 })))
+      .toBe('Nu am putut ajunge la ANAF pentru lista mesajelor. Verificați conexiunea la internet.')
+  })
+
+  it('names the invoice Jev answered about, and why it gave nothing usable', () => {
+    expect(describeEvent(line('jev.answered', { invoice_number: 'MC 5521', cost_usd: 0.00002 }, { duration_ms: 812 })).replace(/\s/g, ' '))
+      .toBe('Jev a răspuns pentru factura MC 5521 în 0,8 s. Cost: 0,00002 $.')
+    expect(describeEvent(line('jev.answered', { invoice_number: 'MC 5521', line: 2, cost_usd: 0.42 })).replace(/\s/g, ' '))
+      .toBe('Jev a răspuns pentru linia 2 a facturii MC 5521. Cost: 0,42 $.')
+    expect(describeEvent(line('jev.failed', { invoice_number: 'FV-88', status: 402, error: 'OpenRouter has no credit left for this key (HTTP 402).' })))
+      .toBe('Jev nu a dat un răspuns care să poată fi folosit pentru factura FV-88: contul OpenRouter nu mai are credit (codul 402).')
+    expect(describeEvent(line('jev.failed', { invoice_number: 'FV-88', status: 401 })))
+      .toBe('Jev nu a dat un răspuns care să poată fi folosit pentru factura FV-88: cheia OpenRouter nu a fost acceptată (codul 401).')
+    expect(describeEvent(line('jev.failed', { invoice_number: 'FV-88', status: 429 })))
+      .toBe('Jev nu a dat un răspuns care să poată fi folosit pentru factura FV-88: OpenRouter a primit prea multe cereri deodată (codul 429).')
+    expect(describeEvent(line('jev.failed', { invoice_number: 'FV-88', status: 502 })))
+      .toBe('Jev nu a dat un răspuns care să poată fi folosit pentru factura FV-88: OpenRouter are o problemă (codul 502).')
+    expect(describeEvent(line('jev.failed', { invoice_number: 'FV-88', error: 'Could not reach OpenRouter: timed out' })))
+      .toBe('Jev nu a dat un răspuns care să poată fi folosit pentru factura FV-88: nu am putut ajunge la OpenRouter.')
+    expect(describeEvent(line('jev.failed', { invoice_number: 'FV-88', status: 200, error: 'unreadable' })))
+      .toBe('Jev nu a dat un răspuns care să poată fi folosit pentru factura FV-88.')
+    expect(describeEvent(line('jev.failed', {}))).toBe('Jev nu a dat un răspuns care să poată fi folosit.')
+  })
+
+  it('says until when the login to ANAF is valid', () => {
+    expect(describeEvent(line('anaf.connected', { valid_until: '2027-02-18T09:30:00+02:00' })))
+      .toBe('Conectarea la ANAF a reușit. Este valabilă până la 18 februarie 2027.')
+    expect(describeEvent(line('anaf.renewed', { valid_until: '2027-02-18T09:30:00+02:00' })))
+      .toBe('Conectarea la ANAF a fost reînnoită automat, fără tokenul USB. Este valabilă până la 18 februarie 2027.')
+    expect(describeEvent(line('anaf.renewed', {}))).toBe('Conectarea la ANAF a fost reînnoită automat, fără tokenul USB.')
+  })
+})

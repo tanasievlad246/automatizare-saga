@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx
 
+from . import redact, technical
 from .config import Config
 from .errors import (
     ANAF_ERROR,
@@ -84,6 +85,9 @@ def load_tokens(path: Path) -> Tokens | None:
     # A save whose final swap did not complete leaves the newer pair in the pending file.
     pending_path = _pending(path)
     pending = _read_tokens(pending_path)
+    for tokens in (saved, pending):
+        if tokens is not None:  # never written in the journal, whatever quotes them
+            redact.remember(tokens.access_token, tokens.refresh_token)
     if pending and (saved is None or pending.obtained_at > saved.obtained_at):
         try:
             os.replace(pending_path, path)
@@ -213,6 +217,7 @@ def code_from_redirect(address: str) -> str:
 
 def exchange_code(cfg: Config, http: httpx.Client, code: str, now: datetime) -> Tokens:
     cfg.require_oauth()
+    redact.remember(code)  # a refusal may quote it back
     payload = _token_call(
         cfg,
         http,
@@ -250,9 +255,11 @@ def refresh_tokens(cfg: Config, http: httpx.Client, tokens: Tokens, now: datetim
 
 
 def _token_call(cfg: Config, http: httpx.Client, form: dict, rejected: EfacturaError) -> dict:
+    started = time.monotonic()
     try:
         response = http.post(TOKEN_URL, data=form, auth=(cfg.client_id, cfg.client_secret))
     except httpx.RequestError as exc:
+        technical.unanswered(exc, round((time.monotonic() - started) * 1000))
         raise EfacturaError(NETWORK_ERROR, f"Could not reach ANAF's login service: {said_by(exc)}") from None
 
     try:
@@ -287,6 +294,7 @@ def _token_call(cfg: Config, http: httpx.Client, form: dict, rejected: EfacturaE
 def _tokens_from_reply(payload: dict, now: datetime, previous: Tokens | None) -> Tokens:
     access_token = payload["access_token"]
     new_refresh = payload.get("refresh_token")
+    redact.remember(access_token, new_refresh)
     if new_refresh:
         refresh_token, refresh_expires_at = new_refresh, now + REFRESH_LIFETIME
     elif previous is not None:
