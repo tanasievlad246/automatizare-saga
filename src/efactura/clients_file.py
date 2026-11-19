@@ -38,7 +38,8 @@ def read_client_rows(filename: str, content: bytes) -> list[tuple[int, str, str]
     for position, (_, cells) in enumerate(rows[:HEADER_SEARCH_ROWS]):
         headers = [_header_key(cell) for cell in cells]
         cui_column = next((i for i, header in enumerate(headers) if _is_cui_header(header)), None)
-        if cui_column is not None:
+        # A row that holds a CUI is a client, even one whose name starts like a header ("Cuibul SRL").
+        if cui_column is not None and not any(_is_cui(cell) for cell in cells):
             name_column = next(
                 (i for i, header in enumerate(headers) if header.startswith(NAME_HEADERS)), None
             )

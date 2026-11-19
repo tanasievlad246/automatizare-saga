@@ -137,19 +137,23 @@ def _move_to_latest(cfg: Config, project: Path, now: datetime, installed: str | 
     _git(project, "fetch", "--tags", "--prune", "origin", what="Fetching the release", timeout=FETCH_TIMEOUT)
     _refuse_a_release_that_replaces_local_files(project, latest, cfg)
     previous = _git(project, "rev-parse", "HEAD", what="Reading the installed release")
-    was_running = background.stop(cfg)["stopped"]
+    # Taken before the program is stopped: stopping it does not stop a download under way, which
+    # would go on writing while its code is replaced. A download running refuses the update now;
+    # one that would start meanwhile waits until the new release is in place.
+    with backup.held_or_busy(cfg.lock_path, "Invoices are being downloaded. Wait for that to finish, then update."):
+        was_running = background.stop(cfg)["stopped"]
 
-    failure, copy = None, None
-    try:
-        copy = back_up_database(cfg, installed or previous[:7], now)
+        failure, copy = None, None
         try:
-            _switch_to(project, latest)
-            sync_dependencies(project)
-        except Exception:
-            _go_back(project, previous)
-            raise
-    except Exception as exc:  # whatever it was, the program is started again below
-        failure = _said(exc)
+            copy = back_up_database(cfg, installed or previous[:7], now)
+            try:
+                _switch_to(project, latest)
+                sync_dependencies(project)
+            except Exception:
+                _go_back(project, previous)
+                raise
+        except Exception as exc:  # whatever it was, the program is started again below
+            failure = _said(exc)
     restarted, not_started = False, None
     if was_running:
         try:
@@ -179,6 +183,9 @@ def start_in_background(cfg: Config) -> dict:
     why_not = _why_not_updatable(PROJECT)
     if why_not:
         raise EfacturaError(UPDATE_ERROR, why_not)
+    # Said here, to the person, rather than found out by the process the button starts.
+    with backup.held_or_busy(cfg.lock_path, "Invoices are being downloaded. Wait for that to finish, then update."):
+        pass
     background.spawn_command(cfg.path, cfg.data_dir / UPDATE_OUTPUT, "update")
     return {"ok": True, "started": True}
 

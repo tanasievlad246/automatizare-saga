@@ -905,6 +905,49 @@ def test_the_same_invoice_sent_again_under_a_new_anaf_id_waits_for_a_person(serv
     assert conts_in(saga_file(cfg)) == ["6022"]  # the first one's file is untouched
 
 
+def test_a_repeated_invoice_is_caught_when_its_number_was_used_in_an_earlier_year_too(service, anaf, cfg):
+    anaf.add("3001", xml=rich_invoice_xml(lines=FUEL, number="100", issue_date="2025-03-01"))
+    anaf.add("3002", xml=rich_invoice_xml(lines=FUEL, number="100", issue_date="2026-03-05"))  # numbered again
+    service.sync(VALID_CUI)
+    anaf.add("3003", xml=rich_invoice_xml(lines=FUEL, number="100", issue_date="2026-03-05"))  # 3002 sent again
+
+    (again,) = service.sync(VALID_CUI)["new"]
+
+    assert saved(cfg, "3002")["classification_status"] == "classified"
+    assert (again["classification_status"], again["possible_duplicate_of"]) == ("review", "3002")
+    assert "already saved as message 3002" in again["classification_reason"]
+
+
+def test_the_same_invoice_twice_in_one_download_is_caught_whatever_order_the_ids_sort_in(service, anaf, cfg):
+    anaf.add("3002", xml=rich_invoice_xml(lines=FUEL))  # ANAF lists the higher id first
+    anaf.add("3001", xml=rich_invoice_xml(lines=FUEL))  # the same invoice again, saved after it
+
+    service.sync(VALID_CUI)
+
+    assert (saved(cfg, "3002")["classification_status"], saved(cfg, "3001")["classification_status"]) == (
+        "classified", "review",
+    )
+
+
+def test_a_message_noted_by_an_earlier_version_against_another_year_is_still_checked_by_its_date(service, anaf, cfg):
+    anaf.add("3001", xml=rich_invoice_xml(lines=FUEL, number="100", issue_date="2025-03-01"))
+    anaf.add("3002", xml=rich_invoice_xml(lines=FUEL, number="100", issue_date="2026-03-05"))
+    anaf.add("3003", xml=rich_invoice_xml(lines=FUEL, number="100", issue_date="2026-03-05"))
+    service.sync(VALID_CUI, classify=False)
+    store = Store(cfg.db_path)
+    try:  # an earlier version noted the oldest message with the number, whatever its date
+        store._conn.execute("UPDATE messages SET possible_duplicate_of = '3001', classification_status = 'pending' "
+                            "WHERE id IN ('3002', '3003')")
+        store._conn.commit()
+    finally:
+        store.close()
+
+    service.classify_again(VALID_CUI)
+
+    assert saved(cfg, "3002")["classification_status"] == "classified"
+    assert saved(cfg, "3003")["classification_status"] == "review"
+
+
 def test_deciding_a_repeated_invoice_never_touches_the_first_ones_file(service, anaf, cfg):
     service.set_saga_output(per="invoice")
     anaf.add("3001", xml=rich_invoice_xml(lines=FUEL))

@@ -200,6 +200,20 @@ def test_a_price_with_many_decimals_is_kept_as_the_invoice_states_it():
     assert (row["Cantitate"], row["Pret"], row["Valoare"]) == ("1000.123", "1.234418", "1234.57")
 
 
+def test_a_worked_out_price_that_no_longer_gives_the_value_is_written_as_one_unit_at_the_value():
+    # 100000 kWh with a discount: 33333.33 / 100000 is 0.3333333, and 0.333333 x 100000 is 33333.30.
+    (row,) = lines_of(export(lines=[line("Energie", "33333.33", quantity="100000", unit="KWH", price="0.35")]))
+
+    assert (row["Cantitate"], row["Pret"], row["Valoare"]) == ("1", "33333.33", "33333.33")
+
+
+def test_a_price_with_more_than_six_decimals_that_rounds_away_from_the_value_is_written_as_one_unit():
+    # The invoice's 0.12345678 gives the value within a cent, but written as 0.123457 it would not.
+    (row,) = lines_of(export(lines=[line("Energie", "12345.68", quantity="100000", unit="KWH", price="0.12345678")]))
+
+    assert (row["Cantitate"], row["Pret"], row["Valoare"]) == ("1", "12345.68", "12345.68")
+
+
 def test_a_line_without_a_quantity_is_written_as_one_unit_at_its_value():
     (row,) = lines_of(export(lines=[line("Abonament", "80.00", quantity="0", price="0")]))
 

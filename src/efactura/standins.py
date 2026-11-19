@@ -91,6 +91,7 @@ class FakeAnaf:
         self.list_error: str | None = None
         self.download_errors: dict[str, str] = {}
         self.unreachable_downloads: set[str] = set()
+        self.throttled_downloads: set[str] = set()  # answered HTTP 429, as ANAF does when it limits calls
         self.issued = 1
         self.list_requests: list[dict] = []
         self.downloads: list[str] = []
@@ -192,6 +193,8 @@ class FakeAnaf:
             self.on_download(message_id)
         if message_id in self.unreachable_downloads:
             raise httpx.ConnectError("connection reset", request=request)
+        if message_id in self.throttled_downloads:
+            return httpx.Response(429, text="Too Many Requests")
         if message_id in self.download_errors:
             return _eroare(self.download_errors[message_id], "Descarcare mesaj")
         if message_id not in self.zips:

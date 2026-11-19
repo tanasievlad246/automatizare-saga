@@ -204,7 +204,7 @@ export function journalAddress(trace: string | null | undefined): string {
 
 /** The first line of the notice on the client list while the program downloads by itself. */
 export function runningLine(done: number, total: number): string {
-  return total > 1 ? `Programul descarcă acum facturile, singur: ${done} din ${total} clienți.` : 'Programul descarcă acum facturile, singur.'
+  return total > 1 ? `Programul descarcă acum facturile, singur: ${done} din ${countOf(total, 'un client', 'clienți')}.` : 'Programul descarcă acum facturile, singur.'
 }
 
 /** Between two reads of the status: did an automatic download end that the lists have not seen? */

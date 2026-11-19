@@ -235,6 +235,54 @@ def test_a_running_program_is_stopped_for_the_update_and_started_again(installed
     assert (result["restarted"], computer.answer) == (True, HEALTHY)
 
 
+def test_an_update_is_refused_while_a_download_runs_and_stops_nothing(installed, computer):
+    from efactura.service import _FileLock
+
+    installed.release("0.2.0")
+    computer.answer = HEALTHY
+
+    with _FileLock(installed.cfg.lock_path):  # a download under way in the running program
+        with pytest.raises(EfacturaError) as info:
+            update.update(installed.cfg, project=installed.project, now=NOW)
+
+    assert info.value.code == "busy"
+    assert computer.asked_to_stop == []
+    assert git(installed.project, "describe", "--tags") == "v0.1.0"
+
+
+def test_the_update_button_is_refused_at_once_while_a_download_runs(installed, computer, monkeypatch):
+    from efactura.service import _FileLock
+
+    monkeypatch.setattr(update, "PROJECT", installed.project)
+
+    with _FileLock(installed.cfg.lock_path):
+        with pytest.raises(EfacturaError) as info:
+            update.start_in_background(installed.cfg)
+
+    assert info.value.code == "busy"
+    assert computer.spawned == []
+
+
+def test_no_download_can_start_while_the_new_release_is_put_in_place(installed, computer, monkeypatch):
+    from efactura.service import _FileLock
+
+    installed.release("0.2.0")
+    tried = []
+
+    def sync_dependencies(project):
+        try:
+            with _FileLock(installed.cfg.lock_path):
+                tried.append("a download got in")
+        except EfacturaError as exc:
+            tried.append(exc.code)
+
+    monkeypatch.setattr(update, "sync_dependencies", sync_dependencies)
+
+    update.update(installed.cfg, project=installed.project, now=NOW)
+
+    assert tried == ["busy"]
+
+
 def test_a_program_that_was_not_running_is_not_started(installed, computer):
     installed.release("0.2.0")
 

@@ -64,7 +64,7 @@ export function importedButton(count: number): string {
 
 /** On one invoice's screen: what to know about its place in the files for SAGA, beyond the path. */
 export function fileCardNote(invoice: Invoice, saga: SagaState): string | null {
-  if (saga.problem) {
+  if (saga.problem || !saga.up_to_date) {
     return `Folderul pentru SAGA al acestui client nu este la zi, așa că fișierul poate să nu arate ce vedeți aici. Deschideți lista de facturi a clientului și apăsați acolo „${NOT_UP_TO_DATE.retry}”.`
   }
   if (invoice.saga_xml_path) {

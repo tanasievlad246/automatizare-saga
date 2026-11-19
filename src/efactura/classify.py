@@ -212,7 +212,8 @@ def read_jev_answer(body, rulebook: Rulebook) -> JevAnswer:
     if kind == "refusal":
         return JevAnswer(choice=None, confidence=None, probabilities={}, refused=True)
     choice = answer.get("choice")
-    if kind != "choice" or (choice != NONE_OF_THESE and choice not in rulebook.accounts):
+    # A list or an object as the choice is no account either (and cannot be looked up).
+    if kind != "choice" or not isinstance(choice, str) or (choice != NONE_OF_THESE and choice not in rulebook.accounts):
         raise EfacturaError(JEV_ERROR, f"Jev's reply is not one of the accounts offered: {choice!r}.")
 
     confidence = answer.get("confidence")

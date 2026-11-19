@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { api } from '../../api'
 import { formatDate, formatMoney } from '../../format'
+import { pickerLine, usableInvoices } from './savedInvoices'
 import type { Client } from '../../types'
 
 const HOW_MANY = 20
@@ -20,9 +21,7 @@ export function SavedInvoicePicker({
   onClose: () => void
 }) {
   const received = useQuery({ queryKey: ['received-invoices', client.cui], queryFn: () => api.receivedInvoices(client.cui) })
-  const invoices = [...(received.data?.invoices ?? [])]
-    .sort((a, b) => (b.invoice_issue_date ?? '').localeCompare(a.invoice_issue_date ?? ''))
-    .slice(0, HOW_MANY)
+  const invoices = usableInvoices(received.data?.invoices ?? [], HOW_MANY)
 
   return (
     <Dialog open onOpenChange={(isOpen) => !isOpen && onClose()}>
@@ -30,7 +29,7 @@ export function SavedInvoicePicker({
         <DialogHeader>
           <DialogTitle className="font-heading text-3xl">Alegeți o factură salvată</DialogTitle>
           <DialogDescription className="text-lg">
-            Ultimele {HOW_MANY} de facturi primite de {client.name}. Furnizorul și rândurile ei umplu factura de probă;
+            {pickerLine(invoices.length, client.name)}. Furnizorul și rândurile ei umplu factura de probă;
             factura salvată nu se schimbă.
           </DialogDescription>
         </DialogHeader>

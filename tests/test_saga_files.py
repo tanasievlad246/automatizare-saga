@@ -618,13 +618,25 @@ def test_a_file_is_not_forgotten_while_the_folder_for_saga_cannot_be_reached(ser
     assert state_of(service)["problem"] is None
 
 
-def test_a_folder_that_was_left_behind_and_cannot_be_reached_is_let_go(service, anaf, cfg, tmp_path):
+def test_a_folder_that_was_left_behind_and_cannot_be_reached_holds_nothing_up(service, anaf, cfg, tmp_path):
     downloaded(service, anaf, "A1")
     cfg.saga_dir.rename(tmp_path / "the stick, lost")
 
     result = service.set_saga_output(folder=str(tmp_path / "nou"))
 
     assert result["problems"] == []
+    assert files_in(tmp_path / "nou" / VALID_CUI) == [name_of("A1")]
+
+
+def test_the_file_in_a_folder_left_behind_goes_once_that_folder_can_be_reached_again(service, anaf, cfg, tmp_path):
+    downloaded(service, anaf, "A1")
+    cfg.saga_dir.rename(tmp_path / "the stick, taken out")
+    service.set_saga_output(folder=str(tmp_path / "nou"))
+
+    (tmp_path / "the stick, taken out").rename(cfg.saga_dir)  # the stick is back
+    service.write_saga_files(VALID_CUI)
+
+    assert files_in(folder(cfg)) == []  # not left there for good with an invoice SAGA may import twice
     assert files_in(tmp_path / "nou" / VALID_CUI) == [name_of("A1")]
 
 

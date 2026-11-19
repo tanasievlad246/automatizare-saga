@@ -140,13 +140,25 @@ def test_listing_is_ordered_oldest_saved_first(store):
 def test_finds_an_earlier_message_with_the_same_invoice(store):
     store.insert_message(make_row(id="1", invoice_number="FV-1", supplier_cui="87654321"))
 
-    match = store.find_same_invoice(VALID_CUI, "FACTURA PRIMITA", "87654321", "FV-1")
-    other_supplier = store.find_same_invoice(VALID_CUI, "FACTURA PRIMITA", "11111111", "FV-1")
-    other_company = store.find_same_invoice(OTHER_VALID_CUI, "FACTURA PRIMITA", "87654321", "FV-1")
+    match = store.find_same_invoice(VALID_CUI, "FACTURA PRIMITA", "87654321", "FV-1", "2026-11-09")
+    other_supplier = store.find_same_invoice(VALID_CUI, "FACTURA PRIMITA", "11111111", "FV-1", "2026-11-09")
+    other_company = store.find_same_invoice(OTHER_VALID_CUI, "FACTURA PRIMITA", "87654321", "FV-1", "2026-11-09")
 
     assert match == "1"
     assert other_supplier is None
     assert other_company is None
+
+
+def test_the_same_invoice_has_the_same_date_too_not_only_the_number_of_another_year(store):
+    store.insert_message(make_row(id="1", invoice_number="100", invoice_issue_date="2025-03-01", first_seen_at="2025-03-02"))
+    store.insert_message(make_row(id="2", invoice_number="100", invoice_issue_date="2026-03-05", first_seen_at="2026-03-06"))
+    store.insert_message(make_row(id="3", invoice_number="100", invoice_issue_date="2026-03-05", first_seen_at="2026-03-07"))
+
+    assert store.find_same_invoice(VALID_CUI, "FACTURA PRIMITA", "87654321", "100", "2026-03-05") == "2"
+    # Asked about message 3 itself: the one saved before it, never itself or a later one.
+    assert store.find_same_invoice(VALID_CUI, "FACTURA PRIMITA", "87654321", "100", "2026-03-05", before="3") == "2"
+    assert store.find_same_invoice(VALID_CUI, "FACTURA PRIMITA", "87654321", "100", "2026-03-05", before="2") is None
+    assert store.find_same_invoice(VALID_CUI, "FACTURA PRIMITA", "87654321", "100", None) is None  # no date, no match
 
 
 def test_last_clean_run_ignores_failed_partial_and_other_companies(store):
@@ -870,6 +882,7 @@ def test_issued_invoices_saved_before_they_were_classified_start_waiting_once(tm
     store.set_uploaded(["3"], True, "2026-11-10T10:00:00")  # SAGA has it already
     store.insert_message(make_row(id="4"))  # a received one saved without classification stays so
     store.delete_setting("issued_backlog_added")  # as in a database of 0.10.0
+    store._conn.execute("PRAGMA user_version = 0")  # which carried no version
     store.close()
 
     store = Store(path)
@@ -1066,5 +1079,95 @@ def test_a_database_made_before_the_archive_gains_it_when_opened(tmp_path):
     try:
         reopened.insert_message(make_row(id="3001"))
         assert an_import(reopened, ids=("3001",)) == 1
+    finally:
+        reopened.close()
+
+
+# --- found by the review of 0.13.0 ----------------------------------------------------------
+
+
+def test_checking_that_ids_exist_reads_them_once_not_once_per_id(store):
+    ids = [str(n) for n in range(1200)]
+    for message_id in ids:
+        store.insert_message(make_row(id=message_id))
+    statements = []
+    store._conn.set_trace_callback(statements.append)
+
+    store.set_uploaded(ids, True, "2026-11-19T10:00:00+02:00")
+    store.dismiss_suggestions(ids)
+    store.record_saga_import(
+        cui=VALID_CUI, imported_at=WHEN, source="api", folder="saga-archive/x", files=["F.xml"], ids=ids,
+    )
+
+    lookups = [sql for sql in statements if sql.startswith("SELECT id FROM messages WHERE id IN")]
+    assert len(lookups) == 3 * 3  # three calls, each 1200 ids in chunks of 500
+
+
+def test_the_latest_import_is_the_one_made_last_also_in_the_hour_the_clocks_go_back(store):
+    store.insert_message(make_row(id="3001"))
+    first = an_import(store, ids=("3001",), when="2026-10-25T03:40:00+03:00")
+    second = an_import(store, ids=("3001",), when="2026-10-25T03:10:00+02:00")  # 30 minutes later
+
+    assert store.saga_import_of("3001")["id"] == second
+    assert [entry["id"] for entry in store.saga_imports(VALID_CUI)] == [second, first]
+
+
+def test_the_latest_clean_run_is_the_one_started_last_also_in_the_hour_the_clocks_go_back(store):
+    for started in ("2026-10-25T03:40:00+03:00", "2026-10-25T03:10:00+02:00"):
+        run = store.start_run(VALID_CUI, 3, started)
+        store.finish_run(run, started, listed=0, new=0, failed=0, status="ok", advances_coverage=True)
+
+    assert store.last_clean_run_start(VALID_CUI) == "2026-10-25T03:10:00+02:00"
+
+
+def test_invoices_decided_without_a_rule_come_newest_first_also_in_the_hour_the_clocks_go_back(store):
+    for message_id, when in (("a", "2026-10-25T03:40:00+03:00"), ("b", "2026-10-25T03:10:00+02:00")):
+        store.insert_message(make_row(id=message_id))
+        store.set_classification(
+            message_id, classification_status="classified", cont="628", classification_method="jev",
+            classified_at=when, rule_subject="{}",
+        )
+
+    assert [row["id"] for row in store.decided_without_rule()] == ["b", "a"]
+
+
+def test_opening_a_database_that_is_up_to_date_does_not_wait_for_another_program_writing(tmp_path):
+    import threading
+
+    path = tmp_path / "efactura.db"
+    Store(path).close()
+    writer = sqlite3.connect(path)
+    writer.execute("BEGIN IMMEDIATE")  # another program in the middle of a write
+    opened = []
+
+    def open_and_read():
+        reader = Store(path)
+        try:
+            opened.append(reader.get_setting("nothing"))
+        finally:
+            reader.close()
+
+    try:
+        thread = threading.Thread(target=open_and_read, daemon=True)
+        thread.start()
+        thread.join(5)
+        assert opened == [None]
+    finally:
+        writer.rollback()
+        writer.close()
+
+
+def test_a_database_of_an_earlier_version_is_still_brought_up_to_date_when_opened(tmp_path):
+    path = tmp_path / "efactura.db"
+    Store(path).close()
+    old = sqlite3.connect(path)
+    old.execute("PRAGMA user_version = 0")  # as every database made before the version was kept
+    old.execute("DELETE FROM settings WHERE key = 'issued_examples_added'")
+    old.commit()
+    old.close()
+
+    reopened = Store(path)
+    try:
+        assert reopened.get_setting("issued_examples_added") == "1"
     finally:
         reopened.close()

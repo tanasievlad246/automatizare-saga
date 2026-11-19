@@ -295,3 +295,29 @@ def test_line_with_an_unreadable_amount_counts_as_zero_rather_than_failing():
     xml = rich_invoice_xml(lines=[line("Ceva", "77.00")]).replace(b">77.00</cbc:Line", b">abc</cbc:Line")
 
     assert parse_invoice(xml).lines[0].value == Decimal("0")
+
+
+def _damaged(how: str) -> bytes:
+    """An ANAF ZIP whose message file cannot be read, for one of the reasons zipfile gives."""
+    content = bytes(range(256)) * 8  # long enough for a damaged byte to land in the file's data
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED if how == "deflate" else zipfile.ZIP_STORED) as archive:
+        archive.writestr("5001.xml", content)
+    data = bytearray(buffer.getvalue())
+    local, central = data.index(b"PK\x03\x04"), data.index(b"PK\x01\x02")
+    if how in ("crc", "deflate"):
+        data[local + 30 + len("5001.xml") + 40] ^= 0xFF  # a byte of the file itself
+    elif how == "encrypted":
+        data[local + 6] |= 0x01
+        data[central + 8] |= 0x01
+    elif how == "method":
+        data[local + 8] = data[central + 10] = 99  # a compression method zipfile does not know
+    return bytes(data)
+
+
+@pytest.mark.parametrize("how", ["crc", "deflate", "encrypted", "method"])
+def test_a_zip_whose_message_file_cannot_be_read_is_anafs_error_for_that_message(how):
+    with pytest.raises(EfacturaError) as info:
+        extract_zip(_damaged(how))
+
+    assert info.value.code == "anaf_error"

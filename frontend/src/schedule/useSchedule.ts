@@ -21,7 +21,7 @@ export function useRefreshWhenAutomaticDownloadEnds(): void {
   const seen = useRef<ScheduleStatus | undefined>(undefined)
   useEffect(() => {
     if (runEnded(seen.current, status)) {
-      for (const key of ['clients', 'invoices', 'proposed-rules', 'auth']) {
+      for (const key of ['clients', 'invoices', 'proposed-rules', 'auth', 'invoice']) {
         void queryClient.invalidateQueries({ queryKey: [key] })
       }
     }

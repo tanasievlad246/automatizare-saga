@@ -460,6 +460,28 @@ def test_a_download_in_progress_refuses_the_try_before_windows_is_asked(service,
     assert asked == []
 
 
+def test_a_download_that_starts_while_the_pin_is_typed_is_waited_for_not_a_refusal(service, cfg, monkeypatch):
+    import time
+
+    started = threading.Event()
+
+    def a_download_meanwhile():
+        with service._lock():
+            started.set()
+            time.sleep(0.3)
+
+    def ask(url):
+        threading.Thread(target=a_download_meanwhile, daemon=True).start()
+        started.wait(2)
+        return ENDED_ON  # the PIN typed; a download now holds the program's lock for a moment
+
+    monkeypatch.setattr(certificate_login, "ask_windows", ask)
+
+    service.login_with_certificate()
+
+    assert auth.load_tokens(cfg.token_file) is not None
+
+
 def test_the_programs_lock_is_free_while_windows_is_asked(service, monkeypatch):
     held = []
 

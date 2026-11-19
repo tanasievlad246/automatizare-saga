@@ -241,3 +241,13 @@ describe('the files for SAGA in the journal', () => {
     expect(line('saga.files_written', { cui: '12345674' })).toBe('Fișierele pentru SAGA ale clientului CUI 12345674 sunt din nou la zi.')
   })
 })
+
+describe('an import confirmed in SAGA', () => {
+  it('says who confirmed it and how many invoices were marked', () => {
+    expect(describeEvent(line('saga.imported', { client: 'Alfa SRL', cui: '1', invoices: 12, source: 'automation' })))
+      .toBe('Importul în SAGA al clientului Alfa SRL a fost confirmat din automatizare: 12 facturi marcate ca importate, iar fișierul este acum în arhivă.')
+    expect(describeEvent(line('saga.imported', { cui: '12345674', invoices: 1, source: 'screen' })))
+      .toBe('Importul în SAGA al clientului CUI 12345674 a fost confirmat de pe ecran: o factură marcată ca importată, iar fișierul este acum în arhivă.')
+    expect(describeEvent(line('saga.imported', { cui: '1', invoices: 25, source: 'screen' }))).toContain('25 de facturi marcate')
+  })
+})

@@ -59,6 +59,15 @@ def test_without_a_header_the_cell_that_is_a_valid_cui_is_the_cui():
     ]
 
 
+def test_without_a_header_a_first_name_that_starts_like_cui_is_not_taken_for_the_header():
+    content = f"Cuibul Verde SRL;{VALID_CUI}\nBrutaria Soarelui SRL;RO{OTHER_VALID_CUI}\n".encode()
+
+    assert read_client_rows("clienti.csv", content) == [
+        (1, "Cuibul Verde SRL", VALID_CUI),
+        (2, "Brutaria Soarelui SRL", f"RO{OTHER_VALID_CUI}"),
+    ]
+
+
 def test_a_headerless_row_without_a_valid_cui_keeps_what_was_written():
     assert read_client_rows("clienti.csv", b"Delta Service SRL,12345678\n") == [
         (1, "Delta Service SRL", "12345678")

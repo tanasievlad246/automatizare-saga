@@ -428,6 +428,42 @@ def test_one_failed_download_does_not_stop_the_others(service, anaf, cfg, logged
     store.close()
 
 
+def test_a_message_whose_zip_cannot_be_read_fails_alone_and_the_others_are_saved(service, anaf, cfg, logged_in):
+    anaf.add("3001")
+    anaf.add("3002")
+    anaf.add("3003")
+    damaged = bytearray(anaf.zips["3002"])
+    damaged[damaged.index(b"PK\x03\x04") + 6] |= 0x01  # marked encrypted: zipfile cannot read it
+    damaged[damaged.index(b"PK\x01\x02") + 8] |= 0x01
+    anaf.zips["3002"] = bytes(damaged)
+
+    result = service.sync(VALID_CUI)
+
+    assert [m["id"] for m in result["new"]] == ["3001", "3003"]
+    assert [(f["id"], f["error"]["code"]) for f in result["failed"]] == [("3002", "anaf_error")]
+
+
+def test_when_anaf_limits_every_call_the_download_stops_instead_of_asking_for_each_message(
+    service, anaf, cfg, logged_in,
+):
+    for message_id in ("3001", "3002", "3003", "3004"):
+        anaf.add(message_id)
+    anaf.throttled_downloads = {"3002", "3003", "3004"}
+
+    with pytest.raises(EfacturaError) as info:
+        service.sync(VALID_CUI)
+
+    assert info.value.code == "anaf_limit_reached"
+    assert anaf.downloads == ["3001", "3002"]  # nothing more is asked once ANAF limits every call
+    store = Store(cfg.db_path)
+    try:
+        saved_first = store.get_message("3001")
+    finally:
+        store.close()
+    assert saved_first is not None  # what was saved stays saved
+    assert saved_first["classification_status"] != "pending"  # and is decided now, not at the next download
+
+
 def test_failed_message_is_retried_on_the_next_run(service, anaf, logged_in):
     anaf.add("3001")
     anaf.download_errors["3001"] = "Eroare tehnica"
@@ -656,6 +692,12 @@ def test_invoices_since_a_date(service, clock, anaf, synced):
 
 def test_badly_formed_since_date_is_invalid_input(service, synced):
     assert error_code(lambda: service.invoices(since="12/11/2026")) == "invalid_input"
+
+
+@pytest.mark.parametrize("day", ["20261103", "2026-W45-1"])  # dates Python reads, that match nothing stored
+def test_a_date_not_written_like_2026_11_03_is_invalid_input(service, synced, day):
+    assert error_code(lambda: service.invoices(since=day)) == "invalid_input"
+    assert error_code(lambda: service.costs(since=day)) == "invalid_input"
 
 
 def test_invoices_for_another_company_is_empty(service, synced):
@@ -979,3 +1021,35 @@ def test_a_range_anaf_keeps_no_moment_of_is_refused(service, anaf, clock, logged
 
     assert error_code(lambda: service.sync(VALID_CUI, start="2026-09-12", end="2026-09-12")) == "invalid_input"
     assert anaf.list_requests == []
+
+
+# --- the day's own offset across a change of the clocks -------------------------------------
+
+
+@pytest.fixture
+def in_bucharest(monkeypatch):
+    import time as clock_module
+
+    if not hasattr(clock_module, "tzset"):
+        pytest.skip("Changing the local zone needs time.tzset (not on Windows).")
+    monkeypatch.setenv("TZ", "Europe/Bucharest")
+    clock_module.tzset()
+    yield
+    monkeypatch.undo()
+    clock_module.tzset()
+
+
+def test_a_range_across_the_change_of_the_clocks_starts_at_that_days_midnight(in_bucharest):
+    now = datetime(2026, 11, 18, 10, 0).astimezone()  # winter time, +02:00
+    window = service_module._plan_window(7, None, None, "2026-10-20", "2026-10-21", now)
+
+    assert window.begin.utcoffset() == timedelta(hours=3)  # summer time, still, on 20 October
+    assert window.begin.astimezone(timezone.utc) == datetime(2026, 10, 19, 21, 0, tzinfo=timezone.utc)
+    assert window.finish.astimezone(timezone.utc) == datetime(2026, 10, 21, 21, 0, tzinfo=timezone.utc)
+
+
+def test_a_range_ending_before_the_spring_change_ends_at_that_days_midnight(in_bucharest):
+    now = datetime(2026, 4, 10, 10, 0).astimezone()  # summer time, +03:00
+    window = service_module._plan_window(7, None, None, "2026-03-24", "2026-03-25", now)
+
+    assert window.finish.astimezone(timezone.utc) == datetime(2026, 3, 25, 22, 0, tzinfo=timezone.utc)

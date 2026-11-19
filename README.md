@@ -74,7 +74,7 @@ An installed copy updates itself to the newest release, from the page or from th
 - **In the terminal, on macOS and Linux:** `uv run efactura update`.
 - `efactura update --check` only says whether a newer release exists, however it is started.
 
-What an update does: it stops the program, copies the database, moves the folder to the newest release tag, installs that release's dependencies and starts the program again. If any step fails, the folder goes back to the release it had and the program is started again on that one.
+What an update does: while invoices are being downloaded it is refused at once, before anything is stopped, since stopping the program does not stop a download under way. Otherwise it keeps any download from starting until it is done, stops the program, copies the database, moves the folder to the newest release tag, installs that release's dependencies and starts the program again. If any step fails, the folder goes back to the release it had and the program is started again on that one.
 
 **The database and the settings are not replaced:**
 
@@ -380,7 +380,7 @@ Failure (from any command):
 | `invalid_cui` | Not a CUI, or the check digit does not match. |
 | `invalid_input` | A wrong or missing argument. |
 | `no_spv_rights` | The certificate holder has no SPV rights for that company. |
-| `anaf_limit_reached` | ANAF's daily call limit (e.g. 10 downloads a day per message). |
+| `anaf_limit_reached` | ANAF's daily call limit (e.g. 10 downloads a day per message): only that message fails. When ANAF limits every call (HTTP 429), the client's download stops there and what was saved stays. |
 | `anaf_error` | ANAF refused or answered something unexpected; the message carries ANAF's text. |
 | `network_error` | ANAF could not be reached. |
 | `not_found` | No saved message with that id, or no client with that CUI in the list. |
@@ -599,7 +599,7 @@ An invoice stays "de verificat" (or "Așteaptă contul", when OpenRouter did not
 
 - **What is classified again:** the client's invoices, received and issued, that are "de verificat" or waiting for Jev and not marked as imported in SAGA. Invoices with an account are not touched.
 - **What stays:** a line a person chose keeps its account, and Jev is not asked about it; a line Jev was sure of keeps its account unless a rule now matches it. Jev is asked again only about the lines that have no account.
-- **"Întreabă-l din nou și pe Jev"**, ticked to begin with. Unticked, only the rules run: free, in seconds, and what Jev said before stays, its proposal included; an invoice waiting for Jev goes on waiting. Ticked, each question to Jev is paid again, and an invoice Jev was unsure of is often unsure again when nothing about it changed.
+- **"Întreabă-l din nou și pe Jev"**, ticked to begin with. Unticked, only the rules run: free, in seconds, and what Jev said before stays, its proposal included; an account a rule gave that no rule gives now does not stay; an invoice waiting for Jev goes on waiting. When OpenRouter stops answering partway through an invoice, the lines Jev answered are kept, so they are not paid for again. Ticked, each question to Jev is paid again, and an invoice Jev was unsure of is often unsure again when nothing about it changed.
 - **Still to check either way:** an invoice saved twice, and one whose parties do not fit its kind; the program holds them back on purpose.
 - **For every client**, the page takes the clients one at a time and shows how each went. When Jev stops answering (credit, key, connection), the invoices after stay as they were and the clients after are classified with the rules alone.
 - **The journal** gets one line per client ("classification.again"); an invoice that gets an account has its own line, as always, and one that stays "de verificat" is a detail.

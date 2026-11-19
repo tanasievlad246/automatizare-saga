@@ -189,6 +189,9 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
       : 'De acum, facturile emise de clienți nu se mai văd pe ecran.',
   'saga.files_failed': (data) =>
     `Fișierele pentru SAGA ale clientului ${who(data)} nu au putut fi scrise. Programul încearcă din nou la următoarea schimbare.`,
+  'saga.imported': (data) =>
+    `Importul în SAGA al clientului ${who(data)} a fost confirmat ${data.source === 'screen' ? 'de pe ecran' : 'din automatizare'}: ` +
+    `${countOf(Number(data.invoices), 'o factură marcată', 'facturi marcate')} ca importat${Number(data.invoices) === 1 ? 'ă' : 'e'}, iar fișierul este acum în arhivă.`,
   'saga.files_written': (data) => `Fișierele pentru SAGA ale clientului ${who(data)} sunt din nou la zi.`,
   'settings.confidence': (data) => `Cât de sigur trebuie să fie Jev: acum ${formatPercent(Number(data.level_set))}.`,
   'settings.jev_question': () => 'A fost schimbată întrebarea pusă lui Jev.',

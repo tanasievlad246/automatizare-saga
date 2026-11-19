@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { formatClock } from '../format'
 import type { JournalLine } from '../types'
+import { detailText } from './details'
 import { areaName, describeEvent, formatDuration, LEVEL_NAMES } from './eventTexts'
 
 const LEVEL_LOOKS: Record<JournalLine['level'], string> = {
@@ -45,7 +46,7 @@ export function JournalEntry({ line, onShowOperation }: { line: JournalLine; onS
           <p className="[overflow-wrap:anywhere]"><span className="font-semibold">Detalii tehnice:</span> {line.message}</p>
           {(details.length > 0 || line.duration_ms !== null) && (
             <p className="font-mono text-[0.88rem] break-words">
-              {details.map(([name, value]) => `${name}: ${String(value)}`).join(' · ')}
+              {details.map(([name, value]) => `${name}: ${detailText(value)}`).join(' · ')}
               {line.duration_ms !== null && `${details.length ? ' · ' : ''}durată: ${formatDuration(line.duration_ms)}`}
             </p>
           )}

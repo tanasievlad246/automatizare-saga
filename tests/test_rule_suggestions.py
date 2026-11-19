@@ -223,6 +223,20 @@ def test_not_now_stays_when_the_same_account_is_chosen_again(service, anaf):
     assert proposal_on(service, "3001") is None
 
 
+def test_not_now_stays_when_the_same_account_comes_back_after_the_invoice_stopped_for_a_person(
+    service, anaf, openrouter,
+):
+    receive(anaf, "3001", "Ciment Portland 40 kg")
+    service.sync(VALID_CUI)
+    service.dismiss_rule_suggestions(["3001"])
+    openrouter.answer_for("ciment", "302", confidence=0.4)
+    service.classify("3001", force=True)  # Jev is unsure this time: the invoice waits for a person
+
+    service.set_cont("3001", cont="302")
+
+    assert proposal_on(service, "3001") is None
+
+
 def test_the_rule_made_from_a_proposal_covers_the_invoice_it_came_from(service, anaf):
     receive(anaf, "3001", "Office365 Business")
     service.sync(VALID_CUI)

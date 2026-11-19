@@ -47,6 +47,9 @@ _NO_MESSAGES = "Nu exista mesaje"
 _NO_SPV_RIGHTS = "Nu aveti drept"
 # ANAF's wording when a daily call limit is used up ("S-au facut deja 1000 ...").
 _LIMIT_REACHED = re.compile(r"S-au facut deja \d+", re.IGNORECASE)
+# HTTP 429: ANAF limits every call, not only this one. A download stops on it, where a limit
+# on one message ("10 descarcari de mesaj") only fails that message.
+LIMITING_EVERY_CALL = "ANAF is limiting calls; try again later."
 # Far more pages than 60 days of messages can fill: stops a list that never ends.
 _MAX_PAGES = 1000
 
@@ -138,7 +141,7 @@ class AnafService:
                 LOGIN_NEEDED, "ANAF rejected the saved login. Plug in the USB token and log in again."
             )
         if response.status_code == 429:
-            raise EfacturaError(ANAF_LIMIT_REACHED, "ANAF is limiting calls; try again later.")
+            raise EfacturaError(ANAF_LIMIT_REACHED, LIMITING_EVERY_CALL)
         if response.status_code >= 400:
             raise EfacturaError(ANAF_ERROR, f"ANAF refused the request (HTTP {response.status_code}).")
         return response

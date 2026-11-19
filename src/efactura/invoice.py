@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import re
 import zipfile
+import zlib
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from xml.etree import ElementTree
@@ -56,7 +57,12 @@ def extract_zip(data: bytes, max_member_bytes: int = MAX_MEMBER_BYTES) -> Extrac
                 raise EfacturaError(
                     ANAF_ERROR, f"{name} in ANAF's ZIP is too large ({info.file_size} bytes)."
                 )
-            content = archive.read(info)
+            try:
+                content = archive.read(info)
+            except (zipfile.BadZipFile, zlib.error, NotImplementedError, RuntimeError, EOFError) as exc:
+                # Damaged, compressed in a way zipfile does not know, or encrypted: this message
+                # fails, and the download goes on with the others.
+                raise EfacturaError(ANAF_ERROR, f"{name} in ANAF's ZIP cannot be read: {exc}") from None
             if _SIGNATURE_NAME.match(name):
                 signature = content
             elif xml is None:

@@ -663,7 +663,9 @@ def create_app(
     )
     async def import_clients(request: Request, filename: str = Query(...)):
         content = await request.body()
-        return call(lambda s: s.import_clients(filename, content))
+        # Reading the file and saving each row takes a while: off the event loop, so the other
+        # requests (the page asks every few seconds) are not held up meanwhile.
+        return await run_in_threadpool(call, lambda s: s.import_clients(filename, content))
 
     # --- settings and keys changed on screen ---
 

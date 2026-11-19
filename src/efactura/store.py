@@ -206,6 +206,11 @@ _EXAMPLES_ADDED = "examples_added"
 _ISSUED_EXAMPLES_ADDED = "issued_examples_added"
 # Set once the issued invoices saved before they were classified have been put to wait.
 ISSUED_BACKLOG = "issued_backlog_added"
+# Written in the database once it is brought up to date (PRAGMA user_version). A database that
+# carries it is opened by reading alone: bringing one up to date takes the write lock, and would
+# make every page request wait for a long write by another program. Raise it with every change
+# to SCHEMA or to _migrate.
+SCHEMA_VERSION = 1
 _ACCOUNT_TABLES = {RECEIVED: "accounts", ISSUED: "issued_accounts"}
 
 # Added to `messages` after the first version; existing databases gain them on opening.
@@ -274,8 +279,9 @@ class Store:
         self._conn.row_factory = sqlite3.Row
         self._use_wal()
         self._conn.execute("PRAGMA foreign_keys=ON")
-        self._conn.executescript(SCHEMA)
-        self._migrate()
+        self._conn.executescript(SCHEMA)  # takes no lock when the tables are there already
+        if self._conn.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
+            self._migrate()
 
     def close(self) -> None:
         self._conn.close()
@@ -353,6 +359,7 @@ class Store:
                     "AND invoice_number IS NOT NULL"
                 )
                 self._conn.execute("INSERT INTO settings (key, value) VALUES (?, '1')", (ISSUED_BACKLOG,))
+            self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             self._conn.execute("COMMIT")
         except BaseException:
             self._conn.execute("ROLLBACK")
@@ -406,12 +413,24 @@ class Store:
             )
 
     def find_same_invoice(
-        self, cui: str, message_type: str, supplier_cui: str, invoice_number: str
+        self, cui: str, message_type: str, supplier_cui: str, invoice_number: str, issue_date: str | None,
+        before: str | None = None,
     ) -> str | None:
+        """The first message saved with this very invoice: the same supplier, number and date
+        (a supplier who numbers again each year reuses numbers, not dates). `before`: a
+        message already saved; only those saved before it count. No date, no match."""
+        if not issue_date:
+            return None
+        # In the order the rows were written: one download saves all its messages with the same
+        # time, and ANAF's ids do not sort in the order they were saved.
+        earlier, params = "", [cui, message_type, supplier_cui, invoice_number, issue_date]
+        if before is not None:
+            earlier = "AND rowid < (SELECT rowid FROM messages WHERE id = ?) "
+            params.append(before)
         row = self._conn.execute(
-            "SELECT id FROM messages WHERE cui = ? AND message_type = ? "
-            "AND supplier_cui = ? AND invoice_number = ? ORDER BY first_seen_at, id LIMIT 1",
-            (cui, message_type, supplier_cui, invoice_number),
+            "SELECT id FROM messages WHERE cui = ? AND message_type = ? AND supplier_cui = ? "
+            f"AND invoice_number = ? AND invoice_issue_date = ? {earlier}ORDER BY rowid LIMIT 1",
+            params,
         ).fetchone()
         return row["id"] if row else None
 
@@ -486,7 +505,8 @@ class Store:
     def set_uploaded(self, ids: Iterable[str], uploaded: bool, when: str) -> None:
         """All or nothing: an unknown id leaves every row untouched."""
         wanted = list(dict.fromkeys(ids))
-        missing = [i for i in wanted if i not in self.existing_ids(wanted)]
+        found = self.existing_ids(wanted)
+        missing = [i for i in wanted if i not in found]
         if missing:
             raise EfacturaError(NOT_FOUND, f"No saved message with id: {', '.join(missing)}")
         with self._conn:
@@ -627,7 +647,8 @@ class Store:
         """Keep an import in SAGA and mark its invoices as imported at `imported_at`. All or
         nothing: an unknown id keeps nothing and marks nothing."""
         wanted = list(dict.fromkeys(ids))
-        missing = [i for i in wanted if i not in self.existing_ids(wanted)]
+        found = self.existing_ids(wanted)
+        missing = [i for i in wanted if i not in found]
         if missing:
             raise EfacturaError(NOT_FOUND, f"No saved message with id: {', '.join(missing)}")
         with self._conn:
@@ -658,7 +679,7 @@ class Store:
             "FROM saga_imports i "
             "LEFT JOIN saga_import_invoices l ON l.import_id = i.id "
             "LEFT JOIN messages m ON m.id = l.message_id "
-            "WHERE i.cui = ? GROUP BY i.id ORDER BY i.imported_at DESC, i.id DESC",
+            "WHERE i.cui = ? GROUP BY i.id ORDER BY i.id DESC",  # in the order made: clock text repeats an hour in autumn
             (cui,),
         )
         return [{**dict(row), "files": json.loads(row["files"])} for row in rows]
@@ -682,7 +703,7 @@ class Store:
         row = self._conn.execute(
             "SELECT i.id, i.imported_at, i.source FROM saga_imports i "
             "JOIN saga_import_invoices l ON l.import_id = i.id WHERE l.message_id = ? "
-            "ORDER BY i.imported_at DESC, i.id DESC LIMIT 1",
+            "ORDER BY i.id DESC LIMIT 1",
             (message_id,),
         ).fetchone()
         return dict(row) if row else None
@@ -721,7 +742,7 @@ class Store:
             f"WHERE {RECEIVED_SQL} AND classification_status = 'classified' AND {NOT_BY_RULE_SQL} "
             "AND rule_subject IS NOT NULL "
             "AND (suggestion_dismissed_for IS NULL OR suggestion_dismissed_for != cont) "
-            f"{recent} ORDER BY classified_at DESC, id",
+            f"{recent} ORDER BY julianday(classified_at) DESC, id",  # by the instant, whatever the offset
             params,
         )
         return [dict(row) for row in rows]
@@ -755,7 +776,8 @@ class Store:
         """Turn down the proposed rule of these invoices, for the account each has now.
         All or nothing: an unknown id leaves every row untouched."""
         wanted = list(dict.fromkeys(ids))
-        missing = [i for i in wanted if i not in self.existing_ids(wanted)]
+        found = self.existing_ids(wanted)
+        missing = [i for i in wanted if i not in found]
         if missing:
             raise EfacturaError(NOT_FOUND, f"No saved message with id: {', '.join(missing)}")
         with self._conn:
@@ -1043,7 +1065,7 @@ class Store:
         """Start of the latest run for this CUI up to which everything is known to be saved."""
         row = self._conn.execute(
             "SELECT started_at FROM sync_runs WHERE cui = ? AND status = 'ok' "
-            "AND advances_coverage = 1 ORDER BY started_at DESC LIMIT 1",
+            "AND advances_coverage = 1 ORDER BY id DESC LIMIT 1",  # the run started last
             (cui,),
         ).fetchone()
         return row["started_at"] if row else None

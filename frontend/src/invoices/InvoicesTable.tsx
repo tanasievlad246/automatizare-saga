@@ -17,7 +17,7 @@ import { listAccount } from './lineAccounts'
 export function InvoicesTable({
   invoices, party = 'supplier', loading, whenEmpty,
 }: { invoices: Invoice[]; party?: Party; loading: boolean; whenEmpty: string }) {
-  const nameOf = (invoice: Invoice) => (party === 'supplier' ? invoice.supplier_name : invoice.customer_name)
+  const nameOf = (invoice: Invoice) => (party === 'supplier' ? invoice.supplier_name ?? 'Furnizor necunoscut' : invoice.customer_name ?? 'Client necunoscut')
   if (loading) {
     return <p role="status" className="rounded-2xl border bg-card px-6 py-8 text-lg text-muted-foreground">Se încarcă facturile…</p>
   }
@@ -68,7 +68,7 @@ export function InvoicesTable({
                   >
                     <Link
                       to={`/clienti/${invoice.cui}/facturi/${invoice.id}`}
-                      aria-label={`${waiting ? 'Alege contul pentru' : 'Deschide'} factura ${invoice.invoice_number ?? ''} ${party === 'supplier' ? 'de la' : 'către'} ${nameOf(invoice) ?? ''}`}
+                      aria-label={`${waiting ? 'Alege contul pentru' : 'Deschide'} factura ${invoice.invoice_number ?? ''} ${party === 'supplier' ? 'de la' : 'către'} ${nameOf(invoice)}`}
                     >
                       {waiting ? 'Alege contul' : 'Deschide'}
                     </Link>

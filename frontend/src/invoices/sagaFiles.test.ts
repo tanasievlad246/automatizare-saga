@@ -82,6 +82,12 @@ describe('the note on an invoice decided line by line', () => {
 })
 
 describe('the note on an invoice', () => {
+  it('says the folder is not up to date when it is not, with no problem named', () => {
+    const stale = { ...fine(), up_to_date: false }
+    expect(fileCardNote(invoice('1', FILE), stale)).toBe(fileCardNote(invoice('1', FILE), broken))
+    expect(fileCardNote(invoice('1', FILE), stale)).toContain('nu este la zi')
+  })
+
   it('says the invoice shares the file of its client', () => {
     expect(fileCardNote(invoice('1', FILE), fine())).toBe('Factura este în fișierul clientului, împreună cu celelalte facturi gata de import:')
   })

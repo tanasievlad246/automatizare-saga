@@ -199,6 +199,82 @@ def test_a_rule_that_now_matches_a_line_jev_decided_wins(service, anaf, openrout
     assert [(entry["cont"], entry["method"]) for entry in lines_of(service)][0] == ("628", "rules")
 
 
+def test_without_jev_a_line_whose_rule_is_gone_loses_that_rules_account(service, anaf, openrouter, cfg):
+    openrouter.answer_for("piese", "628", confidence=0.5)
+    anaf.add("3001", xml=rich_invoice_xml(lines=[FUEL, PARTS]))
+    service.sync(VALID_CUI)
+    set_rulebook(cfg.db_path, Rulebook(accounts=BOOK.accounts, rules=(), instructions=BOOK.instructions))
+
+    service.classify_again(VALID_CUI, jev=False)
+
+    first, second = lines_of(service)
+    assert (first["cont"], first["method"]) == (None, None)
+    assert "Jev was not asked" in first["reason"]
+    assert (second["suggested_cont"], second["confidence"]) == ("628", 0.5)  # what Jev said stays
+    assert saved(cfg)["classification_status"] == "review"
+
+
+def test_when_openrouter_fails_partway_through_an_invoice_the_lines_it_answered_are_kept(
+    service, anaf, openrouter, cfg,
+):
+    openrouter.answer_for("piese", "628", confidence=0.5)
+    openrouter.answer_for("ulei", "628", confidence=0.4)
+    anaf.add("3001", xml=rich_invoice_xml(lines=[FUEL, PARTS, OIL]))
+    service.sync(VALID_CUI)
+    openrouter.answer_for("piese", "628", confidence=0.95)
+    openrouter.fail_for["ulei"] = 402  # out of credit by the time the third line is asked
+
+    result = service.classify_again(VALID_CUI)
+
+    assert result["jev_stopped"] is True
+    first, second, third = lines_of(service)
+    assert (second["cont"], second["method"]) == ("628", "jev")  # paid for, and kept
+    assert (third["cont"], third["suggested_cont"], third["confidence"]) == (None, "628", 0.4)  # as it was
+    openrouter.fail_for.clear()
+    openrouter.answer_for("ulei", "628", confidence=0.95)
+    before = len(openrouter.requests)
+
+    service.classify_again(VALID_CUI)
+
+    assert asked_about(openrouter, before) == ["Ulei motor"]  # the line already answered is not paid again
+    assert saved(cfg)["classification_status"] == "classified"
+
+
+def test_when_openrouter_fails_partway_a_line_whose_rule_is_gone_does_not_get_that_rules_account_back(
+    service, anaf, openrouter, cfg,
+):
+    openrouter.answer_for("piese", "628", confidence=0.5)
+    anaf.add("3001", xml=rich_invoice_xml(lines=[PARTS, FUEL]))
+    service.sync(VALID_CUI)
+    set_rulebook(cfg.db_path, Rulebook(accounts=BOOK.accounts, rules=(), instructions=BOOK.instructions))
+    openrouter.answer_for("piese", "628", confidence=0.95)
+    openrouter.fail_for["motorina"] = 402  # out of credit when the fuel line, no rule's now, is asked
+
+    service.classify_again(VALID_CUI)
+
+    first, second = lines_of(service)
+    assert (first["cont"], first["method"]) == ("628", "jev")
+    assert (second["cont"], second["method"]) == (None, None)
+    assert saved(cfg)["classification_status"] == "review"
+
+
+def test_when_openrouter_fails_on_the_first_question_an_invoice_decided_whole_before_is_left_whole(
+    service, anaf, openrouter, cfg,
+):
+    service.set_client_per_line(VALID_CUI, False)
+    openrouter.answer_for("piese", "628", confidence=0.5)
+    anaf.add("3001", xml=rich_invoice_xml(lines=[PARTS, OIL]))
+    service.sync(VALID_CUI)
+    service.set_client_per_line(VALID_CUI, True)
+    row = saved(cfg)
+    openrouter.valid_keys = {"another-key"}
+
+    service.classify_again(VALID_CUI)
+
+    after = saved(cfg)
+    assert (after["line_accounts"], after["suggested_cont"], after["classification_status"]) == (None, "628", "review")
+
+
 def test_invoices_with_an_account_or_imported_are_not_touched(service, anaf, openrouter, cfg):
     anaf.add("3001", xml=rich_invoice_xml(lines=[FUEL]))
     openrouter.answer_for("piese", "628", confidence=0.5)

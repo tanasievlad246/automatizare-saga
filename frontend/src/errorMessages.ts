@@ -19,7 +19,7 @@ const MESSAGES: Record<string, string> = {
   client_off: 'Clientul este oprit. Porniți-l din lista de clienți ca să îi descărcați facturile.',
   busy: 'Programul descarcă sau clasifică deja facturi. Așteptați să se termine, apoi încercați din nou.',
   config_error: 'Lipsește o setare. Verificați pagina „Chei și parole”.',
-  not_classifiable: 'Contul nu se poate schimba cât timp factura este bifată ca importată în SAGA. Debifați „Am importat factura în SAGA”.',
+  not_classifiable: 'Contul acestei facturi nu se poate schimba acum. Dacă este bifată ca importată în SAGA, debifați întâi „Am importat factura în SAGA”. Altfel, factura s-a schimbat între timp: pagina arată acum cum este.',
   update_error: 'Programul nu a putut fi actualizat. A rămas la versiunea pe care o avea.',
   backup_error: 'Copia de siguranță nu a reușit. Verificați folderul ales pentru copii.',
   jev_error: 'Jev nu a putut fi întrebat. Verificați cheia OpenRouter și creditul din cont.',

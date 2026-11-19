@@ -38,7 +38,11 @@ export function AccountCard({
         ['invoice', 'invoices', 'clients', 'proposed-rules'].map((key) => queryClient.invalidateQueries({ queryKey: [key] })),
       )
     },
-    onError: showError,
+    onError: (error: unknown) => {
+      showError(error)
+      // The invoice may have changed meanwhile: the screen shows it as it is now.
+      void queryClient.invalidateQueries({ queryKey: ['invoice'] })
+    },
   }
   const accept = useMutation({ mutationFn: () => api.acceptSuggestion(invoice.id), ...afterChange })
   // An invoice saved before accounts were chosen automatically has no state at all; the

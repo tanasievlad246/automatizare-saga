@@ -190,7 +190,7 @@ export function ClientInvoicesPage() {
         )}
         {tab !== 'archive' && narrowed && found.length > 0 && (
           <div className="flex flex-wrap items-center gap-x-4">
-            <p role="status" className="text-muted-foreground">{foundLine(found.length, invoices.length)}</p>
+            <p role="status" className="text-muted-foreground">{foundLine(inView.length, invoices.length)}</p>
             <Button type="button" variant="link" className="px-0" onClick={showAll}>Arată toate facturile</Button>
           </div>
         )}

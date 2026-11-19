@@ -316,6 +316,8 @@ def test_a_refusal_is_reported():
     {"answers": {"cont": {"type": "choice", "choice": "9999"}}},
     {"answers": {"cont": {"type": "score", "score": 1}}},
     {"answers": {"cont": {"type": "choice", "choice": "371", "confidence": "high"}}},
+    {"answers": {"cont": {"type": "choice", "choice": ["628"], "confidence": 0.9}}},  # a list, not an account
+    {"answers": {"cont": {"type": "choice", "choice": {"cont": "628"}}}},
     {"answers": {"cont": {"type": "choice", "choice": "371", "confidence": 95}}},
     {"answers": {"cont": {"type": "choice", "choice": "371", "confidence": -0.2}}},
     {"answers": {"cont": {"type": "choice", "choice": "371", "confidence": float("nan")}}},

@@ -465,25 +465,25 @@ def _said(exc: Exception) -> str:
 
 
 def _one_at_a_time(cfg: Config) -> _FileLock:
-    return _held_or_busy(cfg.data_dir / "restore.lock", "A restore is already running.")
+    return held_or_busy(cfg.data_dir / "restore.lock", "A restore is already running.")
 
 
 def no_restore_running(cfg: Config) -> _FileLock:
     """For the update, which stops and starts the program too."""
-    return _held_or_busy(cfg.data_dir / "restore.lock", "A restore is running. Wait for it to finish.")
+    return held_or_busy(cfg.data_dir / "restore.lock", "A restore is running. Wait for it to finish.")
 
 
 def _no_update_running(cfg: Config) -> _FileLock:
-    return _held_or_busy(cfg.data_dir / "update.lock", "An update is running. Wait for it to finish, then restore.")
+    return held_or_busy(cfg.data_dir / "update.lock", "An update is running. Wait for it to finish, then restore.")
 
 
 def _no_download_running(cfg: Config) -> _FileLock:
     """Held across the swap: a download writes to the database for minutes, and stopping
     the program does not stop one that is under way."""
-    return _held_or_busy(cfg.lock_path, "Invoices are being downloaded. Wait for that to finish, then restore.")
+    return held_or_busy(cfg.lock_path, "Invoices are being downloaded. Wait for that to finish, then restore.")
 
 
-def _held_or_busy(path: Path, busy: str) -> _FileLock:
+def held_or_busy(path: Path, busy: str) -> _FileLock:
     class _Lock(_FileLock):
         def __enter__(self):
             try:

@@ -237,6 +237,7 @@ describe('after her own save', () => {
 describe('the first line of the notice on the client list', () => {
   it('counts the clients only when there is more than one', () => {
     expect(runningLine(2, 3)).toBe('Programul descarcă acum facturile, singur: 2 din 3 clienți.')
+    expect(runningLine(3, 25)).toBe('Programul descarcă acum facturile, singur: 3 din 25 de clienți.')
     expect(runningLine(0, 1)).toBe('Programul descarcă acum facturile, singur.')
     expect(runningLine(0, 0)).toBe('Programul descarcă acum facturile, singur.')
   })

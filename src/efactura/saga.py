@@ -239,8 +239,13 @@ def _rows(invoice: Invoice) -> list[_Row]:
         # carry no quantity at all.
         if not item.quantity:
             quantity, price = Decimal(1), value
-        elif abs(quantity * price - value) > CENT:
-            price = value / quantity
+        else:
+            if abs(quantity * price - value) > CENT:
+                price = value / quantity
+            if abs(quantity * _rounded_price(price) - value) > CENT:
+                # Written with six decimals at most, the price would no longer give the value back
+                # (a large quantity): one unit at the value is what SAGA can book exactly.
+                quantity, price = Decimal(1), value
         rows.append(_Row(
             description=item.description,
             unit=UNITS.get((item.unit or "").upper(), item.unit or ""),
@@ -310,12 +315,16 @@ def _plain(number: Decimal) -> str:
 def _price(number: Decimal) -> str:
     """As on the invoice when it has two to six decimals; a calculated price is brought
     into that range."""
+    return format(_no_minus_zero(_rounded_price(number)), "f")
+
+
+def _rounded_price(number: Decimal) -> Decimal:
     exponent = number.as_tuple().exponent
     if exponent < -6:
-        number = number.quantize(Decimal("0.000001"), ROUND_HALF_UP)
-    elif exponent > -2:
-        number = number.quantize(CENT, ROUND_HALF_UP)
-    return format(_no_minus_zero(number), "f")
+        return number.quantize(Decimal("0.000001"), ROUND_HALF_UP)
+    if exponent > -2:
+        return number.quantize(CENT, ROUND_HALF_UP)
+    return number
 
 
 def _no_minus_zero(number: Decimal) -> Decimal:

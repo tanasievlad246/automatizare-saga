@@ -37,8 +37,8 @@ export function JevCallsTable({ calls, loading }: { calls: JevCall[]; loading: b
                 ) : (
                   <Link to={`/clienti/${call.cui}/facturi/${call.message_id}`} className="font-semibold">
                     {call.message_type && isIssued({ message_type: call.message_type })
-                      ? `Emisă către ${call.customer_name ?? ''}`
-                      : call.supplier_name}{' '}
+                      ? `Emisă către ${call.customer_name ?? 'Client necunoscut'}`
+                      : call.supplier_name ?? 'Furnizor necunoscut'}{' '}
                     · {call.invoice_number}
                   </Link>
                 )}

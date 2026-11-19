@@ -26,7 +26,7 @@ from typing import Callable
 import httpx
 
 from . import __version__, auth, certificate_login, jev, journal, saga, schedule
-from .anaf import TYPE_PREFIXES, AnafService, normalize_cui, parse_created_at, type_slug
+from .anaf import LIMITING_EVERY_CALL, TYPE_PREFIXES, AnafService, normalize_cui, parse_created_at, type_slug
 from .classify import (
     QUESTION,
     JevAnswer,
@@ -91,6 +91,8 @@ DAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
 # sync_all: how long and how often a client waits for a download made by hand
 BUSY_PAUSE = 5.0
 BUSY_TRIES = 12
+CERTIFICATE_LOGIN_WAIT = 45.0  # seconds, after the PIN, for a download to let go of the lock
+_ISO_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 # Failures that would be the same for every other client: the run stops, and says how it ended.
 STOPS_THE_RUN = {
     LOGIN_NEEDED: "failed",
@@ -206,10 +208,12 @@ class Service:
             "redirect_uri": self.cfg.redirect_uri,
         }
 
-    def login_finish(self, address: str) -> dict:
+    def login_finish(self, address: str, wait: float = 0) -> dict:
+        """Save the login from the address ANAF ended on. `wait`: how long to wait for a
+        download holding the program's lock, rather than refuse at once."""
         code = auth.code_from_redirect(address)
         now = self._now()
-        with self._lock():
+        with _FileLock(self.cfg.lock_path, wait=wait):
             tokens = auth.exchange_code(self.cfg, self._http, code, now)
             auth.save_tokens(self.cfg.token_file, tokens)
             journal.record("anaf", "anaf.connected", "Connected to ANAF with the certificate.")
@@ -238,7 +242,9 @@ class Service:
                 raise
             # Nothing the person typed: ANAF ended the login on an address with no code.
             raise EfacturaError(ANAF_ERROR, "ANAF ended the login on an address that holds no code.") from None
-        return self.login_finish(address)
+        # The PIN has been typed, and the code is good for about a minute: a download that
+        # started meanwhile is waited for, not a reason to make the person start again.
+        return self.login_finish(address, wait=CERTIFICATE_LOGIN_WAIT)
 
     # --- ANAF ---------------------------------------------------------------
 
@@ -466,6 +472,9 @@ class Service:
                     failed=result["failed_count"], classified=decided.get(CLASSIFIED), review=decided.get(REVIEW),
                     waiting=decided.get(PENDING), duration_ms=_since(began),
                 )
+                if result.pop("limited"):
+                    # The same for every client after this one: said as the error it is.
+                    raise EfacturaError(ANAF_LIMIT_REACHED, LIMITING_EVERY_CALL)
                 return result
             finally:
                 store.close()
@@ -481,7 +490,7 @@ class Service:
 
         saved: list[dict] = []
         failed: list[dict] = []
-        network_failures = 0
+        network_failures, limited = 0, False
         for position, entry in enumerate(unseen):
             try:
                 saved.append(
@@ -502,6 +511,12 @@ class Service:
                 level="warning", id=entry["id"], cui=cui, error=error.message,
             )
             log.warning("Message %s failed: %s: %s", entry["id"], error.code, error.message)
+            if error.message == LIMITING_EVERY_CALL:
+                # ANAF limits every call: the rest are not asked for now. What was saved is still
+                # given its account, and the download then ends with this error (`sync`).
+                failed.extend(_failure(rest, error) for rest in unseen[position + 1 :])
+                limited = True
+                break
             network_failures = network_failures + 1 if error.code == NETWORK_ERROR else 0
             if network_failures >= MAX_NETWORK_FAILURES:
                 skipped = EfacturaError(
@@ -511,6 +526,7 @@ class Service:
                 break
 
         return {
+            "limited": limited,
             "ok": True,
             "cui": cui,
             "window_days": window.days,
@@ -539,7 +555,7 @@ class Service:
         duplicate_of = None
         if fields["invoice_number"] and fields["supplier_cui"]:
             duplicate_of = store.find_same_invoice(
-                cui, message_type, fields["supplier_cui"], fields["invoice_number"]
+                cui, message_type, fields["supplier_cui"], fields["invoice_number"], fields["invoice_issue_date"]
             )
             if duplicate_of:
                 log.warning(
@@ -1102,6 +1118,21 @@ class Service:
                 f"The files for SAGA of {cui} have changed since version {version} was read; nothing was "
                 "marked. Read them again, import them and confirm with the new version.",
             )
+        # What waits now, as the files would be written, against what they hold and were recorded
+        # with: an account changed but not yet written, or a file written but not recorded, would
+        # mark an invoice as SAGA never got it.
+        folder, wanted = self._saga_files_now(store, cui)
+        should_hold = {self._stored_path(folder / file.name): (sorted(file.ids), file.content) for file in wanted}
+        holds = {
+            stored: (sorted(ids), content)
+            for (stored, ids), (_, content) in zip(store.saga_placement(cui).items(), contents)
+        }
+        if holds != should_hold:
+            raise EfacturaError(
+                SAGA_FILES_STALE,
+                f"The files for SAGA of {cui} do not hold what is waiting now (something changed since they "
+                "were written); nothing was marked. Bring them up to date, import them and confirm then.",
+            )
         now = self._now()
         when = now.isoformat()
         try:
@@ -1171,8 +1202,10 @@ class Service:
         }
 
     def _known_client(self, store: Store, cui: str) -> str:
+        """A client in the list, or one taken off it whose files for SAGA are still kept: they
+        are listed, so they can be confirmed too."""
         client = normalize_cui(cui)
-        if store.client_enabled(client) is None:
+        if store.client_enabled(client) is None and client not in store.clients_with_saga_files():
             raise EfacturaError(NOT_FOUND, f"No client with CUI {client}.")
         return client
 
@@ -2136,7 +2169,8 @@ class Service:
                 return PENDING  # it goes on waiting for Jev, untouched
             if stored is None:
                 return row["classification_status"]  # decided whole before: whole, with Jev's proposal
-            kept = {entry["line"]: entry for entry in stored}
+            # What Jev said stays; an account from a rule that no longer matches does not.
+            kept = {entry["line"]: entry for entry in stored if entry.get("asked")}
             for item in asked:
                 entries[item.number] = kept.get(item.number) or _line_entry(
                     item.number, reason=why_not or "No rule matched this line, and Jev was not asked this time."
@@ -2157,6 +2191,7 @@ class Service:
         for item in asked:
             groups.setdefault(same_question(item), []).append(item)
         level = _min_confidence(store) if groups and not why_not else None
+        answered_now = False
         for items in groups.values():
             cont, reason, jev_said, asked = None, why_not, {}, False
             known = next((earlier[item.number] for item in items if item.number in earlier), None)
@@ -2174,10 +2209,15 @@ class Service:
                     except _JevCouldNotDecide as exc:
                         reason = f"Jev could not decide this line: {exc}"
                     except EfacturaError:
-                        if row["classification_status"] == PENDING:
+                        if waiting:
                             _keep_answered(store, row, invoice, entries)
+                        elif again and answered_now:
+                            # Sent back on purpose: what Jev answered so far is paid for and kept, the
+                            # other lines stay as they were. Left as it was if nothing was answered.
+                            self._record_lines(store, row, invoice, _merged(invoice, entries, stored), quiet=True)
                         raise
                     else:
+                        answered_now = True
                         cont, reason, jev_said = _judged(answer, level)
                         jev_said["probabilities"] = answer.probabilities
             for item in items:
@@ -2224,7 +2264,7 @@ class Service:
             )
             return REVIEW
         reason = _lines_summary(entries)
-        forgotten = {"suggestion_dismissed_for": None} if head["cont"] != row.get("cont") else {}
+        forgotten = _not_now_forgotten(store, row["id"], head["cont"])
         store.set_classification(
             row["id"], classification_status=CLASSIFIED, cont=head["cont"],
             classification_method=head["method"], classification_reason=reason,
@@ -2302,9 +2342,7 @@ class Service:
         """Record the decision: `cont` on every line. The files for SAGA follow from what is
         recorded (_write_saga_files), so SAGA never finds a decision that was not."""
         subject = subject_of(invoice)
-        # "Not now" was said about a rule for the account the invoice had; a new account is
-        # a new proposal.
-        forgotten = {"suggestion_dismissed_for": None} if cont != row.get("cont") else {}
+        forgotten = _not_now_forgotten(store, row["id"], cont)
         store.set_classification(
             row["id"],
             classification_status=CLASSIFIED,
@@ -2404,7 +2442,8 @@ class Service:
         except Exception:
             log.exception("Could not note how bringing the files for SAGA of %s up to date ended", cui)
 
-    def _place_saga_files(self, store: Store, cui: str, when: str) -> None:
+    def _saga_files_now(self, store: Store, cui: str) -> tuple[Path, list]:
+        """The client's folder for SAGA, and the files it should hold for what waits now."""
         waiting = []
         for row in store.waiting_for_saga(cui):
             invoice = parse_invoice(row["invoice_xml"] or "")
@@ -2414,12 +2453,15 @@ class Service:
             waiting.append(saga.Entry(
                 invoice, row["cont"], row["id_solicitare"], row["id"], _line_conts(row), issued=_is_sale(cui, invoice),
             ))
-        saga_dir = self._saga_dir(store)
-        folder = saga_dir / cui
+        return self._saga_dir(store) / cui, saga.files_for(waiting, _saga_file_per(store))
+
+    def _place_saga_files(self, store: Store, cui: str, when: str) -> None:
+        folder, files = self._saga_files_now(store, cui)
+        saga_dir = folder.parent
         known = store.saga_ledger(cui)
         wanted: dict[str, Path] = {}
         placed: dict[str, str] = {}
-        for file in saga.files_for(waiting, _saga_file_per(store)):
+        for file in files:
             path = folder / file.name
             stored = self._stored_path(path)
             wanted[stored] = path
@@ -2443,6 +2485,10 @@ class Service:
                     if _is_inside(old, saga_dir) and not saga_dir.is_dir():
                         # Gone, or only away (a stick, a share)? Not forgotten until it is known.
                         raise FileNotFoundError(f"The folder for SAGA cannot be reached: {saga_dir}")
+                    if not _is_inside(old, saga_dir) and not old.parent.parent.is_dir():
+                        # In a folder for SAGA left behind that cannot be reached now: kept on record
+                        # without holding anything up, and removed once it can be reached again.
+                        continue
                     old.unlink(missing_ok=True)
             except OSError as exc:
                 failure = failure or exc  # it stays on record and is tried again
@@ -2614,7 +2660,7 @@ def _plan_window(
 
     today = now.date()
     first, last = _day(start), _day(end) if end else today
-    begin = datetime(first.year, first.month, first.day, tzinfo=now.tzinfo)
+    begin = _midnight(first, now)
     if first > last or last > today:
         raise EfacturaError(
             INVALID_INPUT, "The first day must not be after the last, and neither after today."
@@ -2623,7 +2669,7 @@ def _plan_window(
         raise EfacturaError(INVALID_INPUT, f"ANAF keeps messages for {MAX_DAYS} days only.")
     # The sixtieth day back is allowed, from the hour ANAF still reaches.
     begin = max(begin, now - timedelta(days=MAX_DAYS) + OLDEST_MARGIN)
-    end_of_last_day = datetime(last.year, last.month, last.day, tzinfo=now.tzinfo) + timedelta(days=1)
+    end_of_last_day = _midnight(last + timedelta(days=1), now)
     finish = min(end_of_last_day, now - CLOCK_MARGIN)
     if begin >= finish:
         # The sixtieth day back in its last minutes, or today in its first: nothing lies between.
@@ -2637,6 +2683,17 @@ def _plan_window(
         days=(last - first).days + 1,
         reaches_back=last == today and covers_gap,
     )
+
+
+def _midnight(day: date, now: datetime) -> datetime:
+    """The start of `day` on the clock `now` was read from. Local time keeps the offset of
+    that day: an offset copied from today's would put a day across the change of the clocks
+    an hour off, and its first or last hour would never be asked for. A clock that is not the
+    local one (another zone's) keeps its own offset."""
+    midnight = datetime.combine(day, datetime.min.time())
+    if now.utcoffset() == now.astimezone().utcoffset():
+        return midnight.astimezone()
+    return midnight.replace(tzinfo=now.tzinfo)
 
 
 def _day(text: str) -> date:
@@ -3133,6 +3190,25 @@ def _aligned(entries: list[dict], invoice: Invoice) -> list[dict]:
     return [by_line.get(item.number) or _line_entry(item.number) for item in invoice.lines]
 
 
+def _not_now_forgotten(store: Store, message_id: str, cont: str) -> dict:
+    """"Nu acum" was said about a rule for one account: another account is a new proposal, the
+    same one (also after the invoice waited for a person in between) is not."""
+    state = store.suggestion_state(message_id)
+    dismissed = state["suggestion_dismissed_for"] if state else None
+    return {"suggestion_dismissed_for": None} if dismissed and dismissed != cont else {}
+
+
+def _merged(invoice: Invoice, entries: dict[int, dict], stored: list[dict] | None) -> list[dict]:
+    """Each line as decided in this run, or else what Jev said about it before, or else waiting
+    for Jev. An account a rule gave that no rule gives now does not come back."""
+    before = {entry["line"]: entry for entry in stored or () if entry.get("asked")}
+    waiting = "Waiting: OpenRouter failed before Jev was asked about this line."
+    return [
+        entries.get(item.number) or before.get(item.number) or _line_entry(item.number, reason=waiting)
+        for item in invoice.lines
+    ]
+
+
 def _keep_answered(store: Store, row: dict, invoice: Invoice, entries: dict[int, dict]) -> None:
     """Keep what is decided so far on an invoice that goes on waiting because OpenRouter
     failed: the next run asks Jev only about the lines it has not answered."""
@@ -3315,16 +3391,16 @@ def _same_file(one: Path, other: Path) -> bool:
 
 
 def _same_invoice_saved_before(store: Store, row: dict) -> str | None:
-    """The id of an earlier message carrying this very invoice: same supplier and number
-    (noted when it was saved) and the same date. A supplier who starts numbering again
-    each year reuses numbers, but not on the same day."""
-    earlier_id = row.get("possible_duplicate_of")
-    if not earlier_id:
+    """The id of an earlier message carrying this very invoice: same supplier, number and
+    date. A supplier who starts numbering again each year reuses numbers, but not on the
+    same day. Looked up again each time: a message saved by an earlier version noted only
+    the oldest one with that number, maybe of another year."""
+    if not (row.get("possible_duplicate_of") and row.get("supplier_cui") and row.get("invoice_number")):
         return None
-    earlier = store.get_message(earlier_id)
-    if earlier and earlier["invoice_issue_date"] == row["invoice_issue_date"]:
-        return earlier_id
-    return None
+    return store.find_same_invoice(
+        row["cui"], row["message_type"], row["supplier_cui"], row["invoice_number"], row.get("invoice_issue_date"),
+        before=row["id"],
+    )
 
 
 def _status_now(store: Store, message_id: str) -> str | None:
@@ -3346,9 +3422,13 @@ def _note_error(store: Store, message_id: str, error: str) -> None:
 
 
 def _check_date(day: str | None, name: str = "since") -> None:
+    """Only YYYY-MM-DD: the stored times are compared with it as text, so "20261103", which
+    Python reads as a date too, would match nothing."""
     if day is None:
         return
     try:
+        if not _ISO_DAY.fullmatch(day):
+            raise ValueError(day)
         date.fromisoformat(day)
     except ValueError:
         raise EfacturaError(INVALID_INPUT, f"{name} must be a date like 2026-11-11.") from None

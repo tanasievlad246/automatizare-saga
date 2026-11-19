@@ -73,7 +73,7 @@ export function InvoicePage() {
       <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
         <div className="min-w-0 flex-[1_1_320px]">
           <PageTitle title={`Factura ${invoice.invoice_number ?? ''}`}>
-            {issued ? `către ${invoice.customer_name ?? ''}` : `de la ${invoice.supplier_name}`} ·{' '}
+            {issued ? `către ${invoice.customer_name ?? 'client necunoscut'}` : `de la ${invoice.supplier_name ?? 'furnizor necunoscut'}`} ·{' '}
             {formatDate(invoice.invoice_issue_date)} ·{' '}
             {formatMoney(invoice.total_with_vat, invoice.currency)}
           </PageTitle>

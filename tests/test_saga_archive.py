@@ -1,6 +1,7 @@
 """An import in SAGA confirmed by the automation or on screen: the invoices in the client's
 files are marked as imported, and the files, as SAGA got them, go to the archive."""
 
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from efactura.config import load_config
 from efactura.errors import EfacturaError
 from efactura.rules import Rule, Rulebook
 from efactura.service import Service
+from efactura.store import Store
 
 from helpers import OTHER_VALID_CUI, VALID_CUI, FakeAnaf, FakeOpenRouter, line, rich_invoice_xml, set_rulebook
 
@@ -224,6 +226,59 @@ def test_an_unknown_or_malformed_client_is_refused(service):
         service.confirm_saga_import("123")
 
     assert (unknown.value.code, malformed.value.code) == ("not_found", "invalid_cui")
+
+
+def test_a_client_taken_off_the_list_can_still_have_its_waiting_files_confirmed(service, anaf, cfg):
+    downloaded(service, anaf, "A1")
+    service.remove_client(VALID_CUI)
+    version = service.saga_files(VALID_CUI)["version"]
+
+    archive = service.confirm_saga_import(VALID_CUI, version=version)["archive"]
+
+    assert archive["ids"] == ["3001"]
+    assert files_in(folder(cfg)) == []
+
+
+def test_a_change_saved_but_not_yet_written_to_the_file_is_refused_and_nothing_is_marked(service, anaf, cfg):
+    downloaded(service, anaf, "A1")
+    version = service.saga_files(VALID_CUI)["version"]
+    store = Store(cfg.db_path)
+    try:  # a person changed the account; the writer of the files is still waiting for its turn
+        store.set_classification("3001", cont="628")
+    finally:
+        store.close()
+
+    with pytest.raises(EfacturaError) as info:
+        service.confirm_saga_import(VALID_CUI, version=version)
+
+    assert info.value.code == "saga_files_stale"
+    assert imported(service, "3001") == [False]
+
+
+def test_files_written_but_not_recorded_are_refused_rather_than_marking_an_invoice_saga_never_got(
+    service, anaf, cfg, monkeypatch,
+):
+    downloaded(service, anaf, "A1", "A2")
+    store = Store(cfg.db_path)
+    try:
+        store.set_classification("3002", classification_status="review", cont=None)  # back to a person
+    finally:
+        store.close()
+
+    def database_busy(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(Store, "place_in_saga_files", database_busy)
+    monkeypatch.setattr(Store, "set_saga_problem", database_busy)
+    service.write_saga_files(VALID_CUI)  # the file now holds A1 alone; the record still says A1 and A2
+    monkeypatch.undo()
+    version = service.saga_files(VALID_CUI)["version"]
+
+    with pytest.raises(EfacturaError) as info:
+        service.confirm_saga_import(VALID_CUI, version=version)
+
+    assert info.value.code == "saga_files_stale"
+    assert imported(service, "3001", "3002") == [False, False]
 
 
 def test_only_the_named_client_is_confirmed(service, anaf, cfg):
