@@ -117,3 +117,75 @@ describe('the header the page sends in server mode', () => {
     expect(headers.map((sent) => sent?.['X-AutoSaga-Page'])).toEqual(['1', '1', '1'])
   })
 })
+
+describe('a file waiting for SAGA, to save on this computer', () => {
+  it('comes as the program has it, with the version of what was given', async () => {
+    const asked: { address: string; header: string | undefined }[] = []
+    vi.stubGlobal('fetch', async (address: string, options: { headers: Record<string, string> }) => {
+      asked.push({ address, header: options.headers['X-AutoSaga-Page'] })
+      return new Response('<?xml version="1.0"?><Facturi/>', {
+        headers: { 'content-type': 'application/xml', 'X-AutoSaga-File-Version': '0123456789abcdef' },
+      })
+    })
+
+    const { blob, version } = await api.sagaFile('12345674', 'F_1_A 1_09.11.2026.xml')
+
+    expect(await blob.text()).toBe('<?xml version="1.0"?><Facturi/>')
+    expect(version).toBe('0123456789abcdef')
+    // Asked by the page itself, with its header: no link to it has to go without.
+    expect(asked).toEqual([{ address: '/api/saga-files/12345674/files/F_1_A%201_09.11.2026.xml', header: '1' }])
+  })
+
+  it('has no version when the program did not say one', async () => {
+    vi.stubGlobal('fetch', async () => new Response('<Facturi/>'))
+
+    expect((await api.sagaFile('12345674', 'F.xml')).version).toBeNull()
+  })
+
+  it('says with the program\'s own code why it could not be given', async () => {
+    vi.stubGlobal('fetch', async () =>
+      new Response(JSON.stringify({ ok: false, error: { code: 'not_found', message: 'The file is gone.' } }), { status: 404 }))
+
+    await expect(api.sagaFile('12345674', 'F.xml')).rejects.toMatchObject({ code: 'not_found' })
+  })
+})
+
+describe('an import in SAGA confirmed on the page', () => {
+  /** Answers every call and remembers what was sent. */
+  function sent() {
+    const bodies: unknown[] = []
+    vi.stubGlobal('fetch', async (_: string, options: { body: string }) => {
+      bodies.push(JSON.parse(options.body))
+      return new Response(JSON.stringify({ ok: true, archive: null }))
+    })
+    return bodies
+  }
+
+  it('names the one file when a file is confirmed, with the version of that file as it was seen', async () => {
+    const bodies = sent()
+    await api.confirmSagaImport('12345674', 'aaaa', 'F_1_A1_09.11.2026.xml')
+    expect(bodies).toEqual([{ version: 'aaaa', source: 'screen', file: 'F_1_A1_09.11.2026.xml' }])
+  })
+
+  it('names no file when all the client\'s files are confirmed', async () => {
+    const bodies = sent()
+    await api.confirmSagaImport('12345674', 'bbbb')
+    expect(bodies).toEqual([{ version: 'bbbb', source: 'screen' }])
+  })
+})
+
+describe('every client switched at once', () => {
+  it('is one call, not one for each client, and says which way', async () => {
+    const asked: { method: string; address: string; body: unknown }[] = []
+    vi.stubGlobal('fetch', async (address: string, options: { method: string; body: string }) => {
+      asked.push({ method: options.method, address, body: JSON.parse(options.body) })
+      return new Response(JSON.stringify({ ok: true, clients: [] }))
+    })
+    await api.setAllClientsEnabled(false)
+    await api.setAllClientsEnabled(true)
+    expect(asked).toEqual([
+      { method: 'PUT', address: '/api/clients/enabled', body: { enabled: false } },
+      { method: 'PUT', address: '/api/clients/enabled', body: { enabled: true } },
+    ])
+  })
+})

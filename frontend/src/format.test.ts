@@ -97,7 +97,7 @@ describe('failures', () => {
 // --- found by the review of the screen ---
 
 import { describeSyncResult } from './clients/syncOutcome'
-import { folderOf } from './format'
+import { fileNameOf, folderOf } from './format'
 
 describe('a date the supplier wrote oddly', () => {
   it('is read from its first ten characters even with a time zone', () => {
@@ -157,6 +157,12 @@ describe('the folder of a file', () => {
   it('is its path without the last part, on Windows and elsewhere', () => {
     expect(folderOf('C:\\SAGA Import\\12345674\\F_1_A_09.11.2026.xml')).toBe('C:\\SAGA Import\\12345674')
     expect(folderOf('/data/SAGA Import/12345674/F_1.xml')).toBe('/data/SAGA Import/12345674')
+  })
+
+  it('gives the name of a file from its path, with either kind of slash', () => {
+    expect(fileNameOf('C:\\SAGA Import\\Alfa - 12345674\\F_1_A_09.11.2026.xml')).toBe('F_1_A_09.11.2026.xml')
+    expect(fileNameOf('/data/SAGA Import/Alfa - 12345674/F_1.xml')).toBe('F_1.xml')
+    expect(fileNameOf('F_1.xml')).toBe('F_1.xml')
   })
 })
 

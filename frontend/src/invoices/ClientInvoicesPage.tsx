@@ -20,6 +20,7 @@ import { placeOf, rememberPlace } from '../listPlace'
 import { useSchedule } from '../schedule/useSchedule'
 import { SagaArchive } from '../archive/SagaArchive'
 import { SagaFilesTab } from '../sagaFiles/SagaFilesTab'
+import { useSeenFiles } from '../sagaFiles/useSeenFiles'
 import { clientTabs, searchForTab, tabFrom } from '../archive/archiveTexts'
 import type { Client, ClientTab, Invoice, InvoiceKind } from '../types'
 import { ImportedInSagaCard } from './ImportedInSagaCard'
@@ -56,8 +57,6 @@ export function ClientInvoicesPage() {
   const [search, setSearch] = useSearchParams()
   const [syncing, setSyncing] = useState(false)
   const [classifying, setClassifying] = useState(false)
-  // Goes up each time the person looks at one of the files waiting for SAGA, for the card that confirms the import.
-  const [lookedAt, setLookedAt] = useState(0)
   const listTop = useRef<HTMLDivElement>(null)
   // Set by "Vezi ce este în fișier", at the foot of a long list: the tab it leads to is brought into view.
   const showingFiles = useRef(false)
@@ -76,6 +75,9 @@ export function ClientInvoicesPage() {
   // The files waiting for SAGA, counted on their tab. Kept under "invoices": whatever changes an
   // invoice (an account, a tick, a download) may change the files, and has them read again.
   const waiting = useQuery({ queryKey: ['invoices', cui, 'saga-files'], queryFn: () => api.sagaFiles(cui) })
+  // What the person has seen of those files, for the buttons that confirm an import: on each
+  // file under its tab, and on the card under the lists.
+  const seenFiles = useSeenFiles(cui, waiting.data)
   const descriptions = (kind === 'issued' ? rules?.issued_accounts : rules?.accounts) ?? {}
   const { data, error, isPending } = kind === 'issued' ? issued : received
   const invoices = data?.invoices ?? []
@@ -228,7 +230,8 @@ export function ClientInvoicesPage() {
           received={received.data?.invoices}
           issued={issued.data?.invoices}
           stale={Boolean(ready && received.data && isStale(ready, received.data.saga))}
-          onLook={() => setLookedAt((times) => times + 1)}
+          seenOf={seenFiles.of}
+          onDownloaded={seenFiles.downloaded}
         />
       )}
       {listing && !error && (narrowed && invoices.length > 0 && found.length === 0 ? (
@@ -257,8 +260,12 @@ export function ClientInvoicesPage() {
       {/* Under the lists and under the files: the import is confirmed from wherever it was checked. */}
       {tab !== 'archive' && ready && (
         <ImportedInSagaCard
-          cui={cui} ready={ready} saga={received.data?.saga} lookedAt={lookedAt}
+          cui={cui} ready={ready} saga={received.data?.saga} seen={seenFiles.whole}
+          // Under the files' tab, the client's one file has „Fișier importat” on it.
+          fileHasItsOwnButton={tab === 'saga' && waiting.data?.files.length === 1}
           onShowFiles={tab === 'saga' ? undefined : () => { showingFiles.current = true }}
+          onWritten={seenFiles.forgetAll}
+          onDownloaded={seenFiles.downloaded}
         />
       )}
 

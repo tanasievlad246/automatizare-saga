@@ -115,7 +115,7 @@ def test_the_list_gives_each_client_with_a_file_its_path_count_and_version(servi
     first = listed[0]
     assert first["files"] == [{
         "name": name_of("A1"), "path": str(folder(cfg) / name_of("A1")), "invoices": 2, "ids": ["3001", "3002"],
-        "written_at": NOW.isoformat(), "present": True,
+        "written_at": NOW.isoformat(), "present": True, "version": first["version"],
     }]
     assert (first["file_per"], first["up_to_date"], first["folder"]) == ("client", True, str(folder(cfg)))
     assert len(first["version"]) == 16 and first["version"] != listed[1]["version"]
@@ -534,3 +534,213 @@ def test_the_version_is_worked_out_only_where_it_is_sent_back(service, anaf):
     assert service.invoices(cui=VALID_CUI, message_type="primita")["saga"]["version"] is not None
     assert "version" not in service.invoices(cui=VALID_CUI, message_type="trimisa")["saga"]
     assert "version" not in service.invoice_view("3001")["saga"]
+
+
+# --- one file on its own: its version, its download, its confirmation ---------------------------
+
+
+def test_each_waiting_file_has_its_own_version(service, anaf):
+    service.change_settings(saga_file_per="invoice")
+    downloaded(service, anaf, "A1", "A2")
+
+    waiting = service.saga_files(VALID_CUI)
+    first, second = waiting["files"]
+
+    assert len(first["version"]) == 16 and first["version"] != second["version"]
+    assert waiting["version"] not in (first["version"], second["version"])
+
+
+def test_with_one_file_its_version_is_the_clients(service, anaf):
+    downloaded(service, anaf, "A1", "A2")
+
+    waiting = service.saga_files(VALID_CUI)
+
+    assert waiting["files"][0]["version"] == waiting["version"]
+
+
+def test_a_waiting_file_is_given_with_the_version_of_the_bytes_read(service, anaf, cfg):
+    downloaded(service, anaf, "A1")
+    listed = service.saga_files(VALID_CUI)["files"][0]
+
+    content, version = service.saga_file_as_it_is(VALID_CUI, name_of("A1"))
+
+    assert content == (folder(cfg) / name_of("A1")).read_bytes() and version == listed["version"]
+
+
+def test_the_download_says_which_version_of_the_file_it_gave(api, service, anaf, cfg):
+    downloaded(service, anaf, "A1", "A2")
+    listed = api.get(f"/saga-files/{VALID_CUI}", headers=KEY).json()["files"][0]
+
+    file = api.get(f"/saga-files/{VALID_CUI}/files/{name_of('A1')}", headers=KEY)
+
+    assert file.headers["x-autosaga-file-version"] == listed["version"]
+    assert file.content == (folder(cfg) / name_of("A1")).read_bytes()
+    assert file.headers["content-disposition"] == f'attachment; filename="{name_of("A1")}"'
+
+
+def test_confirming_one_file_marks_only_its_invoice_and_leaves_the_other_files(service, anaf, cfg):
+    service.change_settings(saga_file_per="invoice")
+    downloaded(service, anaf, "A1", "A2")
+    first = service.saga_files(VALID_CUI)["files"][0]
+    sent_to_saga = (folder(cfg) / name_of("A1")).read_bytes()
+
+    archive = service.confirm_saga_import(VALID_CUI, version=first["version"], file=name_of("A1"), source="screen")["archive"]
+
+    kept = cfg.data_dir / "saga-archive" / VALID_CUI / "2026-11-17_10-42-00" / name_of("A1")
+    assert imported(service, "3001", "3002") == [True, False]
+    assert files_in(folder(cfg)) == [name_of("A2")] and files_in(kept.parent) == [name_of("A1")]
+    assert kept.read_bytes() == sent_to_saga
+    assert (archive["ids"], archive["invoices"], archive["source"]) == (["3001"], 1, "screen")
+    assert archive["files"] == [{"name": name_of("A1"), "path": str(kept)}]
+    assert [file["name"] for file in service.saga_files(VALID_CUI)["files"]] == [name_of("A2")]
+    assert [entry["files"][0]["name"] for entry in service.saga_archive(VALID_CUI)["imports"]] == [name_of("A1")]
+
+
+def test_one_file_changed_since_its_version_was_read_is_refused_and_nothing_changes(service, anaf, cfg):
+    service.change_settings(saga_file_per="invoice")
+    downloaded(service, anaf, "A1", "A2")
+    downloaded_by_the_person = service.saga_files(VALID_CUI)["files"][0]["version"]
+    service.set_cont("3001", "628", force=True)  # its account changed: the file was written again
+
+    with pytest.raises(EfacturaError) as refused:
+        service.confirm_saga_import(VALID_CUI, version=downloaded_by_the_person, file=name_of("A1"))
+
+    assert refused.value.code == "saga_files_changed"
+    assert imported(service, "3001", "3002") == [False, False]
+    assert files_in(folder(cfg)) == [name_of("A1"), name_of("A2")] and service.saga_archive(VALID_CUI)["imports"] == []
+
+
+def test_another_file_written_again_does_not_refuse_this_one(service, anaf):
+    service.change_settings(saga_file_per="invoice")
+    downloaded(service, anaf, "A1", "A2")
+    version = service.saga_files(VALID_CUI)["files"][0]["version"]
+    service.set_cont("3002", "628", force=True)
+
+    archive = service.confirm_saga_import(VALID_CUI, version=version, file=name_of("A1"))["archive"]
+
+    assert archive["ids"] == ["3001"] and imported(service, "3001", "3002") == [True, False]
+
+
+def test_a_file_that_does_not_wait_for_the_client_is_refused(service, anaf, cfg):
+    downloaded(service, anaf, "A1")
+
+    with pytest.raises(EfacturaError) as refused:
+        service.confirm_saga_import(VALID_CUI, file=name_of("A9"))
+
+    assert refused.value.code == "not_found"
+    assert imported(service, "3001") == [False] and files_in(folder(cfg)) == [name_of("A1")]
+
+
+def test_one_file_is_refused_while_the_clients_folder_is_not_up_to_date(service, anaf, cfg):
+    service.change_settings(saga_file_per="invoice")
+    downloaded(service, anaf, "A1", "A2")
+    (folder(cfg) / name_of("A2")).unlink()  # another file of the client is gone
+
+    with pytest.raises(EfacturaError) as refused:
+        service.confirm_saga_import(VALID_CUI, file=name_of("A1"))
+
+    assert refused.value.code == "saga_files_stale" and imported(service, "3001", "3002") == [False, False]
+
+
+def test_with_one_file_for_the_client_confirming_the_file_confirms_all_its_invoices(service, anaf, cfg):
+    downloaded(service, anaf, "A1", "A2")
+    waiting = service.saga_files(VALID_CUI)
+
+    archive = service.confirm_saga_import(VALID_CUI, version=waiting["files"][0]["version"], file=name_of("A1"))["archive"]
+
+    assert archive["ids"] == ["3001", "3002"] and imported(service, "3001", "3002") == [True, True]
+    assert files_in(folder(cfg)) == []
+
+
+def test_the_journal_names_the_one_file_confirmed(service, anaf, cfg):
+    service.change_settings(saga_file_per="invoice")
+    downloaded(service, anaf, "A1", "A2")
+
+    service.confirm_saga_import(VALID_CUI, file=name_of("A2"), source="screen")
+
+    (line_,) = [event for event in journal.events(cfg.db_path)["events"] if event["event"] == "saga.imported"]
+    assert (line_["data"]["files"], line_["data"]["invoices"]) == ([name_of("A2")], 1)
+
+
+def test_one_file_is_confirmed_over_the_api(api, service, anaf):
+    service.change_settings(saga_file_per="invoice")
+    downloaded(service, anaf, "A1", "A2")
+    first = api.get(f"/saga-files/{VALID_CUI}", headers=KEY).json()["files"][0]
+
+    confirmed = api.post(
+        f"/saga-files/{VALID_CUI}/imported", headers=KEY,
+        json={"version": first["version"], "file": first["name"], "source": "screen"},
+    )
+    unknown = api.post(f"/saga-files/{VALID_CUI}/imported", headers=KEY, json={"file": name_of("A9")})
+
+    assert confirmed.status_code == 200 and confirmed.json()["archive"]["ids"] == ["3001"]
+    assert (unknown.status_code, unknown.json()["error"]["code"]) == (404, "not_found")
+    assert imported(service, "3001", "3002") == [True, False]
+
+
+def test_confirming_one_file_says_how_all_the_clients_files_stood_before_and_stand_after(service, anaf):
+    service.change_settings(saga_file_per="invoice")
+    downloaded(service, anaf, "A1", "A2")
+    before = service.saga_files(VALID_CUI)["version"]
+
+    first = service.confirm_saga_import(VALID_CUI, file=name_of("A1"))
+    left = service.saga_files(VALID_CUI)["version"]
+    last = service.confirm_saga_import(VALID_CUI, file=name_of("A2"))
+
+    # What the page needs to know whether the files it showed were the files confirmed against.
+    assert first["versions"] == {"before": before, "after": left} and left not in (before, None)
+    assert last["versions"] == {"before": left, "after": None}
+
+
+def test_confirming_all_the_files_says_the_same(service, anaf):
+    downloaded(service, anaf, "A1", "A2")
+    before = service.saga_files(VALID_CUI)["version"]
+
+    assert service.confirm_saga_import(VALID_CUI)["versions"] == {"before": before, "after": None}
+
+
+def test_one_file_whose_change_is_saved_but_not_yet_written_is_refused_and_nothing_is_marked(service, anaf, cfg):
+    service.change_settings(saga_file_per="invoice")
+    downloaded(service, anaf, "A1", "A2")
+    version = service.saga_files(VALID_CUI)["files"][0]["version"]
+    store = Store(cfg.db_path)
+    try:  # a person changed the account; the writer of the files is still waiting for its turn
+        store.set_classification("3001", cont="628")
+    finally:
+        store.close()
+
+    with pytest.raises(EfacturaError) as info:
+        service.confirm_saga_import(VALID_CUI, version=version, file=name_of("A1"))
+
+    assert info.value.code == "saga_files_stale"
+    assert imported(service, "3001", "3002") == [False, False]
+
+
+def test_another_files_unwritten_change_does_not_hold_this_one_back(service, anaf, cfg):
+    service.change_settings(saga_file_per="invoice")
+    downloaded(service, anaf, "A1", "A2")
+    store = Store(cfg.db_path)
+    try:
+        store.set_classification("3002", cont="628")  # saved for the other file, not written yet
+    finally:
+        store.close()
+
+    archive = service.confirm_saga_import(VALID_CUI, file=name_of("A1"))["archive"]
+
+    assert archive["ids"] == ["3001"] and imported(service, "3001", "3002") == [True, False]
+
+
+def test_the_clients_one_file_renamed_is_refused_under_its_old_name_and_with_its_old_version(service, anaf, cfg):
+    downloaded(service, anaf, "A1", "A2")
+    seen = service.saga_files(VALID_CUI)["files"][0]
+    service.mark_uploaded(["3001"])  # its first invoice left: the file now carries the name of the second
+    now = service.saga_files(VALID_CUI)["files"][0]
+
+    with pytest.raises(EfacturaError) as old_name:
+        service.confirm_saga_import(VALID_CUI, version=seen["version"], file=seen["name"])
+    with pytest.raises(EfacturaError) as old_version:
+        service.confirm_saga_import(VALID_CUI, version=seen["version"], file=now["name"])
+
+    assert (seen["name"], now["name"]) == (name_of("A1"), name_of("A2"))
+    assert (old_name.value.code, old_version.value.code) == ("not_found", "saga_files_changed")
+    assert imported(service, "3002") == [False] and files_in(folder(cfg)) == [name_of("A2")]

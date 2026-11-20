@@ -31,9 +31,9 @@ export function clientTabs(
 }
 
 export const ARCHIVE_TEXT = {
-  intro: 'Fișierele pentru SAGA confirmate ca importate, fiecare cu facturile din el, cel mai nou primul. Un import se confirmă din automatizare sau cu butonul „Da, am importat” de sub lista de facturi. Fișierul se păstrează aici așa cum l-a primit SAGA.',
+  intro: 'Fișierele pentru SAGA confirmate ca importate, fiecare cu facturile din el, cel mai nou primul. Un import se confirmă din automatizare, cu „Fișier importat” de la fila „Fișiere pentru SAGA” sau cu butonul „Da, am importat” de sub lista de facturi. Fișierul se păstrează aici așa cum l-a primit SAGA.',
   emptyTitle: 'Nu există încă niciun import în arhivă.',
-  emptyText: 'Când automatizarea sau butonul „Da, am importat” confirmă că SAGA a primit fișierul, fișierul și facturile lui apar aici.',
+  emptyText: 'Când automatizarea, „Fișier importat” sau butonul „Da, am importat” confirmă că SAGA a primit fișierul, fișierul și facturile lui apar aici.',
   older: 'Facturile marcate ca importate înainte de versiunea 0.13.0 nu au un import în arhivă: atunci fișierul se ștergea.',
   gone: 'Fișierul nu mai este în arhivă.',
 }
@@ -41,7 +41,7 @@ export const ARCHIVE_TEXT = {
 /** On the card of what waits for SAGA, when the file changed between reading it and confirming. */
 export const CHANGED_MEANWHILE = {
   title: 'Fișierul s-a schimbat de când ați deschis pagina',
-  text: 'Între timp fișierul a fost scris din nou: a intrat sau a ieșit o factură, ori s-a schimbat un cont. Nu s-a marcat nimic. Mai sus se vede acum fișierul așa cum este. Importați-l în SAGA, apoi confirmați din nou.',
+  text: 'Între timp fișierul a fost scris din nou: a intrat sau a ieșit o factură, ori s-a schimbat un cont. Nu s-a marcat nimic. Mai sus se vede acum fișierul așa cum este. Dacă l-ați descărcat, descărcați-l din nou. Importați-l în SAGA, apoi confirmați din nou.',
 }
 
 /** "Import de azi, 10:42", "Import din 14.11.2026, 16:05". */

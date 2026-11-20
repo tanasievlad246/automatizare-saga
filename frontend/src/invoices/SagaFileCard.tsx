@@ -9,6 +9,8 @@ import { api } from '../api'
 import { importedLine } from '../archive/archiveTexts'
 import { COPY_REFUSED, copyText } from '../clipboard'
 import { showError } from '../errorMessages'
+import { fileNameOf } from '../format'
+import { DownloadFileButton } from '../sagaFiles/DownloadFileButton'
 import type { Invoice, SagaState } from '../types'
 import { opensWindowsHere, pathOnThisPC, useWhere } from '../where'
 import { fileCardNote } from './sagaFiles'
@@ -29,7 +31,8 @@ export function SagaFileCard({ invoice, saga }: { invoice: Invoice; saga: SagaSt
   // While the client's folder is not up to date, the file may not say what this screen says.
   const stale = saga.problem !== null || !saga.up_to_date
   // As this computer reaches it: through the shared folder when the program runs on the NAS.
-  const path = stale || !invoice.saga_xml_path ? null : pathOnThisPC(invoice.saga_xml_path, where)
+  const file = stale || !invoice.saga_xml_path ? null : invoice.saga_xml_path
+  const path = file && pathOnThisPC(file, where)
   const copyPath = () =>
     copyText(path ?? '').then(
       () => toast.success('Calea a fost copiată.'),
@@ -40,7 +43,7 @@ export function SagaFileCard({ invoice, saga }: { invoice: Invoice; saga: SagaSt
     <section aria-label="Fișierul pentru SAGA" className="flex flex-col gap-3 rounded-2xl border bg-card px-5 pt-4.5 pb-5.5">
       <h2 className="font-sans text-xl font-bold">Fișierul pentru SAGA</h2>
       {note && (stale ? <Notice tone="attention">{note}</Notice> : <p className="text-muted-foreground">{note}</p>)}
-      {path && (
+      {file && path && (
         <>
           <p className="rounded-lg bg-background px-3.5 py-3 font-mono text-[0.88rem] break-all">{path}</p>
           <div className="flex flex-wrap gap-2.5">
@@ -50,6 +53,7 @@ export function SagaFileCard({ invoice, saga }: { invoice: Invoice; saga: SagaSt
                 Deschide folderul
               </Button>
             )}
+            <DownloadFileButton cui={invoice.cui} name={fileNameOf(file)} />
           </div>
         </>
       )}

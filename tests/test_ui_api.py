@@ -544,6 +544,19 @@ def test_a_client_is_switched_off_through_the_api(api):
     assert [(c["cui"], c["enabled"]) for c in reply.json()["clients"]] == [(VALID_CUI, False)]
 
 
+def test_every_client_is_switched_through_the_api(api):
+    api.post("/clients", json={"cui": VALID_CUI, "name": "Alfa Construct SRL"})
+    api.post("/clients", json={"cui": "14399840", "name": "Brutaria Soarelui SRL"})
+
+    off = api.put("/clients/enabled", json={"enabled": False})
+    on = api.put("/clients/enabled", json={"enabled": True})
+
+    assert (off.status_code, [c["enabled"] for c in off.json()["clients"]]) == (200, [False, False])
+    assert [c["enabled"] for c in on.json()["clients"]] == [True, True]
+    assert api.put("/clients/enabled", json={"enabled": "nu"}).status_code == 400
+    assert api.put("/clients/enabled", json={}).status_code == 400
+
+
 def test_classification_per_line_is_switched_through_the_api(api):
     api.post("/clients", json={"cui": VALID_CUI, "name": "Alfa Construct SRL"})
 

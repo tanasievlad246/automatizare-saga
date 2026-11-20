@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Invoice } from '../types'
 import {
-  type Sort, fileSummary, fileTotals, invoicesOf, lineRows, nextSort, sortFileInvoices, sortedLine,
+  type Sort, afterImportLine, fileSummary, fileTotals, invoicesOf, lineRows, nextSort, sortFileInvoices, sortedLine,
 } from './waitingFiles'
 
 /** An invoice as the lists give it, with only what these functions read. */
@@ -212,5 +212,16 @@ describe('the rows under an open invoice', () => {
     const rows = lineRows(document as never, null, '6022')
 
     expect(rows.map((row) => [row.cont, row.entry])).toEqual([['6022', null], ['6022', null], ['6022', null], ['6022', null]])
+  })
+})
+
+describe('under the buttons of a file: what „Fișier importat” does', () => {
+  it('counts the invoices that will be marked, so a difference from what SAGA took is seen before the press', () => {
+    expect(afterImportLine(12)).toBe('După ce importați fișierul în SAGA, apăsați „Fișier importat”: cele 12 facturi se marchează ca importate, iar fișierul se mută la fila „Arhivă”.')
+    expect(afterImportLine(25)).toBe('După ce importați fișierul în SAGA, apăsați „Fișier importat”: cele 25 de facturi se marchează ca importate, iar fișierul se mută la fila „Arhivă”.')
+  })
+
+  it('speaks of the one invoice of a file that holds one', () => {
+    expect(afterImportLine(1)).toBe('După ce importați fișierul în SAGA, apăsați „Fișier importat”: factura se marchează ca importată, iar fișierul se mută la fila „Arhivă”.')
   })
 })

@@ -20,11 +20,13 @@ import type { Client } from '../types'
 import { AddClientDialog } from './AddClientDialog'
 import { ClientRow } from './ClientRow'
 import { ClientSearchField } from './ClientSearchField'
+import { ClientsHeader } from './ClientsHeader'
 import { reviewLink } from './clientCounts'
-import { byName, searchClients, shownLine } from './clientSearch'
+import { byName, onFirst, searchClients, shownLine, whoIsOn } from './clientSearch'
 import { ImportClientsDialog } from './ImportClientsDialog'
+import { SwitchAllDialog } from './SwitchAllDialog'
 import { SyncDialog } from './SyncDialog'
-import { switchedOffLine, switchedOn } from './switchedOff'
+import { switchedOn } from './switchedOff'
 
 /** How many clients one page holds. */
 const CLIENTS_PER_PAGE = 20
@@ -40,6 +42,12 @@ export function ClientsPage() {
   const [clientsToClassify, setClientsToClassify] = useState<Client[] | null>(null)
   const [importing, setImporting] = useState(false)
   const [adding, setAdding] = useState(false)
+  // The question before every client is switched: on (true) or off; null while it is not asked.
+  const [switchingAll, setSwitchingAll] = useState<boolean | null>(null)
+  // Who was on when the list was opened: the order is kept from then, so a client switched on
+  // its row stays in place. Taken while drawing, once the clients are here.
+  const [atOpen, setAtOpen] = useState<Map<string, boolean> | null>(null)
+  if (atOpen === null && data) setAtOpen(whoIsOn(data.clients))
   // What is typed in the search field narrows the rows shown, nothing else: the counts and the
   // download for all clients are still about every client. The search and the page are kept in
   // the address, so "‹ Toți clienții" on a client's screen comes back to them.
@@ -49,7 +57,7 @@ export function ClientsPage() {
   useEffect(() => rememberPlace('/', search.toString()), [search])
   const searchField = useRef<HTMLInputElement>(null)
   const listTop = useRef<HTMLDivElement>(null)
-  const found = searchClients(byName(clients), typed)
+  const found = searchClients(onFirst(byName(clients), atOpen), typed)
   const seen = shownLine(found.length, clients.length)
   const page = pageOf(found, pageFrom(search.get('pagina')), CLIENTS_PER_PAGE)
   const turnPage = (to: number) => {
@@ -67,7 +75,7 @@ export function ClientsPage() {
   const showAllButton = <Button type="button" variant="link" className="px-0" onClick={showAll}>Arată toți clienții</Button>
 
   const onClients = switchedOn(clients)
-  const offLine = switchedOffLine(onClients.length, clients.length - onClients.length)
+  const offCount = clients.length - onClients.length
   const waitingForAnAccount = clients.reduce((total, client) => total + client.review_count, 0)
   const waitingForJev = clients.reduce((total, client) => total + client.waiting_count, 0)
   const firstWaiting = clients.find((client) => client.review_count > 0)
@@ -102,7 +110,6 @@ export function ClientsPage() {
           <p>Butoanele de descărcare revin când se termină. Lista se actualizează singură.</p>
         </Notice>
       )}
-      {offLine && <p className="-mt-3 text-lg text-muted-foreground">{offLine}</p>}
 
       {toClassify.length > 0 && (
         <Notice tone="attention" className="flex-wrap items-center">
@@ -139,6 +146,8 @@ export function ClientsPage() {
 
       {clients.length > 0 && (
         <div ref={listTop} className="flex flex-col gap-3">
+          {/* A dash or nothing switches everyone on; a tick, everyone off. */}
+          <ClientsHeader on={onClients.length} off={offCount} onPress={() => setSwitchingAll(offCount > 0)} />
           <ClientSearchField ref={searchField} value={typed} onChange={setTyped} />
           {found.length === 0 ? (
             <div className="rounded-2xl border bg-card px-6 py-5.5">
@@ -170,6 +179,17 @@ export function ClientsPage() {
       )}
 
       <SyncDialog clients={clientsToSync} someAreOff={onClients.length < clients.length} onClose={() => setClientsToSync(null)} />
+      {switchingAll !== null && (
+        <SwitchAllDialog
+          turnOn={switchingAll}
+          on={onClients.length}
+          off={offCount}
+          someHidden={found.length < clients.length}
+          onClose={() => setSwitchingAll(null)}
+          // Everyone stands the same way now: the order starts again from here.
+          onDone={(now) => setAtOpen(whoIsOn(now))}
+        />
+      )}
       <ClassifyAgainDialog clients={clientsToClassify} onClose={() => setClientsToClassify(null)} />
       <ImportClientsDialog open={importing} onClose={() => setImporting(false)} />
       <AddClientDialog open={adding} onClose={() => setAdding(false)} />

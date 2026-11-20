@@ -323,6 +323,51 @@ def test_the_clients_that_are_on_are_listed_by_name(service, cfg):
     store.close()
 
 
+# --- every client switched at once ------------------------------------------------------------
+
+
+def test_every_client_can_be_switched_off_and_on_at_once(service):
+    service.save_client(VALID_CUI, "Alfa")
+    service.save_client(OTHER_VALID_CUI, "Beta")
+    service.set_client_enabled(OTHER_VALID_CUI, False)
+
+    off = service.set_all_clients_enabled(False)
+    on = service.set_all_clients_enabled(True)
+
+    assert [(c["name"], c["enabled"]) for c in off["clients"]] == [("Alfa", False), ("Beta", False)]
+    assert [(c["name"], c["enabled"]) for c in on["clients"]] == [("Alfa", True), ("Beta", True)]
+
+
+def test_with_every_client_off_nothing_is_downloaded_for_all(service, anaf):
+    service.save_client(VALID_CUI, "Alfa")
+    anaf.add("3001", xml=rich_invoice_xml(number="A1"))
+
+    service.set_all_clients_enabled(False)
+
+    assert error_code(lambda: service.sync(VALID_CUI)) == "client_off"
+    assert service.sync_all()["clients"] == 0  # how many clients it downloaded for
+
+
+def test_switching_every_client_says_in_the_journal_how_many_changed(service, cfg):
+    service.save_client(VALID_CUI, "Alfa")
+    service.save_client(OTHER_VALID_CUI, "Beta")
+    service.set_client_enabled(OTHER_VALID_CUI, False)
+    journal.configure(cfg.db_path)
+    try:
+        service.set_all_clients_enabled(False)  # one of the two was on
+        service.set_all_clients_enabled(False)  # nobody left to switch
+
+        lines = [e for e in journal.events(cfg.db_path)["events"] if e["event"] == "clients.switched_all"]
+    finally:
+        journal.configure(None)
+
+    assert [e["data"] for e in reversed(lines)] == [{"enabled": False, "changed": 1}, {"enabled": False, "changed": 0}]
+
+
+def test_switching_every_client_of_an_empty_list_changes_nothing(service):
+    assert service.set_all_clients_enabled(False)["clients"] == []
+
+
 # --- classification line by line: on for every client until it is switched off -------------------
 
 

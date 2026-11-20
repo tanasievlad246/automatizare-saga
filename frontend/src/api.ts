@@ -44,8 +44,8 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   return reply as T
 }
 
-/** A file the program serves as it is on disk, as text. A refusal comes as the usual answer, with its code. */
-async function text(path: string): Promise<string> {
+/** A file the program serves as it is on disk. A refusal comes as the usual answer, with its code. */
+async function served(path: string): Promise<Response> {
   let response: Response
   try {
     response = await fetch(`/api${path}`, { headers: FROM_THE_PAGE })
@@ -56,8 +56,16 @@ async function text(path: string): Promise<string> {
     const reply = await response.json().catch(() => null)
     throw new ApiError(reply?.error?.code ?? 'internal_error', reply?.error?.message ?? response.statusText)
   }
-  return response.text()
+  return response
 }
+
+/** Such a file as text, to show. */
+async function text(path: string): Promise<string> {
+  return (await served(path)).text()
+}
+
+/** With a waiting file: the version of the bytes given, which a confirmation of that file sends back. */
+const FILE_VERSION = 'X-AutoSaga-File-Version'
 
 /** A query string without the empty values. */
 function query(params: Record<string, string | number | boolean | undefined | null>): string {
@@ -116,6 +124,8 @@ export const api = {
   saveClient: (cui: string, name: string) => call('POST', '/clients', { cui, name }),
   setClientEnabled: (cui: string, enabled: boolean) =>
     call<{ clients: Client[] }>('PUT', `/clients/${cui}/enabled`, { enabled }),
+  /** Every client switched on, or off, at once: what each client's own switch does, for the whole list. */
+  setAllClientsEnabled: (enabled: boolean) => call<{ clients: Client[] }>('PUT', '/clients/enabled', { enabled }),
   /** An account for each line of this client's invoices (true), or one for the whole invoice. */
   setClientPerLine: (cui: string, enabled: boolean) =>
     call<{ clients: Client[] }>('PUT', `/clients/${cui}/per-line`, { enabled }),
@@ -157,16 +167,28 @@ export const api = {
   /**
    * SAGA has imported the client's files: every invoice in them is marked as imported and the
    * files go to the archive. Refused with `saga_files_changed` when they changed since `version`.
+   * With `file`, that one waiting file alone, and `version` is that file's own.
    */
-  confirmSagaImport: (cui: string, version: string | null) =>
-    call<{ archive: { id: number; invoices: number; files: { name: string; path: string }[] } | null }>(
-      'POST', `/saga-files/${cui}/imported`, { version, source: 'screen' },
-    ),
+  confirmSagaImport: (cui: string, version: string | null, file?: string) =>
+    call<{
+      archive: { id: number; invoices: number; files: { name: string; path: string }[] } | null
+      /** With an archive: all the client's files together, as they stood when it was confirmed and as those left stand. */
+      versions?: { before: string | null; after: string | null }
+    }>('POST', `/saga-files/${cui}/imported`, { version, source: 'screen', file }),
   /** One client's files for SAGA as they are now, with their version. */
   /** What waits for SAGA for one client: its folder, its files with their invoices, and their version. */
   sagaFiles: (cui: string) => call<WaitingFiles>('GET', `/saga-files/${cui}`),
   /** One waiting file, as it is in the client's folder now. */
   sagaFileXml: (cui: string, name: string) => text(`/saga-files/${cui}/files/${encodeURIComponent(name)}`),
+  /**
+   * The same file to save on this computer, with the version of the bytes given. Fetched by the
+   * page, not followed as a link: a file that is gone is said on the page, and the call carries
+   * the page's header like every other.
+   */
+  sagaFile: async (cui: string, name: string): Promise<{ blob: Blob; version: string | null }> => {
+    const response = await served(`/saga-files/${cui}/files/${encodeURIComponent(name)}`)
+    return { blob: await response.blob(), version: response.headers.get(FILE_VERSION) }
+  },
   sagaArchive: (cui: string) => call<{ imports: SagaImport[] }>('GET', `/saga-archive${query({ cui })}`),
   sagaArchiveEntry: (id: number) => call<{ import: SagaImportDetail }>('GET', `/saga-archive/${id}`),
   /** Where the browser saves a file of a confirmed import from, as SAGA got it. */

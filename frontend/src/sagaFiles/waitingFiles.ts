@@ -6,7 +6,7 @@ import type { Invoice, InvoiceDocument, LineAccount } from '../types'
 
 /** What the "Fișiere pentru SAGA" tab says around its files. */
 export const FILES_TAB = {
-  intro: 'Acestea sunt fișierele din folderul clientului care nu sunt încă importate în SAGA. Importați-le în SAGA, apoi apăsați „Da, am importat” de mai jos.',
+  intro: 'Acestea sunt fișierele clientului care nu sunt încă importate în SAGA. Descărcați fișierul sau luați-l din folder, importați-l în SAGA, apoi apăsați „Fișier importat”.',
   emptyTitle: 'Nu este niciun fișier de importat în SAGA pentru acest client.',
   emptyText: 'Un fișier apare aici când o factură primește un cont și nu este încă marcată ca importată. Ce s-a importat deja este la fila „Arhivă”.',
   staleTitle: NOT_UP_TO_DATE.title,
@@ -16,10 +16,25 @@ export const FILES_TAB = {
   xmlButton: 'Vezi XML-ul',
   xmlExplanation: 'Așa este fișierul în folderul clientului. Pe acesta îl importă SAGA.',
   xmlGone: 'Fișierul nu mai este în folderul clientului.',
+  downloadButton: 'Descarcă fișierul',
+  downloaded: 'Fișierul a fost descărcat. Îl găsiți în folderul „Descărcări”.',
+  // The browser keeps the first copy and names the second "… (1).xml"; SAGA is given the file's own name.
+  downloadedAgain: 'Ați mai descărcat acest fișier. Dacă numele celui nou se termină cu (1), ștergeți-l pe cel vechi din folderul „Descărcări” și descărcați din nou.',
+  importedButton: 'Fișier importat',
+  changedTitle: 'Fișierul s-a schimbat de când l-ați descărcat sau l-ați văzut aici',
+  changedText: 'Între timp a fost scris din nou: a intrat sau a ieșit o factură, ori s-a schimbat un cont. Nu s-a marcat nimic. Mai jos se vede fișierul așa cum este acum. Descărcați-l din nou, importați-l în SAGA, apoi apăsați „Fișier importat”.',
   fileOrder: 'Ordinea este cea din fișier: întâi factura care așteaptă de cel mai mult timp.',
   backToFileOrder: 'Înapoi la ordinea din fișier',
   afterAChange: 'Când schimbați un cont, programul scrie fișierul din nou. Dacă l-ați importat deja în SAGA, importați-l încă o dată.',
   oneAccount: 'Contul facturii, pentru toate liniile:',
+}
+
+/** Under a file's buttons: what „Fișier importat” does, with the count, so a difference from what SAGA took is seen before the press. */
+export function afterImportLine(invoices: number): string {
+  const marked = invoices === 1
+    ? 'factura se marchează ca importată'
+    : `cele ${countOf(invoices, '', 'facturi')} se marchează ca importate`
+  return `După ce importați fișierul în SAGA, apăsați „${FILES_TAB.importedButton}”: ${marked}, iar fișierul se mută la fila „Arhivă”.`
 }
 
 export const FILES_PER_PAGE = 20

@@ -1,5 +1,4 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
 import { Link } from 'react-router'
 import { toast } from 'sonner'
 import { Notice } from '@/components/Notice'
@@ -8,7 +7,9 @@ import { ApiError, api } from '../api'
 import { CHANGED_MEANWHILE, confirmedToast } from '../archive/archiveTexts'
 import { COPY_REFUSED, copyText } from '../clipboard'
 import { showError } from '../errorMessages'
-import { formatWhen } from '../format'
+import { fileNameOf, formatWhen } from '../format'
+import { DownloadFileButton } from '../sagaFiles/DownloadFileButton'
+import type { SeenOf } from '../sagaFiles/useSeenFiles'
 import { goesToSales, kindsLine } from './issuedInvoices'
 import type { Invoice, SagaState } from '../types'
 import { opensWindowsHere, pathOnThisPC, useWhere } from '../where'
@@ -17,45 +18,40 @@ import { importedButton, isStale, NOT_UP_TO_DATE, placeLine, readyPlaces } from 
 /**
  * What waits for SAGA, and the answer after importing it: the client's one file (or the
  * folder with a file per invoice), then one button that marks every invoice in it as imported
- * and moves the file to the archive. The version of the file as the person saw it goes with
- * it: if the file has changed since (a download added an invoice, even one the page then
- * reloaded by itself), nothing is marked and the card says so. `onShowFiles`: beside the path, a
- * way to the "Fișiere pentru SAGA" tab, where what the file holds is seen; called as it is taken.
- * `lookedAt` goes up each time the person looks at a file on that tab (its XML, its path, its
- * folder): what they saw there is the file as it is now, as with this card's own two buttons.
+ * and moves the file to the archive. The version of the files as the person saw them goes with
+ * it: if they have changed since (a download added an invoice, even one the page then
+ * reloaded by itself), nothing is marked and the card says so. `seen`: what the person has seen
+ * of all the client's files together, kept by the client's screen (useSeenFiles); it is taken
+ * again when they open the folder, copy the path or save the file, about to import it.
+ * `onShowFiles`: beside the path, a way to the "Fișiere pentru SAGA" tab, where what the file
+ * holds is seen; called as it is taken. `fileHasItsOwnButton`: the card is under that tab and the
+ * client's one file has „Fișier importat” on it, which does the same; then only the notice that
+ * the folder is not up to date is shown here. `onWritten`: the files were written again.
+ * `onDownloaded`: the client's file was saved, in that version.
  */
 export function ImportedInSagaCard({
-  cui, ready, saga, lookedAt = 0, onShowFiles,
-}: { cui: string; ready: Invoice[]; saga: SagaState | undefined; lookedAt?: number; onShowFiles?: () => void }) {
+  cui, ready, saga, seen, fileHasItsOwnButton = false, onShowFiles, onWritten, onDownloaded,
+}: {
+  cui: string
+  ready: Invoice[]
+  saga: SagaState | undefined
+  seen: SeenOf
+  fileHasItsOwnButton?: boolean
+  onShowFiles?: () => void
+  onWritten: () => void
+  onDownloaded: (name: string, version: string | null) => void
+}) {
   const queryClient = useQueryClient()
   const refresh = () => {
     for (const key of ['invoices', 'invoice', 'clients', 'saga-archive']) queryClient.invalidateQueries({ queryKey: [key] })
   }
-  const [changed, setChanged] = useState(false)
-  // The version of the file as the person has seen it: kept from when the card first shows
-  // invoices, and taken again when they open the folder or copy the path, about to import it.
-  // The page reloading by itself does not change it; only a refusal or a success does.
-  const [seen, setSeen] = useState<string | null>(null)
-  // The version just confirmed or written again: until the page reloads, it is still the one
-  // shown, and must not be taken as seen.
-  const [outdated, setOutdated] = useState<string | null>(null)
   const current = saga?.version ?? null
-  // Taken while drawing, once: React's way of keeping something from an earlier render.
-  if (seen === null && current !== null && current !== outdated && ready.length > 0) setSeen(current)
-  const [counted, setCounted] = useState(lookedAt)
-  if (lookedAt !== counted) {
-    setCounted(lookedAt)
-    setSeen(current)
-  }
-  const forget = () => {
-    setOutdated(current)
-    setSeen(null)
-  }
   const markImported = useMutation({
-    mutationFn: () => api.confirmSagaImport(cui, seen ?? current),
-    onMutate: () => setChanged(false),
+    // With nothing kept as seen (just confirmed, or refused), what the page lists now is sent.
+    mutationFn: () => api.confirmSagaImport(cui, seen.version ?? current),
+    onMutate: seen.attempt,
     onSuccess: ({ archive }) => {
-      forget()
+      seen.confirmed()
       refresh()
       toast.success(archive ? confirmedToast(archive.invoices, archive.files.length) : 'Nu mai era nicio factură în fișier.')
     },
@@ -63,9 +59,8 @@ export function ImportedInSagaCard({
       if (error instanceof ApiError && error.code === 'saga_files_changed') {
         // Shown here, beside the file, which the refresh brings as it is now: what the person
         // sees next is that file, so its version is the one a second press sends.
-        setChanged(true)
+        seen.refused()
         refresh()
-        api.sagaFiles(cui).then(({ version }) => setSeen(version), () => setSeen(null))
       } else {
         // A file gone from the folder: the refresh brings the notice with „Încearcă din nou”.
         if (error instanceof ApiError && error.code === 'saga_files_stale') refresh()
@@ -76,7 +71,7 @@ export function ImportedInSagaCard({
   const tryAgain = useMutation({
     mutationFn: () => api.writeSagaFiles(cui),
     onSuccess: ({ problems }) => {
-      forget() // the file was written again: what the person sees next is the new one
+      onWritten() // the file was written again: what the person sees next is the new one
       refresh()
       if (problems.length === 0) toast.success('Folderul pentru SAGA este la zi.')
       else toast.error(NOT_UP_TO_DATE.still)
@@ -88,16 +83,16 @@ export function ImportedInSagaCard({
 
   if (!saga) return null
   const stale = isStale(ready, saga)
-  if (ready.length === 0 && !stale) return null
+  if (!stale && (ready.length === 0 || fileHasItsOwnButton)) return null
   const copyPath = (path: string) => {
-    setSeen(current)
+    seen.look()
     copyText(path).then(
       () => toast.success('Calea a fost copiată.'),
       () => toast.error('Calea nu a fost copiată.', { description: COPY_REFUSED, duration: Infinity }),
     )
   }
   const showFolder = (invoiceId: string) => {
-    setSeen(current)
+    seen.look()
     openFolder.mutate(invoiceId)
   }
 
@@ -134,6 +129,13 @@ export function ImportedInSagaCard({
                   </Button>
                 )}
                 <Button variant="outline" size="sm" onClick={() => copyPath(pathOnThisPC(path, where))}>Copiază calea</Button>
+                {/* Only where the path is a file: with a file for each invoice it is their folder. */}
+                {saga.file_per === 'client' && (
+                  <DownloadFileButton
+                    cui={cui} name={fileNameOf(path)} size="sm"
+                    onDownloaded={(version) => onDownloaded(fileNameOf(path), version)}
+                  />
+                )}
                 {onShowFiles && (
                   <Link to={`/clienti/${cui}?fel=saga`} className="inline-flex min-h-11 items-center font-semibold" onClick={onShowFiles}>
                     {saga.file_per === 'client' ? 'Vezi ce este în fișier' : 'Vezi fișierele'}
@@ -150,7 +152,7 @@ export function ImportedInSagaCard({
           ))}
         </ul>
       )}
-      {changed && (
+      {seen.changed && (
         <Notice tone="attention">
           <p className="font-bold">{CHANGED_MEANWHILE.title}</p>
           <p>{CHANGED_MEANWHILE.text}</p>

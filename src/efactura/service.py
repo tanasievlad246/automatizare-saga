@@ -1012,6 +1012,21 @@ class Service:
             store.close()
         return self.clients()
 
+    def set_all_clients_enabled(self, enabled: bool) -> dict:
+        """Switch every client on, or off, at once: what each client's own switch does, for
+        the whole list. One line in the journal, with how many clients it changed."""
+        store = self._open_store()
+        try:
+            changed = store.set_all_clients_enabled(enabled)
+            journal.record(
+                "clients", "clients.switched_all",
+                f"Every client switched {'on' if enabled else 'off'}: {changed} changed.",
+                enabled=enabled, changed=changed,
+            )
+        finally:
+            store.close()
+        return self.clients()
+
     def set_client_per_line(self, cui: str, per_line: bool) -> dict:
         """Whether each line of this client's invoices gets its own account, or the largest
         line decides one account for the whole invoice. It holds for the invoices decided
@@ -1234,14 +1249,34 @@ class Service:
             raise EfacturaError(NOT_FOUND, f"The file is gone from the client's folder: {path}")
         return path
 
-    def confirm_saga_import(self, cui: str, version: str | None = None, source: str = "api") -> dict:
+    def saga_file_as_it_is(self, cui: str, name: str) -> tuple[bytes, str]:
+        """One of the client's waiting files and the version of it, from one read: what is
+        handed over is what was fingerprinted. The version is the one confirm_saga_import
+        takes back for that file."""
+        path = self.saga_file(cui, name)
+        try:
+            content = path.read_bytes()
+        except OSError as exc:
+            raise EfacturaError(NOT_FOUND, f"The file could not be read from the client's folder: {exc}") from exc
+        return content, _version_of([(path.name, content)])
+
+    def confirm_saga_import(
+        self, cui: str, version: str | None = None, source: str = "api", file: str | None = None,
+    ) -> dict:
         """SAGA has imported this client's files: mark every invoice in them as imported,
-        and move the files, as SAGA got them, to the archive.
+        and move the files, as SAGA got them, to the archive. With `file`, that one file
+        alone, by its name: its invoices are marked and the client's other files stay.
 
         The invoices are those the program put in the files when it last wrote them, which
         is what SAGA read. Refused, changing nothing, when `version` is given and the files
-        have changed since it was read, or when the files are not up to date. With nothing
-        waiting, the answer's archive is None.
+        (with `file`, that file) have changed since it was read, or when the client's files
+        are not up to date. With nothing waiting, the answer's archive is None; a `file`
+        that does not wait is refused.
+
+        With an archive comes `versions`: the version of all the client's files together as
+        they stood when this was confirmed (`before`) and of those still waiting (`after`,
+        None when none is). Whoever confirms one file at a time knows from them whether the
+        files it read were the files confirmed against.
         """
         if source not in SAGA_IMPORT_SOURCES:
             raise EfacturaError(INVALID_INPUT, f"source must be one of: {', '.join(SAGA_IMPORT_SOURCES)}.")
@@ -1254,15 +1289,27 @@ class Service:
                 self.cfg.saga_lock_path, wait=SAGA_LOCK_WAIT,
                 busy="The files for SAGA are being written by another part of the program.",
             ):
-                archive = self._archive_saga_files(store, client, version, source)
+                archive, before = self._archive_saga_files(store, client, version, source, only=file)
+                # Read under the same lock: nothing rewrites the files in between.
+                after = self._saga_waiting(store, client)["version"] if archive else None
         finally:
             store.close()
-        return {"ok": True, "archive": archive}
+        if archive is None:
+            return {"ok": True, "archive": None}
+        return {"ok": True, "archive": archive, "versions": {"before": before, "after": after}}
 
-    def _archive_saga_files(self, store: Store, cui: str, version: str | None, source: str) -> dict | None:
+    def _archive_saga_files(
+        self, store: Store, cui: str, version: str | None, source: str, only: str | None = None,
+    ) -> tuple[dict | None, str | None]:
+        """The archive made, and the version of all the client's files as they stood before it."""
         waiting = self._saga_waiting(store, cui)
-        if not waiting["files"]:
-            return None
+        chosen = waiting["files"]
+        if only is not None:
+            chosen = [file for file in chosen if file["name"] == only]
+            if not chosen:
+                raise EfacturaError(NOT_FOUND, f"No file named {only} waits for SAGA for {cui}.")
+        if not chosen:
+            return None, None
         if not waiting["up_to_date"]:
             raise EfacturaError(
                 SAGA_FILES_STALE,
@@ -1271,7 +1318,7 @@ class Service:
             )
         # Read once: the bytes compared with the version are the bytes archived.
         contents = []
-        for file in waiting["files"]:
+        for file in chosen:
             try:
                 contents.append((file["name"], Path(file["path"]).read_bytes()))
             except OSError as exc:
@@ -1287,10 +1334,10 @@ class Service:
         # mark an invoice as SAGA never got it.
         folder, wanted = self._saga_files_now(store, cui)
         should_hold = {self._stored_path(folder / file.name): (sorted(file.ids), file.content) for file in wanted}
-        holds = {
-            stored: (sorted(ids), content)
-            for (stored, ids), (_, content) in zip(store.saga_placement(cui).items(), contents)
-        }
+        placed = {(self.cfg.data_dir / stored).name: (stored, ids) for stored, ids in store.saga_placement(cui).items()}
+        holds = {placed[name][0]: (sorted(placed[name][1]), content) for name, content in contents}
+        if only is not None:  # one file is answered for alone: another of the client's does not hold it back
+            should_hold = {stored: should_hold.get(stored) for stored in holds}
         if holds != should_hold:
             raise EfacturaError(
                 SAGA_FILES_STALE,
@@ -1303,7 +1350,7 @@ class Service:
             folder = self._new_archive_folder(cui, now)
         except OSError as exc:
             raise EfacturaError(SAGA_ARCHIVE_ERROR, f"The archive folder could not be made: {exc}. Nothing was marked.") from exc
-        ids = [message_id for file in waiting["files"] for message_id in file["ids"]]
+        ids = [message_id for file in chosen for message_id in file["ids"]]
         try:
             kept = []
             for name, content in contents:
@@ -1317,7 +1364,7 @@ class Service:
                 kept.append(target)
             import_id = store.record_saga_import(
                 cui=cui, imported_at=when, source=source, folder=self._stored_path(folder),
-                files=[file["name"] for file in waiting["files"]], ids=ids,
+                files=[file["name"] for file in chosen], ids=ids,
             )
         except BaseException:
             shutil.rmtree(folder, ignore_errors=True)
@@ -1334,12 +1381,12 @@ class Service:
             "accounts", "saga.imported",
             f"Import in SAGA confirmed for {cui}: {len(ids)} invoice(s) marked as imported, the files archived.",
             cui=cui, client=store.client_name(cui), invoices=len(ids), source=source, import_id=import_id,
-            files=[file["name"] for file in waiting["files"]],
+            files=[file["name"] for file in chosen],
         )
         return {
             "id": import_id, "cui": cui, "imported_at": when, "source": source, "invoices": len(ids), "ids": ids,
             "folder": str(folder), "files": [{"name": path.name, "path": str(path)} for path in kept],
-        }
+        }, waiting["version"]
 
     def _new_archive_folder(self, cui: str, now: datetime) -> Path:
         """A folder of its own for one import: by client, then by its date and time."""
@@ -1353,19 +1400,23 @@ class Service:
 
     def _saga_waiting(self, store: Store, cui: str) -> dict:
         """One client's files for SAGA as the program last wrote them, for confirming an import."""
-        files, written = [], store.saga_ledger(cui)
+        files, contents, written = [], [], store.saga_ledger(cui)
         for stored, ids in store.saga_placement(cui).items():
             path = self.cfg.data_dir / stored
+            content = _read_or_none(path)  # read once: the file's version and the client's are of the same bytes
+            contents.append((path.name, content))
             files.append({
                 "name": path.name, "path": str(path), "invoices": len(ids), "ids": ids,
                 "written_at": written.get(stored), "present": path.is_file(),
+                # Its own fingerprint: what a confirmation of this file alone sends back.
+                "version": _version_of([(path.name, content)]),
             })
         return {
             "cui": cui, "client": store.client_name(cui), "file_per": _saga_file_per(store),
             "folder": str(self._client_folder(store, cui)), "files": files,
             "invoices": sum(file["invoices"] for file in files),
             "up_to_date": store.saga_problem(cui) is None and all(file["present"] for file in files),
-            "version": _saga_version([Path(file["path"]) for file in files]),
+            "version": _version_of(contents) if contents else None,
         }
 
     def _known_client(self, store: Store, cui: str) -> str:
@@ -3278,13 +3329,15 @@ def _saga_version(paths: list[Path]) -> str | None:
     none. It changes when any of them does, and only then."""
     if not paths:
         return None
-    contents = []
-    for path in paths:
-        try:
-            contents.append((path.name, path.read_bytes()))
-        except OSError:
-            contents.append((path.name, None))
-    return _version_of(contents)
+    return _version_of([(path.name, _read_or_none(path)) for path in paths])
+
+
+def _read_or_none(path: Path) -> bytes | None:
+    """A file's bytes; None when it is gone or cannot be read."""
+    try:
+        return path.read_bytes()
+    except OSError:
+        return None
 
 
 def _version_of(contents: list[tuple[str, bytes | None]]) -> str:

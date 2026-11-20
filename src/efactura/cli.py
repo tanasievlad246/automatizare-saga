@@ -306,6 +306,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     imported.add_argument("cui")
     imported.add_argument("--version", help="from saga-files; refused if the files changed since")
+    imported.add_argument("--file", help="one waiting file, by name: it alone is confirmed, with its own version")
 
     archive = commands.add_parser("saga-archive", help="a client's confirmed imports, or one with --id")
     archive.add_argument("cui", nargs="?")
@@ -530,7 +531,7 @@ def _dispatch(args: argparse.Namespace, cfg: Config, config_path: Path) -> dict 
             case "saga-files":
                 return service.saga_files(args.cui)
             case "saga-imported":
-                return service.confirm_saga_import(args.cui, version=args.version)
+                return service.confirm_saga_import(args.cui, version=args.version, file=args.file)
             case "saga-archive":
                 if args.id is not None:
                     return service.saga_archive_entry(args.id)

@@ -169,6 +169,15 @@ def test_the_two_downloads_the_browser_follows_by_itself_need_no_header(server):
     assert server().post("/api/events/export", headers=PLAIN).status_code == 401
 
 
+def test_a_file_waiting_for_saga_is_not_one_of_them(server):
+    # The page fetches it with its header and saves it itself, so no link to it goes without.
+    plain = server().get("/api/saga-files/12345674/files/F.xml", headers=PLAIN)
+    from_the_page = server().get("/api/saga-files/12345674/files/F.xml", headers=FROM_THE_PAGE)
+
+    assert (plain.status_code, plain.json()["error"]["code"]) == (401, "unauthorized")
+    assert from_the_page.status_code != 401
+
+
 def test_a_change_must_come_from_the_page_itself(server):
     # A form on another site can post here, but it cannot add a header of its own.
     plain = server().put("/api/clients/12345674/enabled", headers=PLAIN, json={"enabled": False})

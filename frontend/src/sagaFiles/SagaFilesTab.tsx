@@ -4,6 +4,7 @@ import { Pager } from '@/components/Pager'
 import { pageOf, rangeLine } from '@/components/paging'
 import { errorMessage } from '../errorMessages'
 import type { Invoice, WaitingFiles } from '../types'
+import type { SeenOf } from './useSeenFiles'
 import { WaitingFileCard } from './WaitingFileCard'
 import { FILES_PER_PAGE, FILES_TAB, invoicesOf } from './waitingFiles'
 
@@ -11,12 +12,13 @@ const FILE_NOUN = { one: 'Fișierul', many: 'Fișierele' }
 
 /**
  * The "Fișiere pentru SAGA" tab of a client's screen: every file in the client's folder that
- * still has to be imported, each with its invoices. `stale`: the folder may not hold what the
- * screen shows; the card under the tab has the button that brings it up to date. `onLook`: the
- * person looked at one of the files as it is now (its XML, its path, its folder).
+ * still has to be imported, each with its invoices, to save on this computer and to mark as
+ * imported. `stale`: the folder may not hold what the screen shows; the card under the tab has
+ * the button that brings it up to date. `seenOf`: what the person has seen of a file, by its
+ * name. `onDownloaded`: a file was saved, in that version.
  */
 export function SagaFilesTab({
-  cui, waiting, error, received, issued, stale, onLook,
+  cui, waiting, error, received, issued, stale, seenOf, onDownloaded,
 }: {
   cui: string
   waiting: WaitingFiles | undefined
@@ -24,7 +26,8 @@ export function SagaFilesTab({
   received: Invoice[] | undefined
   issued: Invoice[] | undefined
   stale: boolean
-  onLook: () => void
+  seenOf: (name: string) => SeenOf
+  onDownloaded: (name: string, version: string | null) => void
 }) {
   const [wanted, setWanted] = useState(1)
   const files = waiting?.files ?? []
@@ -54,7 +57,10 @@ export function SagaFilesTab({
       ) : (
         <ol aria-label="Fișierele de importat" className="flex flex-col gap-3.5">
           {page.items.map((file) => (
-            <WaitingFileCard key={file.path} cui={cui} file={file} invoices={invoicesOf(file.ids, received, issued)} onLook={onLook} />
+            <WaitingFileCard
+              key={file.path} cui={cui} file={file} invoices={invoicesOf(file.ids, received, issued)} stale={stale}
+              seen={seenOf(file.name)} onDownloaded={(version) => onDownloaded(file.name, version)}
+            />
           ))}
         </ol>
       )}

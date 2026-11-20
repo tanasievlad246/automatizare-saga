@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { byName, searchClients, shownLine } from './clientSearch'
+import { byName, onFirst, searchClients, shownLine, whoIsOn } from './clientSearch'
 
 const ALFA = { name: 'Alfa Construct SRL', cui: '12345674' }
 const BRUTARIA = { name: 'Brutăria Soarelui SRL', cui: '14399840' }
@@ -80,5 +80,38 @@ describe('the order of the client list', () => {
     const listed = [{ name: 'Zeta SRL', cui: '1' }, { name: 'Țesătoria SRL', cui: '2' }, { name: 'Ăla Bun SRL', cui: '3' }, { name: 'beta SRL', cui: '4' }]
     expect(byName(listed).map((client) => client.name)).toEqual(['Ăla Bun SRL', 'beta SRL', 'Țesătoria SRL', 'Zeta SRL'])
     expect(listed[0].name).toBe('Zeta SRL') // the list given is left as it was
+  })
+})
+
+describe('the clients that are on come first', () => {
+  const on = (name: string, cui: string) => ({ name, cui, enabled: true })
+  const off = (name: string, cui: string) => ({ name, cui, enabled: false })
+  const names = (clients: { name: string }[]) => clients.map((client) => client.name)
+
+  it('puts the clients that are on before those that are off, each group in the order given', () => {
+    const listed = [off('Agro', '1'), on('Alfa', '2'), off('Cabinet', '3'), on('Zefir', '4')]
+    expect(names(onFirst(listed, whoIsOn(listed)))).toEqual(['Alfa', 'Zefir', 'Agro', 'Cabinet'])
+    expect(names(listed)).toEqual(['Agro', 'Alfa', 'Cabinet', 'Zefir']) // the list given is left as it was
+  })
+
+  it('leaves a client switched since the list was opened where it was', () => {
+    const atOpen = whoIsOn([on('Alfa', '2'), on('Beta', '5'), off('Cabinet', '3')])
+    const now = [off('Alfa', '2'), on('Beta', '5'), on('Cabinet', '3')] // Alfa switched off, Cabinet on
+    expect(names(onFirst(now, atOpen))).toEqual(['Alfa', 'Beta', 'Cabinet'])
+  })
+
+  it('places a client added since by how it stands now', () => {
+    const atOpen = whoIsOn([on('Alfa', '2'), off('Cabinet', '3')])
+    const now = [on('Alfa', '2'), off('Cabinet', '3'), on('Delta', '6'), off('Epsilon', '7')]
+    expect(names(onFirst(now, atOpen))).toEqual(['Alfa', 'Delta', 'Cabinet', 'Epsilon'])
+  })
+
+  it('goes by how each stands now until the list has been opened', () => {
+    expect(names(onFirst([off('Agro', '1'), on('Alfa', '2')], null))).toEqual(['Alfa', 'Agro'])
+  })
+
+  it('keeps the order in what a search finds', () => {
+    const listed = [off('Agro SRL', '1'), on('Alfa SRL', '2'), on('Zefir SRL', '4')]
+    expect(names(searchClients(onFirst(listed, whoIsOn(listed)), 'srl'))).toEqual(['Alfa SRL', 'Zefir SRL', 'Agro SRL'])
   })
 })

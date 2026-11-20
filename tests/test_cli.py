@@ -225,6 +225,7 @@ def test_the_saga_import_commands_answer_in_json(run, config_path, logged_in):
     _, listed, _ = run("saga-files")
     _, one, _ = run("saga-files", VALID_CUI)
     code, confirmed, _ = run("saga-imported", VALID_CUI, "--version", "abc")
+    one_code, one_file, _ = run("saga-imported", VALID_CUI, "--file", "F_1_A1_09.11.2026.xml")
     _, archive, _ = run("saga-archive", VALID_CUI)
     unknown_code, unknown, _ = run("saga-imported", "18547290")
 
@@ -232,6 +233,8 @@ def test_the_saga_import_commands_answer_in_json(run, config_path, logged_in):
     assert code == 0 and json.loads(confirmed) == {"ok": True, "archive": None}
     assert json.loads(archive)["imports"] == []
     assert unknown_code == 1 and json.loads(unknown)["error"]["code"] == "not_found"
+    # With nothing waiting, a file by name is not waiting either.
+    assert one_code == 1 and json.loads(one_file)["error"]["code"] == "not_found"
 
 
 def test_classify_again_answers_for_one_client_or_for_all(run, config_path, logged_in):

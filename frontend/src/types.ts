@@ -250,6 +250,7 @@ export type WaitingFile = {
   ids: string[] // its invoices, in the order the file has them
   written_at: string | null
   present: boolean // still in the client's folder
+  version: string // a fingerprint of this file alone, as it is on disk: sent back when it alone is confirmed
 }
 /** What waits for SAGA for one client: its folder, its files, and their version (a fingerprint of them on disk). */
 export type WaitingFiles = {

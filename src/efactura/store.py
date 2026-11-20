@@ -979,6 +979,15 @@ class Store:
         if cursor.rowcount == 0:
             raise EfacturaError(NOT_FOUND, f"No client with CUI {cui}.")
 
+    def set_all_clients_enabled(self, enabled: bool) -> int:
+        """Switch every client in the list on, or off. How many were switched: those that
+        were the other way."""
+        with self._conn:
+            cursor = self._conn.execute(
+                "UPDATE clients SET enabled = ? WHERE enabled != ?", (1 if enabled else 0, 1 if enabled else 0)
+            )
+        return cursor.rowcount
+
     def client_per_line(self, cui: str) -> bool:
         """Does each line of this company's invoices get its own account? Yes, unless the
         client was switched to one account per invoice. A company that is not in the client

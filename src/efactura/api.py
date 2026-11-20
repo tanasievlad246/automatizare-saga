@@ -26,7 +26,7 @@ from typing import Callable, Literal, Optional, Union
 
 from fastapi import APIRouter, Depends, FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, StrictBool, StrictInt
@@ -109,6 +109,7 @@ PAGE_HEADER = "x-autosaga-page"
 # saved as a file, and a file of a confirmed import (see api.ts, *Address).
 LINKED_DOWNLOADS = re.compile(r"/api/events/export|/api/saga-archive/\d+/files/[^/]+")
 LINK_METHODS = {"GET", "HEAD"}
+FILE_VERSION_HEADER = "X-AutoSaga-File-Version"  # with a waiting file: the version of the bytes given
 THIS_COMPUTER = {"127.0.0.1", "::1"}
 DEMO_LOGIN_PATH = "/api/demo/anaf-login"
 BUILT_PAGE = Path(__file__).parent / "ui"  # written there by `pnpm --dir frontend build`
@@ -230,6 +231,10 @@ class ClientSwitchRequest(BaseModel):
     enabled: bool
 
 
+class EveryClientSwitchRequest(BaseModel):
+    enabled: StrictBool  # true or false, nothing that only reads like one: it changes every client
+
+
 class PerLineRequest(BaseModel):
     enabled: StrictBool
 
@@ -263,6 +268,7 @@ class SagaFilesRequest(BaseModel):
 
 class SagaImportedRequest(BaseModel):
     version: Optional[str] = None  # from GET /saga-files; left out, whatever the files hold now
+    file: Optional[str] = None  # one waiting file, by name: it alone is confirmed, and `version` is its own
     source: Literal["api", "screen"] = "api"  # "screen": confirmed by a person on the page
 
 
@@ -768,6 +774,13 @@ def create_app(
         return call(lambda s: s.remove_client(cui))
 
     @router.put(
+        "/clients/enabled", dependencies=documented_key,
+        summary="Switch every client on or off for downloading, at once",
+    )
+    def switch_every_client(body: EveryClientSwitchRequest):
+        return call(lambda s: s.set_all_clients_enabled(body.enabled))
+
+    @router.put(
         "/clients/{cui}/enabled", dependencies=documented_key,
         summary="Switch a client on or off for downloading",
     )
@@ -839,17 +852,22 @@ def create_app(
     def saga_file(cui: str, name: str):
         service = make_service(cfg)
         try:
-            path = service.saga_file(cui, name)
+            content, version = service.saga_file_as_it_is(cui, name)
         finally:
             service.close()
-        return FileResponse(path, media_type="application/xml", filename=path.name)
+        # The bytes read once, with their version: the page sends it back with „Fișier importat”.
+        # The name is one the program gave (saga.file_name): letters, digits, ".", "-" and "_" only.
+        return Response(
+            content, media_type="application/xml",
+            headers={"Content-Disposition": f'attachment; filename="{name}"', FILE_VERSION_HEADER: version},
+        )
 
     @router.post(
         "/saga-files/{cui}/imported", dependencies=documented_key,
         summary="SAGA imported this client's files: mark their invoices and archive the files",
     )
     def saga_imported(cui: str, body: SagaImportedRequest):
-        return call(lambda s: s.confirm_saga_import(cui, version=body.version, source=body.source))
+        return call(lambda s: s.confirm_saga_import(cui, version=body.version, source=body.source, file=body.file))
 
     @router.get("/saga-archive", dependencies=documented_key, summary="One client's confirmed imports, newest first")
     def saga_archive(cui: str):

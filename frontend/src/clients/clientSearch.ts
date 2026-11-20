@@ -22,6 +22,23 @@ export function byName<T extends Pick<Client, 'name' | 'cui'>>(clients: T[]): T[
   return [...clients].sort((one, other) => romanian.compare(one.name, other.name) || one.cui.localeCompare(other.cui))
 }
 
+/** Who is on and who is off, by CUI: taken when the list is opened, for the order it keeps. */
+export function whoIsOn(clients: Pick<Client, 'cui' | 'enabled'>[]): Map<string, boolean> {
+  return new Map(clients.map((client) => [client.cui, client.enabled]))
+}
+
+/**
+ * The clients that are on first, then those that are off, each group in the order given. A new
+ * list. `atOpen`: how each stood when the list was opened (whoIsOn). A client switched since
+ * stays where it was, so its row does not jump away at the press and can be switched back; it
+ * moves the next time the list is opened. One added since, and all of them while `atOpen` is
+ * not known yet, go by how they stand now.
+ */
+export function onFirst<T extends Pick<Client, 'cui' | 'enabled'>>(clients: T[], atOpen: ReadonlyMap<string, boolean> | null): T[] {
+  const wasOn = (client: T) => atOpen?.get(client.cui) ?? client.enabled
+  return [...clients.filter(wasOn), ...clients.filter((client) => !wasOn(client))]
+}
+
 /** Under the search field: how many of the clients are seen; null while all of them are. */
 export function shownLine(shown: number, all: number): string | null {
   if (shown === all) return null
