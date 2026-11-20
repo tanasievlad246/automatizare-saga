@@ -23,7 +23,7 @@ from . import auth
 from .config import DEMO_MARKER, Config, load_config
 from .errors import CONFIG_ERROR, EfacturaError
 from .service import Service
-from .standins import FakeAnaf, FakeOpenRouter, line, rich_invoice_xml
+from .standins import FakeAnaf, FakeOpenRouter, adjustment, line, rich_invoice_xml
 
 FOLDER = Path(__file__).resolve().parents[2] / "demo"
 MARKER = DEMO_MARKER
@@ -47,11 +47,14 @@ api_key = "sk-or-v1-EXEMPLU"
 enabled = true
 """
 
+RIDES = "44175209"  # a ride-sharing company: it issues an invoice for every ride, to a person
 CLIENTS = {
     "12345674": "Alfa Construct SRL",
     "14399840": "Brutăria Soarelui SRL",
     "18547290": "Cabinet Medical Ionescu",
+    RIDES: "Drum Bun Ride SRL",
 }
+A_PERSON = "0000000000000"  # what a seller writes for a buyer who is a person
 
 # (supplier name, supplier CUI, invoice number, lines) per client, in two downloads:
 # the first is "last week" (old by now), the second is "today" (new). A fifth value is the
@@ -105,10 +108,26 @@ TODAY = {
         ], "-312.40"),
         ("Energie Exemplu SA", "RO50112233", "EN 4410", [line("Energie electrică", "1000.00")], "200.00"),
     ],
+    RIDES: [
+        ("Platforma Curse SRL", "RO61223344", "PC 2211", [line("Comision platformă", "182.40")]),
+    ],
 }
+
+
+def _fare(value: str) -> list:
+    """The one line of a ride's invoice: a service, not subject to VAT."""
+    return [line("Tarif de călătorie", value, unit="E48", percent="0", category="Z")]
+
+
+def _off(amount: str, reason: str = "Reducere") -> list:
+    """A discount written on the whole invoice, not on a line: it gets an account of its own."""
+    return [adjustment(amount, reason=reason, percent="0", category="Z")]
+
+
 # What a client issued itself: (buyer name, buyer CUI, invoice number, lines) per client. ANAF
 # lists these too; they get income accounts like the received ones get theirs: one by Jev,
-# one with a line Jev is unsure of, one by a rule and Jev, line by line.
+# one with a line Jev is unsure of, one by a rule and Jev, line by line. A fifth value is what
+# is written on the whole invoice: the rides' discounts, each decided like a line.
 ISSUED = {
     "12345674": [
         ("Gama Imobiliare SA", "31557788", "AC-2029", [line("Reparații acoperiș", "600.00")]),
@@ -119,8 +138,17 @@ ISSUED = {
             line("Manoperă instalații", "1500.00"), line("Țeavă PPR 25 mm", "500.00", quantity="40", unit="MTR", price="12.50"),
         ]),
     ],
+    RIDES: [
+        # The fare on 704 and its discount on 729, both by Jev.
+        ("Ana Popescu", A_PERSON, "DB-5848", _fare("16.10"), _off("4.30")),
+        # Jev is unsure of this discount: the invoice waits for a person, with Jev's proposal.
+        ("Mihai Ionescu", A_PERSON, "DB-5849", _fare("23.40"), _off("5.00", "Cod promoțional")),
+        # No discount: one line, one account for the invoice.
+        ("Elena Dumitru", A_PERSON, "DB-5850", _fare("31.75")),
+    ],
 }
 BUYERS = [(name, cui) for name, cui, _, _ in ISSUED["12345674"]]
+RIDERS = [name for name, *_ in ISSUED[RIDES]]
 # Booked by a person on another account than Jev chose for the same kind of work, so the
 # rule proposed from it shows invoices on two accounts.
 BOOKED_BY_HAND = ("12345674", "SA 3340", "611")
@@ -137,6 +165,10 @@ JEV_ANSWERS = {
     "reparații": {"choice": "704", "confidence": 0.9},
     "cărămidă": {"choice": "707", "confidence": 0.55, "probabilities_extra": {"704": 0.3}},
     "țeavă": {"choice": "707", "confidence": 0.91},
+    # A ride, and what is taken off it on the whole invoice.
+    "tarif": {"choice": "704", "confidence": 0.93},
+    "reducere": {"choice": "729", "confidence": 0.9, "probabilities_extra": {"704": 0.07}},
+    "promoțional": {"choice": "729", "confidence": 0.48, "probabilities_extra": {"704": 0.41}},
     # Jev declines: the invoice goes to a person.
     "nimic": {"choice": "", "refusal": True},
     # Jev finds that none of the accounts fits ("altul"), as "Testează regulile" can show.
@@ -198,6 +230,9 @@ def build(folder: Path, now: datetime | None = None) -> Config:
     setup.set_client_per_line("14399840", False)
     setup.save_rule(name="chirie birou", cont="612", supplier_cuis=["11112222"], client_cui="12345674")
     setup.save_rule(name="manoperă", cont="704", keywords=["manoperă", "montaj*", "lucrări"], direction="issued")
+    setup.save_account(
+        "729", "Reduceri acordate clienților: reducerea sau codul promoțional scris pe factură.", kind="issued",
+    )
 
     message_id = 3000
     issued_id = FIRST_ISSUED_ID
@@ -210,9 +245,11 @@ def build(folder: Path, now: datetime | None = None) -> Config:
                     lines=lines, number=number, supplier_cui=supplier_cui, supplier_name=supplier,
                     prepaid=paid[0] if paid else None,
                 ))
-            for buyer, buyer_cui, number, lines in ISSUED.get(cui, []) if batch is TODAY else []:
+            for buyer, buyer_cui, number, lines, *off in ISSUED.get(cui, []) if batch is TODAY else []:
                 issued_id += 1
-                anaf.add(str(issued_id), tip="FACTURA TRIMISA", xml=_issued_xml(cui, buyer, buyer_cui, number, lines))
+                anaf.add(str(issued_id), tip="FACTURA TRIMISA", xml=_issued_xml(
+                    cui, buyer, buyer_cui, number, lines, adjustments=off[0] if off else (),
+                ))
             service_at(moment, anaf).sync(cui)
         if batch is EARLIER:
             # Imported into SAGA the next day and confirmed, so the archive has them: by the
@@ -235,11 +272,11 @@ def build(folder: Path, now: datetime | None = None) -> Config:
     return cfg
 
 
-def _issued_xml(cui: str, buyer: str, buyer_cui: str, number: str, lines: list, **dates) -> bytes:
+def _issued_xml(cui: str, buyer: str, buyer_cui: str, number: str, lines: list, **more) -> bytes:
     """An invoice the client itself issued: the client is its supplier."""
     return rich_invoice_xml(
         lines=lines, number=number, supplier_cui=f"RO{cui}", supplier_name=CLIENTS.get(cui, f"Client {cui}"),
-        customer_cui=buyer_cui, customer_name=buyer, **dates,
+        customer_cui=buyer_cui, customer_name=buyer, customer_person=buyer_cui == A_PERSON, **more,
     )
 
 
@@ -339,11 +376,15 @@ class StateAnaf(FakeAnaf):
         if count % 2 == 1:
             message_id = state.get("next_id", FIRST_MESSAGE_ID)
             state["next_id"] = message_id + 1
-            buyer, buyer_cui = BUYERS[message_id % len(BUYERS)]
-            self.add(
-                str(message_id), cui=cui, tip="FACTURA TRIMISA", created=moment.strftime("%Y%m%d%H%M"),
-                xml=_issued_xml(cui, buyer, buyer_cui, f"DEMO {message_id}", [line("Lucrări conform contract", "1200.00")], **dates),
-            )
+            if cui == RIDES:
+                # Another ride, with a discount on the whole invoice: the fare and what is off it differ.
+                rider = RIDERS[message_id % len(RIDERS)]
+                fare, off = f"{14 + message_id % 23}.{message_id % 10}0", f"{2 + message_id % 4}.50"
+                xml = _issued_xml(cui, rider, A_PERSON, f"DB {message_id}", _fare(fare), adjustments=_off(off), **dates)
+            else:
+                buyer, buyer_cui = BUYERS[message_id % len(BUYERS)]
+                xml = _issued_xml(cui, buyer, buyer_cui, f"DEMO {message_id}", [line("Lucrări conform contract", "1200.00")], **dates)
+            self.add(str(message_id), cui=cui, tip="FACTURA TRIMISA", created=moment.strftime("%Y%m%d%H%M"), xml=xml)
         for _ in range(1 if count % 2 == 0 else 2):
             message_id = state.get("next_id", FIRST_MESSAGE_ID)
             state["next_id"] = message_id + 1

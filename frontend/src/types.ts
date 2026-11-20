@@ -137,6 +137,20 @@ export type InvoiceLine = {
   vat_percent: string | null
 }
 
+/**
+ * A discount or a charge on the whole invoice. SAGA gets it as a line after the invoice's own
+ * lines, and it has an account of its own like one: `number` is its number among them.
+ */
+export type InvoiceAdjustment = {
+  number: number
+  description: string // the reason the invoice gives, or "Reducere" / "Taxă suplimentară"
+  value: string // without VAT, with a minus for a discount
+  vat_percent: string | null
+  is_charge: boolean
+  reason: string | null
+  amount: string
+}
+
 export type InvoiceDocument = {
   number: string | null
   issue_date: string | null
@@ -146,7 +160,7 @@ export type InvoiceDocument = {
   supplier: Party
   customer: Party
   lines: InvoiceLine[]
-  adjustments: { is_charge: boolean; reason: string | null; amount: string }[]
+  adjustments: InvoiceAdjustment[]
   total_without_vat: string | null
   total_vat: string | null
   total_with_vat: string | null

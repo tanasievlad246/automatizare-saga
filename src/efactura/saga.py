@@ -42,6 +42,7 @@ UNITS = {
     "KGM": "KG", "GRM": "G", "TNE": "T",
     "LTR": "L", "MLT": "ML", "HLT": "HL",
     "MTR": "M", "CMT": "CM", "MMT": "MM", "KMT": "KM", "MTK": "MP", "MTQ": "MC",
+    "E48": "SERV",  # a service unit: a ride, a subscription
     "HUR": "ORA", "MIN": "MIN", "DAY": "ZI", "MON": "LUNA", "ANN": "AN",
     "KWH": "KWH", "MWH": "MWH",
     "SET": "SET", "PR": "PER", "XBX": "CUTIE", "XPK": "PACHET", "XBG": "SAC", "XPX": "PALET",
@@ -70,7 +71,7 @@ class _Row:
     value: Decimal
     percent: Decimal
     vat: Decimal
-    line: int | None = None  # the invoice line it comes from; None for a discount on the whole invoice
+    line: int = 0  # its number among the invoice's rows (Invoice.rows): a line, or a discount on the whole invoice
 
 
 def file_name(invoice: Invoice, distinct: str | None = None) -> str:
@@ -118,8 +119,8 @@ def is_client_folder(folder_name: str, cui: str) -> bool:
 @dataclass(frozen=True)
 class Entry:
     """One invoice as it goes into a file for SAGA. Each line is booked on its own account
-    from `line_conts` (line number, account); a line not named there, and a discount or
-    charge on the whole invoice, on `cont`.
+    from `line_conts` (line number, account); a line not named there on `cont`. A discount
+    or a charge on the whole invoice is a line after the invoice's own, numbered on from them.
 
     `upload_index` and `download_id` are ANAF's ids for the e-Factura (SPV). `issued`: an
     invoice the client issued itself; SAGA files it under "Ieșiri" by its supplier.
@@ -132,8 +133,8 @@ class Entry:
     line_conts: tuple[tuple[int, str], ...] = ()
     issued: bool = False
 
-    def cont_for(self, line: int | None) -> str:
-        return dict(self.line_conts).get(line, self.cont) if line is not None else self.cont
+    def cont_for(self, line: int) -> str:
+        return dict(self.line_conts).get(line, self.cont)
 
 
 def build_xml(
@@ -292,7 +293,7 @@ def _rows(invoice: Invoice) -> list[_Row]:
             line=item.number,
         ))
     # Discounts and charges on the invoice as a whole: one line each, so the totals match.
-    for item in invoice.adjustments:
+    for number, item in enumerate(invoice.adjustments, start=len(invoice.lines) + 1):
         percent = _percent(item.vat_percent, item.vat_category)
         value = sign * (item.amount if item.is_charge else -item.amount)
         rows.append(_Row(
@@ -303,6 +304,7 @@ def _rows(invoice: Invoice) -> list[_Row]:
             value=value,
             percent=percent,
             vat=_vat(value, percent),
+            line=number,
         ))
     _settle_vat(rows, sign * invoice.total_vat if invoice.total_vat is not None else None)
     return rows

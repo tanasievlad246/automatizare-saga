@@ -1,13 +1,36 @@
 import { countOf, formatPercent } from '../format'
-import type { Invoice, InvoiceLine, LineAccount } from '../types'
+import type { Invoice, InvoiceAdjustment, InvoiceLine, LineAccount } from '../types'
 
 /**
  * What the window for an account is about: one line of the invoice, or all of them at once.
- * `followers`: for the largest line, the lines that take its account.
+ * `followers`: for the largest line, the lines that take its account. `wholeInvoice`: the row is
+ * a discount or a charge on the whole invoice, which has an account of its own like a line.
  */
 export type LineTarget =
-  | { entry: LineAccount; description: string; details: string | null; value: string | null; followers: number[] }
+  | {
+      entry: LineAccount; description: string; details: string | null; value: string | null; followers: number[]
+      wholeInvoice: boolean
+    }
   | 'all'
+
+/** The rows of an invoice that get an account: its lines, then each discount or charge on the whole invoice. */
+type Rows = {
+  lines: Pick<InvoiceLine, 'number' | 'description' | 'details' | 'value'>[]
+  adjustments?: Pick<InvoiceAdjustment, 'number' | 'description' | 'value'>[]
+}
+
+/** Under the name of a discount or a charge on the whole invoice, to tell it from a line. */
+export const ON_WHOLE_INVOICE = 'pe toată factura'
+
+/** In the window of such a row: what it is. A discount has a minus. */
+export function wholeInvoiceNote(value: string | null): string {
+  return `Este o ${Number(value) < 0 ? 'reducere' : 'taxă'} pe toată factura, nu pe o linie anume.`
+}
+
+/** The name of each row by its number, for the history of the accounts. */
+export function rowNames(document: Rows): Record<number, string> {
+  return Object.fromEntries([...document.lines, ...(document.adjustments ?? [])].map((row) => [row.number, row.description]))
+}
 
 const CHOSEN_BY: Record<string, (entry: LineAccount) => string> = {
   rules: (entry) => (entry.rule ? `după regula „${entry.rule}”` : 'după o regulă a dumneavoastră'),
@@ -59,22 +82,24 @@ export function largestLine(lines: { number: number; value: string }[]): number 
 }
 
 /**
- * What the window is about when a line's number, or "all", is chosen on an invoice with an
- * account on each line. Nothing for a line the invoice does not have.
+ * What the window is about when a row's number, or "all", is chosen on an invoice with an
+ * account on each line. Nothing for a row the invoice does not have.
  */
-export function lineTarget(
-  document: { lines: Pick<InvoiceLine, 'number' | 'description' | 'details' | 'value'>[] },
-  entries: LineAccount[] | null, choosing: number | 'all' | null,
-): LineTarget | null {
+export function lineTarget(document: Rows, entries: LineAccount[] | null, choosing: number | 'all' | null): LineTarget | null {
   if (choosing === 'all') return 'all'
-  const line = document.lines.find((each) => each.number === choosing)
   const entry = entries?.find((each) => each.line === choosing)
-  if (!line || !entry) return null
+  if (!entry) return null
+  const adjustment = document.adjustments?.find((each) => each.number === choosing)
+  if (adjustment) {
+    return { entry, description: adjustment.description, details: null, value: adjustment.value, followers: [], wholeInvoice: true }
+  }
+  const line = document.lines.find((each) => each.number === choosing)
+  if (!line) return null
   // The lines that take the largest line's account change with it: its window says so.
   const followers = (entries ?? []).filter((each) => each.method === 'follows').map((each) => each.line)
   return {
     entry, description: line.description, details: line.details, value: line.value,
-    followers: line.number === largestLine(document.lines) ? followers : [],
+    followers: line.number === largestLine(document.lines) ? followers : [], wholeInvoice: false,
   }
 }
 

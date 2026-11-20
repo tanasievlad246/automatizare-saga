@@ -221,6 +221,34 @@ class Invoice:
     def total_with_vat(self) -> Decimal | None:
         return total_with_vat(self.total_without_vat, self.total_vat, self.total_payable)
 
+    @property
+    def rows(self) -> tuple[Line, ...]:
+        """Everything on the invoice that gets an account, as SAGA's file numbers it: the
+        lines, then each discount or charge on the whole invoice as a line of its own. Such
+        a row is one unit at its value, with a minus for a discount, and has no codes."""
+        return self.lines + tuple(
+            _as_line(item, len(self.lines) + position) for position, item in enumerate(self.adjustments, start=1)
+        )
+
+    def on_whole_invoice(self, number: int) -> bool:
+        """Whether the row with this number is a discount or a charge on the whole invoice,
+        not one of its lines."""
+        return number > len(self.lines)
+
+
+# What a discount or a charge on the whole invoice is called when the invoice gives no reason.
+DISCOUNT_NAME = "Reducere"
+CHARGE_NAME = "Taxă suplimentară"
+
+
+def _as_line(item: Adjustment, number: int) -> Line:
+    value = item.amount if item.is_charge else -item.amount
+    return Line(
+        number=number, description=item.reason or (CHARGE_NAME if item.is_charge else DISCOUNT_NAME),
+        seller_code=None, barcode=None, commodity_codes=(), unit=None, quantity=Decimal(1),
+        unit_price=value, value=value, vat_percent=item.vat_percent, vat_category=item.vat_category,
+    )
+
 
 def total_with_vat(
     without_vat: Decimal | None, vat: Decimal | None, payable: Decimal | None

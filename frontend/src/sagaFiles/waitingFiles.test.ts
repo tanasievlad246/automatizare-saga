@@ -184,26 +184,33 @@ describe('the rows under an open invoice', () => {
     { number: 2, description: 'Transport marfă', details: 'Livrare la șantier', quantity: '1', unit_name: 'BUC', value: '120.00', vat_percent: '19' },
   ]
   const document = {
-    lines, adjustments: [{ is_charge: false, reason: 'Discount comercial', amount: '30.00' }, { is_charge: true, reason: null, amount: '12.00' }],
+    lines,
+    adjustments: [
+      { number: 3, description: 'Discount comercial', value: '-30.00', is_charge: false, reason: 'Discount comercial', amount: '30.00' },
+      { number: 4, description: 'Taxă suplimentară', value: '12.00', is_charge: true, reason: null, amount: '12.00' },
+    ],
   }
 
-  it('are its lines, each with its account, then what SAGA gets as lines of its own', () => {
-    const accounts = [{ line: 1, cont: '302' }, { line: 2, cont: '624' }] as NonNullable<Invoice['line_accounts']>
+  it('are its lines, then each discount or charge on the whole invoice, each with its own account', () => {
+    const accounts = [{ line: 1, cont: '302' }, { line: 2, cont: '624' }, { line: 3, cont: '609' }, { line: 4, cont: null }] as NonNullable<Invoice['line_accounts']>
 
     const rows = lineRows(document as never, accounts, '302')
 
     expect(rows.map((row) => [row.number, row.description, row.value, row.cont])).toEqual([
       [1, 'Ciment 40 kg', '510.00', '302'], [2, 'Transport marfă', '120.00', '624'],
-      [null, 'Discount comercial', '-30.00', '302'], [null, 'Taxă suplimentară', '12.00', '302'],
+      [3, 'Discount comercial', '-30.00', '609'], [4, 'Taxă suplimentară', '12.00', null],
     ])
     expect(rows[1].details).toBe('Livrare la șantier')
     expect(rows[0].entry).toBe(accounts[0])
-    expect(rows[2].entry).toBeNull()
+    expect(rows[2].entry).toBe(accounts[2])
+    expect(rows.map((row) => row.wholeInvoice)).toEqual([false, false, true, true])
+    // A discount has no quantity of its own.
+    expect([rows[2].quantity, rows[2].unit_name]).toEqual([null, null])
   })
 
   it('carry the account of the invoice when the invoice has one for all its lines', () => {
-    const rows = lineRows({ lines, adjustments: [] } as never, null, '6022')
+    const rows = lineRows(document as never, null, '6022')
 
-    expect(rows.map((row) => [row.cont, row.entry])).toEqual([['6022', null], ['6022', null]])
+    expect(rows.map((row) => [row.cont, row.entry])).toEqual([['6022', null], ['6022', null], ['6022', null], ['6022', null]])
   })
 })

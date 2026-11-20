@@ -83,10 +83,10 @@ def line_subject(invoice: Invoice, item: Line) -> Subject:
 
 
 def rules_by_line(invoice: Invoice, rulebook: Rulebook) -> dict[int, Rule]:
-    """The rule that gives each line its account, by line number; a line no rule matches
-    is left out."""
+    """The rule that gives each row its account, by its number; a row no rule matches is
+    left out. A discount or a charge on the whole invoice is a row too (Invoice.rows)."""
     found = {}
-    for item in invoice.lines:
+    for item in invoice.rows:
         rule = rulebook.rule_for(line_subject(invoice, item))
         if rule is not None:
             found[item.number] = rule
@@ -96,9 +96,10 @@ def rules_by_line(invoice: Invoice, rulebook: Rulebook) -> dict[int, Rule]:
 def follows_largest(invoice: Invoice, item: Line) -> bool:
     """A line that takes the account of the invoice's largest line when no rule gives it
     one: a discount (its value has the other sign) or a line worth nothing. Jev cannot
-    judge "Discount" or "Paleti returnabili" on its own."""
+    judge "Discount" or "Paleti returnabili" on its own. A discount or a charge written on
+    the whole invoice does not: it is decided like a line, by the rules, Jev or a person."""
     largest = deciding_line(invoice)
-    if largest is None or item.number == largest.number:
+    if largest is None or item.number == largest.number or invoice.on_whole_invoice(item.number):
         return False
     return item.value == 0 or (item.value < 0) != (largest.value < 0)
 
@@ -117,9 +118,13 @@ def jev_line_request(invoice: Invoice, item: Line, rulebook: Rulebook, model: st
 
     Only the supplier and that line are sent: not the other lines, not the buyer, no
     address, bank account or contact. For an invoice the client issued, not even the
-    supplier, which is the client itself.
+    supplier, which is the client itself. A discount or a charge on the whole invoice is
+    sent as a line, with a word on what it is (`fel`).
     """
     default = DEFAULT_JEV_ISSUED_LINE_INSTRUCTIONS if rulebook.issued else DEFAULT_JEV_LINE_INSTRUCTIONS
+    described = _describe(item)
+    if invoice.on_whole_invoice(item.number):
+        described["fel"] = "reducere pe toata factura" if item.value < 0 else "taxa pe toata factura"
     return {
         "model": model,
         "state": {
@@ -128,7 +133,7 @@ def jev_line_request(invoice: Invoice, item: Line, rulebook: Rulebook, model: st
                 "tip": "nota de credit" if invoice.is_credit_note else "factura",
                 "moneda": invoice.currency,
             },
-            "linia": _describe(item),
+            "linia": described,
         },
         "questions": {
             QUESTION: {

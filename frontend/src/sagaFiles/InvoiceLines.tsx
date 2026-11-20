@@ -11,7 +11,7 @@ import { errorMessage } from '../errorMessages'
 import { countOf, formatAmount, formatNumber } from '../format'
 import { isIssued } from '../invoices/issuedInvoices'
 import { LineAccountDialog } from '../invoices/LineAccountDialog'
-import { lineTarget, whoChoseInvoice, whoChoseLine } from '../invoices/lineAccounts'
+import { ON_WHOLE_INVOICE, lineTarget, whoChoseInvoice, whoChoseLine } from '../invoices/lineAccounts'
 import { InvoiceAccountDialog } from './InvoiceAccountDialog'
 import { FILES_TAB, LINES_PER_PAGE, lineRows } from './waitingFiles'
 
@@ -38,7 +38,8 @@ export function InvoiceLines({ invoiceId, cui, number }: { invoiceId: string; cu
   const perLine = invoice.line_accounts
   // Only the accounts of the invoice's own kind can be chosen.
   const accounts = (isIssued(invoice) ? rules?.issued_accounts : rules?.accounts) ?? {}
-  const page = pageOf(lineRows(document, perLine, invoice.cont), wanted, LINES_PER_PAGE)
+  const rows = lineRows(document, perLine, invoice.cont)
+  const page = pageOf(rows, wanted, LINES_PER_PAGE)
   // An imported invoice is in no file; should one be shown all the same, its account stays.
   const editable = !invoice.uploaded_to_accounting
   const target = choosing === 'invoice' ? null : lineTarget(document, perLine, choosing)
@@ -49,7 +50,7 @@ export function InvoiceLines({ invoiceId, cui, number }: { invoiceId: string; cu
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <p className="min-w-0 flex-[1_1_280px]">
           <strong>Liniile facturii {number}</strong>
-          <span className="text-muted-foreground"> · {countOf(document.lines.length, 'o linie', 'linii')} · </span>
+          <span className="text-muted-foreground"> · {countOf(rows.length, 'o linie', 'linii')} · </span>
           <Link to={`/clienti/${cui}/facturi/${invoiceId}`} className="font-semibold">Deschide factura</Link>
         </p>
         {perLine && editable && (
@@ -82,13 +83,14 @@ export function InvoiceLines({ invoiceId, cui, number }: { invoiceId: string; cu
             </TableRow>
           </TableHeader>
           <TableBody>
-            {page.items.map((row, index) => (
-              <TableRow key={row.number ?? `adjustment-${index}`}>
-                <TableCell className="text-muted-foreground">{row.number ?? ''}</TableCell>
+            {page.items.map((row) => (
+              <TableRow key={row.number}>
+                <TableCell className="text-muted-foreground">{row.number}</TableCell>
                 <TableCell className="font-semibold whitespace-normal">
                   {row.description}
                   {/* The item's description, when it says more than its name. */}
                   {row.details && <div className="mt-0.5 text-[0.9rem] font-normal text-muted-foreground">{row.details}</div>}
+                  {row.wholeInvoice && <div className="mt-0.5 text-[0.9rem] font-normal text-muted-foreground">{ON_WHOLE_INVOICE}</div>}
                 </TableCell>
                 <TableCell className="text-right whitespace-nowrap">
                   {row.quantity !== null && `${formatNumber(row.quantity)} ${row.unit_name?.toLowerCase() ?? ''}`}
@@ -104,7 +106,7 @@ export function InvoiceLines({ invoiceId, cui, number }: { invoiceId: string; cu
                           {row.entry ? whoChoseLine(row.entry) : 'contul facturii'}
                         </span>
                       </div>
-                      {row.entry && row.number !== null && editable && (
+                      {row.entry && editable && (
                         <Button
                           variant="outline" size="sm"
                           aria-label={`Schimbă contul pentru linia ${row.number}: ${row.description}`}

@@ -149,7 +149,8 @@ export function sortLabel(label: string, sort: Sort | null, column: SortColumn):
 
 /** One row under an open invoice: a line of it, or a discount or charge on the whole invoice. */
 export type LineRow = {
-  number: number | null // null for a discount or a charge on the whole invoice
+  number: number // as SAGA's file numbers it: a discount or a charge comes after the invoice's own lines
+  wholeInvoice: boolean // a discount or a charge on the whole invoice
   description: string
   details: string | null
   quantity: string | null
@@ -157,13 +158,13 @@ export type LineRow = {
   value: string
   vat_percent: string | null
   cont: string | null
-  entry: LineAccount | null // the line's own account, when the invoice has one on each line
+  entry: LineAccount | null // the row's own account, when the invoice has one on each line
 }
 
 /**
- * The rows SAGA gets for one invoice: its lines, each with its account (the invoice's own when
- * it has one for all of them), then each discount or charge on the whole invoice, which SAGA
- * books as a line on the invoice's account.
+ * The rows SAGA gets for one invoice: its lines, then each discount or charge on the whole
+ * invoice, which SAGA books as a line. Each with its account: its own when the invoice has one
+ * on each line, the invoice's when it has one for all of them.
  */
 export function lineRows(
   document: Pick<InvoiceDocument, 'lines' | 'adjustments'>, accounts: LineAccount[] | null, invoiceCont: string | null,
@@ -172,15 +173,18 @@ export function lineRows(
   const lines = document.lines.map((line): LineRow => {
     const entry = accountOf.get(line.number) ?? null
     return {
-      number: line.number, description: line.description, details: line.details, quantity: line.quantity,
+      number: line.number, wholeInvoice: false, description: line.description, details: line.details, quantity: line.quantity,
       unit_name: line.unit_name, value: line.value, vat_percent: line.vat_percent,
       cont: accounts ? (entry?.cont ?? null) : invoiceCont, entry,
     }
   })
-  const adjustments = document.adjustments.map((adjustment): LineRow => ({
-    number: null, description: adjustment.reason ?? (adjustment.is_charge ? 'Taxă suplimentară' : 'Reducere'),
-    details: null, quantity: null, unit_name: null, value: adjustment.is_charge ? adjustment.amount : `-${adjustment.amount}`,
-    vat_percent: null, cont: invoiceCont, entry: null,
-  }))
+  const adjustments = document.adjustments.map((adjustment): LineRow => {
+    const entry = accountOf.get(adjustment.number) ?? null
+    return {
+      number: adjustment.number, wholeInvoice: true, description: adjustment.description, details: null,
+      quantity: null, unit_name: null, value: adjustment.value, vat_percent: adjustment.vat_percent ?? null,
+      cont: accounts ? (entry?.cont ?? null) : invoiceCont, entry,
+    }
+  })
   return [...lines, ...adjustments]
 }

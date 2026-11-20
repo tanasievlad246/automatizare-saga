@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { Invoice, LineAccount } from '../types'
-import { accountsUsed, largestLine, lineTarget, linesLeft, linesLeftNote, listAccount, whoChoseInvoice, whoChoseLine } from './lineAccounts'
+import {
+  accountsUsed, largestLine, lineTarget, linesLeft, linesLeftNote, listAccount, rowNames, whoChoseInvoice, whoChoseLine, wholeInvoiceNote,
+} from './lineAccounts'
 
 const entry = (over: Partial<LineAccount>): LineAccount => ({
   line: 1, cont: null, method: null, rule: null, reason: '',
@@ -110,11 +112,39 @@ describe('what the window for a line is about', () => {
 
   it('is the line with its account; for the largest line, also the lines that take its account', () => {
     expect(lineTarget(document, entries, 1)).toEqual({
-      entry: entries[0], description: 'Ciment 40 kg', details: null, value: '510.00', followers: [2],
+      entry: entries[0], description: 'Ciment 40 kg', details: null, value: '510.00', followers: [2], wholeInvoice: false,
     })
     expect(lineTarget(document, entries, 2)).toEqual({
-      entry: entries[1], description: 'Transport marfă', details: 'Livrare la șantier', value: '120.00', followers: [],
+      entry: entries[1], description: 'Transport marfă', details: 'Livrare la șantier', value: '120.00', followers: [], wholeInvoice: false,
     })
+  })
+
+  it('is a discount on the whole invoice too, by the number it has after the lines', () => {
+    const discounted = {
+      ...document,
+      adjustments: [{ number: 3, description: 'Reducere', value: '-30.00', is_charge: false, reason: 'Reducere', amount: '30.00' }],
+    }
+    const withIts = [...entries, entry({ line: 3, cont: '729', method: 'jev' })]
+
+    expect(lineTarget(discounted, withIts, 3)).toEqual({
+      entry: withIts[2], description: 'Reducere', details: null, value: '-30.00', followers: [], wholeInvoice: true,
+    })
+    // The largest line is still one of the invoice's own lines.
+    expect(lineTarget(discounted, withIts, 1)).toMatchObject({ followers: [2], wholeInvoice: false })
+  })
+
+  it('names every row for the history, the discount on the whole invoice among them', () => {
+    const discounted = {
+      ...document,
+      adjustments: [{ number: 3, description: 'Reducere', value: '-30.00', is_charge: false, reason: 'Reducere', amount: '30.00' }],
+    }
+
+    expect(rowNames(discounted)).toEqual({ 1: 'Ciment 40 kg', 2: 'Transport marfă', 3: 'Reducere' })
+  })
+
+  it('says of such a row that it is on the whole invoice: a discount with a minus, a charge without', () => {
+    expect(wholeInvoiceNote('-30.00')).toBe('Este o reducere pe toată factura, nu pe o linie anume.')
+    expect(wholeInvoiceNote('12.00')).toBe('Este o taxă pe toată factura, nu pe o linie anume.')
   })
 
   it('is every line at once, or nothing when no line of the invoice is meant', () => {

@@ -5,12 +5,14 @@ import { cn } from '@/lib/utils'
 import { formatAmount, formatDate, formatNumber } from '../format'
 import type { InvoiceDocument, LineAccount, Party } from '../types'
 import { totalRows, totalsNote } from './invoiceTotals'
-import { whoChoseLine } from './lineAccounts'
+import { ON_WHOLE_INVOICE, whoChoseLine } from './lineAccounts'
 
-/** The account of each line, for an invoice decided line by line. `onChoose` is null once it is imported. */
+/**
+ * The account of each row, for an invoice decided line by line: its lines, and each discount or
+ * charge on the whole invoice. `onChoose` is null once it is imported.
+ */
 export type LineColumn = {
   accounts: LineAccount[]
-  invoiceCont: string | null // what a discount on the whole invoice is booked on
   onChoose: ((line: number) => void) | null
 }
 
@@ -69,51 +71,32 @@ export function RenderedInvoice({
                 <TableCell className="text-right">{formatAmount(line.value)}</TableCell>
                 <TableCell className="text-right">{line.vat_percent ? `${formatNumber(line.vat_percent)}%` : ''}</TableCell>
                 {lineColumn && (
-                  // The account, who chose it and the button in one cell: a column more would
-                  // push the button out of sight beside the account card.
-                  <TableCell className="w-44 whitespace-normal">
-                    <div className="flex flex-col items-start gap-1">
-                      {entry?.cont ? (
-                        <span className="font-heading text-xl leading-tight font-bold">{entry.cont}</span>
-                      ) : (
-                        <span className="font-bold text-attention-foreground">fără cont</span>
-                      )}
-                      {entry && <span className="text-[0.85rem] leading-snug text-muted-foreground">{whoChoseLine(entry)}</span>}
-                      {entry && lineColumn.onChoose && (
-                        <Button
-                          size="sm"
-                          variant={waiting ? 'default' : 'outline'}
-                          className={cn('mt-0.5', waiting && 'bg-attention-foreground hover:bg-attention-foreground/85')}
-                          aria-label={`${waiting ? 'Alege contul' : 'Schimbă contul'} pentru linia ${line.number}: ${line.description}`}
-                          onClick={() => lineColumn.onChoose?.(line.number)}
-                        >
-                          {waiting ? 'Alege contul' : 'Schimbă'}
-                        </Button>
-                      )}
-                    </div>
-                  </TableCell>
+                  <AccountCell entry={entry} number={line.number} description={line.description} onChoose={lineColumn.onChoose} />
                 )}
               </TableRow>
             )
           })}
-          {document.adjustments.map((adjustment, index) => (
-            <TableRow key={`adjustment-${index}`}>
-              <TableCell className="font-semibold">
-                {adjustment.reason ?? (adjustment.is_charge ? 'Taxă suplimentară' : 'Reducere')}
-              </TableCell>
-              <TableCell colSpan={lineColumn ? 1 : 2} />
-              <TableCell className="text-right">
-                {adjustment.is_charge ? '' : '−'}{formatAmount(adjustment.amount)}
-              </TableCell>
-              <TableCell />
-              {lineColumn && (
-                <TableCell className="whitespace-normal">
-                  <div className="font-heading text-xl leading-tight font-bold">{lineColumn.invoiceCont ?? '—'}</div>
-                  <div className="text-[0.85rem] text-muted-foreground">ca linia cea mai mare</div>
+          {/* A discount or a charge on the whole invoice: a row after the lines, with its own account. */}
+          {document.adjustments.map((adjustment) => {
+            const entry = accountOf.get(adjustment.number)
+            const waiting = lineColumn !== null && !entry?.cont
+            return (
+              <TableRow key={adjustment.number} className={cn(waiting && 'bg-attention/40 hover:bg-attention/50')}>
+                <TableCell className="font-semibold">
+                  {adjustment.description}
+                  <div className="mt-0.5 text-[0.9rem] font-normal text-muted-foreground">{ON_WHOLE_INVOICE}</div>
                 </TableCell>
-              )}
-            </TableRow>
-          ))}
+                <TableCell colSpan={lineColumn ? 1 : 2} />
+                <TableCell className="text-right">
+                  {adjustment.is_charge ? '' : '−'}{formatAmount(adjustment.amount)}
+                </TableCell>
+                <TableCell className="text-right">{adjustment.vat_percent ? `${formatNumber(adjustment.vat_percent)}%` : ''}</TableCell>
+                {lineColumn && (
+                  <AccountCell entry={entry} number={adjustment.number} description={adjustment.description} onChoose={lineColumn.onChoose} />
+                )}
+              </TableRow>
+            )
+          })}
         </TableBody>
       </Table>
       <dl className="grid grid-cols-[auto_auto] gap-x-7 gap-y-1.5 self-end text-right">
@@ -126,6 +109,39 @@ export function RenderedInvoice({
       </dl>
       {note && <p className="rounded-xl bg-fresh px-4 py-3 text-fresh-foreground">{note}</p>}
     </div>
+  )
+}
+
+/**
+ * A row's account, who chose it and the button, in one cell: a column more would push the
+ * button out of sight beside the account card.
+ */
+function AccountCell({
+  entry, number, description, onChoose,
+}: { entry: LineAccount | undefined; number: number; description: string; onChoose: ((line: number) => void) | null }) {
+  const waiting = !entry?.cont
+  return (
+    <TableCell className="w-44 whitespace-normal">
+      <div className="flex flex-col items-start gap-1">
+        {entry?.cont ? (
+          <span className="font-heading text-xl leading-tight font-bold">{entry.cont}</span>
+        ) : (
+          <span className="font-bold text-attention-foreground">fără cont</span>
+        )}
+        {entry && <span className="text-[0.85rem] leading-snug text-muted-foreground">{whoChoseLine(entry)}</span>}
+        {entry && onChoose && (
+          <Button
+            size="sm"
+            variant={waiting ? 'default' : 'outline'}
+            className={cn('mt-0.5', waiting && 'bg-attention-foreground hover:bg-attention-foreground/85')}
+            aria-label={`${waiting ? 'Alege contul' : 'Schimbă contul'} pentru linia ${number}: ${description}`}
+            onClick={() => onChoose(number)}
+          >
+            {waiting ? 'Alege contul' : 'Schimbă'}
+          </Button>
+        )}
+      </div>
+    </TableCell>
   )
 }
 
