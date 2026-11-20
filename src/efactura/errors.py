@@ -31,6 +31,9 @@ SAGA_FILES_CHANGED = "saga_files_changed"
 SAGA_FILES_STALE = "saga_files_stale"
 # The files of a confirmed import could not be written to the archive (a full disk, no rights).
 SAGA_ARCHIVE_ERROR = "saga_archive_error"
+# Server mode: a window (a folder, the certificate login) would open on the computer that runs
+# the program, not on the one asking. Only a browser on that computer itself may ask for one.
+NOT_ON_THIS_COMPUTER = "not_on_this_computer"
 
 
 class EfacturaError(Exception):

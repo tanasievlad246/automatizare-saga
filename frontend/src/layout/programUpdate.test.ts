@@ -30,6 +30,8 @@ describe('what looking for a newer version found', () => {
       .toBe('Ultima versiune publicată este 0.3.0. O copie de dezvoltare se actualizează cu git, nu de aici.')
     expect(whatTheLookFound(copy({ can_update: false, why_not_kind: 'not_a_clone', latest_release: null })))
       .toBe('Această copie nu a fost instalată cu programul de instalare, așa că nu are de unde căuta.')
+    expect(whatTheLookFound(copy({ can_update: false, why_not_kind: 'container', latest_release: null })))
+      .toBe('Programul rulează pe NAS și se actualizează de acolo, cum scrie în README-NAS.md, nu de pe această pagină.')
     expect(whatTheLookFound(copy({ check_error: 'no network' }))).toBe('Nu am putut căuta. Verificați conexiunea la internet.')
   })
 

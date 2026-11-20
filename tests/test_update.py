@@ -432,7 +432,7 @@ def test_an_update_is_not_called_failed_because_the_program_did_not_start_again(
     installed.release("0.2.0")
     computer.answer = HEALTHY
 
-    def will_not_start(cfg, config_path):
+    def will_not_start(cfg, config_path, network=False):
         raise EfacturaError("config_error", "Port 9001 on this computer is used by another program.")
 
     monkeypatch.setattr(background, "start", will_not_start)

@@ -44,3 +44,16 @@ model = "typesafe/jev-1.14"
 # Optional: where the files for SAGA are written. Default: "SAGA Import" inside data_dir.
 # A relative path is relative to this file.
 # import_dir = "C:\\SAGA Import"
+
+[server]
+# Only for server mode: `efactura serve --network` (start-server.bat), or the NAS container
+# (README-NAS.md). Then every computer on the office network opens the page at
+# http://<this computer's address>:<port>/ui/, without a login. Today's local mode ignores this.
+#
+# Names the page may also be opened under, besides an IP address and this computer's own name:
+# names = ["birou-nas", "birou-nas.local"]
+#
+# How the office's computers reach the folder for SAGA, so the page shows its paths as they see
+# them (copy a path, paste it in File Explorer, Finder or SAGA):
+# saga_folder_windows = '\\192.168.1.50\AutoSaga-SAGA'
+# saga_folder_mac = "/Volumes/AutoSaga-SAGA"

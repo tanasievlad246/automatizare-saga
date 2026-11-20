@@ -134,7 +134,7 @@ def computer(monkeypatch):
         answer=None, spawned=[], asked_to_stop=[], opened=[], waited=0.0, comes_up=True, goes_down=True
     )
 
-    def spawn_server(config_path, output):
+    def spawn_server(config_path, output, network=False):
         state.spawned.append((config_path, output))
         if state.comes_up:
             state.answer = HEALTHY
@@ -214,7 +214,7 @@ def test_stop_asks_the_running_program_to_stop(settings, command, computer):
 
     code, out = command(settings, "stop")
 
-    assert (code, out) == (0, {"ok": True, "stopped": True})
+    assert (code, out) == (0, {"ok": True, "stopped": True, "network": False})
     assert computer.asked_to_stop == [(9001, "local-key")]
 
 
@@ -375,6 +375,6 @@ def test_the_program_really_starts_in_the_background_and_stops(tmp_path):
 
     assert (started["started"], again["started"]) == (True, False)
     assert answering["service"] == "efactura"
-    assert stopped == {"ok": True, "stopped": True}
+    assert stopped == {"ok": True, "stopped": True, "network": False}
     assert background.probe(port) is None
     assert (tmp_path / "data" / "server.log").exists()

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { api } from '../api'
+import { opensWindowsHere, typeTheFolder, useWhere } from '../where'
 
 /** Where the copies are kept: picked in Windows' own dialog, or typed. */
 export function BackupFolderCard({ saved }: { saved: string }) {
@@ -23,6 +24,7 @@ export function BackupFolderCard({ saved }: { saved: string }) {
   const choose = useMutation({ mutationFn: () => api.chooseFolder('backups'), onSuccess: ({ folder }) => folder && setTyped(folder) })
   const failure = save.error ?? choose.error
   const changed = typed.trim() !== '' && typed.trim() !== saved
+  const here = opensWindowsHere(useWhere())
 
   return (
     <section aria-label="Folderul copiilor" className="flex flex-col gap-3 rounded-2xl border bg-card px-5 py-4.5">
@@ -36,9 +38,10 @@ export function BackupFolderCard({ saved }: { saved: string }) {
       >
         <Label htmlFor="backup-folder" className="sr-only">Folderul copiilor</Label>
         <Input id="backup-folder" className="min-w-0 flex-[1_1_320px]" placeholder="de exemplu E:\Copii AutoSaga" value={typed} onChange={(event) => setTyped(event.target.value)} />
-        <Button type="button" variant="outline" disabled={choose.isPending} onClick={() => choose.mutate()}>Alege folderul</Button>
+        {here && <Button type="button" variant="outline" disabled={choose.isPending} onClick={() => choose.mutate()}>Alege folderul</Button>}
         <Button type="submit" disabled={!changed || save.isPending}>Salvează</Button>
       </form>
+      {!here && <p className="text-[0.95rem] text-muted-foreground">{typeTheFolder('/backups')}</p>}
       {choose.isPending && (
         <p role="status" className="text-[0.95rem] text-muted-foreground">
           Alegeți folderul în fereastra deschisă. Dacă nu o vedeți, este în spatele acestei pagini.

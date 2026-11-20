@@ -47,6 +47,12 @@ class Config:
     saga_import_dir: Path | None = None  # None: "SAGA Import" inside the data folder
     path: Path | None = None  # the settings file these were read from
     demo: bool = False  # made-up data and stand-ins for ANAF and Jev; see demo.py
+    # [server], used in server mode only (`serve --network`): the names the page may be opened
+    # under besides an IP address and this computer's own name, and how the computers in the
+    # office reach the folder for SAGA, so the page shows its paths as they see them.
+    server_names: tuple[str, ...] = ()
+    saga_folder_windows: str | None = None
+    saga_folder_mac: str | None = None
 
     @property
     def saga_dir(self) -> Path:
@@ -158,6 +164,7 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
     storage = raw.get("storage", {})
     sync = raw.get("sync", {})
     api = raw.get("api", {})
+    server = raw.get("server", {})
 
     environment = str(anaf.get("environment", "prod"))
     if environment not in ("prod", "test"):
@@ -199,4 +206,18 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
         ),
         path=config_path,
         demo=demo,
+        server_names=_names(server.get("names", [])),
+        saga_folder_windows=_text_or_none(server.get("saga_folder_windows")),
+        saga_folder_mac=_text_or_none(server.get("saga_folder_mac")),
     )
+
+
+def _names(value) -> tuple[str, ...]:
+    if not isinstance(value, list) or not all(isinstance(name, str) for name in value):
+        raise EfacturaError(CONFIG_ERROR, '[server] names must be a list of names, e.g. names = ["birou-nas"].')
+    return tuple(name.strip().lower() for name in value if name.strip())
+
+
+def _text_or_none(value) -> str | None:
+    text = str(value).strip() if value is not None else ""
+    return text or None

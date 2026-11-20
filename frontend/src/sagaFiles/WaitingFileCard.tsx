@@ -8,6 +8,7 @@ import { COPY_REFUSED, copyText } from '../clipboard'
 import { showError } from '../errorMessages'
 import { formatWhen } from '../format'
 import type { Invoice, WaitingFile } from '../types'
+import { opensWindowsHere, pathOnThisPC, useWhere } from '../where'
 import { FileInvoicesTable } from './FileInvoicesTable'
 import { FileXmlDialog } from './FileXmlDialog'
 import { FILES_TAB, fileSummary } from './waitingFiles'
@@ -23,6 +24,8 @@ export function WaitingFileCard({
   const [showingXml, setShowingXml] = useState(false)
   // By one of its invoices: the folder the file is really in.
   const openFolder = useMutation({ mutationFn: () => api.openFolderOf(file.ids[0]), onError: showError })
+  const where = useWhere()
+  const path = pathOnThisPC(file.path, where) // as this computer reaches it
   const summary = fileSummary(invoices, file.invoices)
   const showXml = () => {
     onLook()
@@ -34,7 +37,7 @@ export function WaitingFileCard({
   }
   const copyPath = () => {
     onLook()
-    return copyText(file.path).then(
+    return copyText(path).then(
       () => toast.success('Calea a fost copiată.'),
       () => toast.error('Calea nu a fost copiată.', { description: COPY_REFUSED, duration: Infinity }),
     )
@@ -46,7 +49,7 @@ export function WaitingFileCard({
         <h3 className="min-w-0 font-mono text-[1.02rem] font-bold break-all">{file.name}</h3>
         {file.written_at && <span className="text-muted-foreground sm:ml-auto">Scris: {formatWhen(file.written_at)}</span>}
       </div>
-      <p className="rounded-lg bg-background px-3.5 py-3 font-mono text-[0.88rem] break-all">{file.path}</p>
+      <p className="rounded-lg bg-background px-3.5 py-3 font-mono text-[0.88rem] break-all">{path}</p>
       {!file.present && <p className="font-semibold text-attention-foreground">{FILES_TAB.missing}</p>}
       <div>
         <p>
@@ -64,12 +67,14 @@ export function WaitingFileCard({
           </Button>
         )}
         <Button variant="outline" size="sm" aria-label={`Copiază calea: ${file.name}`} onClick={copyPath}>Copiază calea</Button>
-        <Button
-          variant="outline" size="sm" aria-label={`Deschide folderul: ${file.name}`}
-          disabled={openFolder.isPending || file.ids.length === 0} onClick={showFolder}
-        >
-          Deschide folderul
-        </Button>
+        {opensWindowsHere(where) && (
+          <Button
+            variant="outline" size="sm" aria-label={`Deschide folderul: ${file.name}`}
+            disabled={openFolder.isPending || file.ids.length === 0} onClick={showFolder}
+          >
+            Deschide folderul
+          </Button>
+        )}
       </div>
       {invoices.length > 0 && <FileInvoicesTable fileName={file.name} memory={`${cui}/${file.name}`} invoices={invoices} />}
       {showingXml && (

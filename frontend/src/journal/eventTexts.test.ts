@@ -360,3 +360,12 @@ describe('the lines that say more than they used to', () => {
     expect(describeEvent(line('anaf.renewed', {}))).toBe('Conectarea la ANAF a fost reînnoită automat, fără tokenul USB.')
   })
 })
+
+describe('the program starting in server mode', () => {
+  it('says the mode only when it is the server mode', () => {
+    expect(describeEvent(line('program.started', { version: '0.15.0', mode: 'network' })))
+      .toBe('Programul a pornit în modul server: îl deschid toate calculatoarele din rețea. Versiunea 0.15.0.')
+    expect(describeEvent(line('program.started', { version: '0.15.0', mode: 'local' }))).toBe('Programul a pornit. Versiunea 0.15.0.')
+    expect(describeEvent(line('program.started', { version: '0.14.0' }))).toBe('Programul a pornit. Versiunea 0.14.0.')
+  })
+})

@@ -3,13 +3,16 @@ import { Folder } from 'lucide-react'
 import { useState } from 'react'
 import { api } from '../api'
 import { shortPath } from '../format'
+import { pathOnThisPC, useWhere } from '../where'
 import { SagaFilesDialog } from './SagaFilesDialog'
 
 /** In the top bar of every screen: where the files for SAGA go, and the way to change that and how they are written. */
 export function SagaFolderChip() {
   const [changing, setChanging] = useState(false)
   const settings = useQuery({ queryKey: ['saga-folder'], queryFn: api.sagaFolder }).data
-  const folder = settings?.saga_folder
+  const where = useWhere()
+  // As this computer reaches it: through the shared folder when the program runs on the NAS.
+  const folder = settings?.saga_folder && pathOnThisPC(settings.saga_folder, where)
 
   return (
     <>

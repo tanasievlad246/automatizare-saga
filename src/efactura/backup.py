@@ -338,7 +338,8 @@ def _replace_with(cfg: Config, name: str, now: datetime) -> dict:
             _bring_up_to_date(staged)
 
             with _no_download_running(cfg):
-                was_running = background.stop(cfg)["stopped"]
+                stopped = background.stop(cfg)
+                was_running = stopped["stopped"]
                 try:
                     kept_as, kept_aside = _keep_what_is_there(cfg, now, chosen.name)
                     try:
@@ -349,10 +350,11 @@ def _replace_with(cfg: Config, name: str, now: datetime) -> dict:
                         raise
                 except Exception as exc:
                     failure = _said(exc)
-                # Started again whatever happened in between: it was running before.
+                # Started again whatever happened in between, in the mode it ran in: it was
+                # running before. In a container the keeper starts it, once this is over.
                 if was_running:
                     try:
-                        restarted = background.start(cfg, cfg.path)["ok"]
+                        restarted = background.start_again(cfg, stopped)
                     except Exception as exc:
                         not_started = _said(exc)
         finally:
@@ -677,9 +679,12 @@ def _compact(cfg: Config) -> None:
 def _settings(cfg: Config, *keys: str) -> list[str | None]:
     store = Store(cfg.db_path)
     try:
-        return [store.get_setting(key) for key in keys]
+        values = [store.get_setting(key) for key in keys]
     finally:
         store.close()
+    # A backup folder chosen on another kind of system (C:\... in a database moved to the NAS)
+    # is no full path here: it is asked for again rather than made inside the data folder.
+    return [None if key == FOLDER and value and not Path(value).is_absolute() else value for key, value in zip(keys, values)]
 
 
 def _setting(cfg: Config, key: str, value: str) -> None:

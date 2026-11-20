@@ -4,6 +4,7 @@ import { api } from '../api'
 import { showError } from '../errorMessages'
 import { formatFromWhen, formatSize, formatWhen } from '../format'
 import type { BackupStatus, Snapshot } from '../types'
+import { opensWindowsHere, useWhere } from '../where'
 
 const WHO_MADE_IT: Record<Snapshot['kind'], string> = {
   auto: 'făcută de program',
@@ -18,6 +19,7 @@ const WHO_MADE_IT: Record<Snapshot['kind'], string> = {
  */
 export function SnapshotsList({ status, onRestore }: { status: BackupStatus; onRestore: (snapshot: Snapshot) => void }) {
   const open = useMutation({ mutationFn: api.openBackupFolder, onError: showError })
+  const where = useWhere()
   return (
     <section aria-label="Copiile păstrate" className="overflow-hidden rounded-2xl border bg-card">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4.5 py-4">
@@ -25,7 +27,7 @@ export function SnapshotsList({ status, onRestore }: { status: BackupStatus; onR
           Copiile păstrate{' '}
           <span className="font-medium text-muted-foreground">· {status.count} din cel mult {status.max}</span>
         </h2>
-        <Button variant="link" disabled={open.isPending} onClick={() => open.mutate()}>Deschide folderul</Button>
+        {opensWindowsHere(where) && <Button variant="link" disabled={open.isPending} onClick={() => open.mutate()}>Deschide folderul</Button>}
       </div>
       {status.snapshots.length === 0 && (
         <p className="border-t px-4.5 py-5 text-muted-foreground">Nicio copie încă. Prima apare aici după ce apăsați „Fă o copie acum”.</p>

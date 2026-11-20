@@ -103,3 +103,17 @@ describe('the technical side of the journal', () => {
     expect(api.journalFileAddress({ trace: 'a1', technical: true })).toBe('/api/events/export?trace=a1&technical=true&details=false')
   })
 })
+
+describe('the header the page sends in server mode', () => {
+  it('goes with every call, a change or a file included', async () => {
+    const headers: (Record<string, string> | undefined)[] = []
+    vi.stubGlobal('fetch', async (_address: string, options?: { headers?: Record<string, string> }) => {
+      headers.push(options?.headers)
+      return new Response(JSON.stringify({ ok: true, events: [], has_more: false }))
+    })
+    await api.journal({ area: 'sync' })
+    await api.setBackupFolder('/backups')
+    await api.importClients(new File(['CUI\n12345674'], 'clienti.csv'))
+    expect(headers.map((sent) => sent?.['X-AutoSaga-Page'])).toEqual(['1', '1', '1'])
+  })
+})

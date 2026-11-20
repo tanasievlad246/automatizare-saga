@@ -12,6 +12,7 @@ import { formatDate, formatMoney } from '../format'
 import { isIssued } from '../invoices/issuedInvoices'
 import { listAccount } from '../invoices/lineAccounts'
 import type { Invoice, SagaImport } from '../types'
+import { opensWindowsHere, useWhere } from '../where'
 import { ARCHIVE_TEXT, countsLine, importTitle, sourceLabel, unmarkedLine } from './archiveTexts'
 
 /**
@@ -32,6 +33,7 @@ export function ImportCard({ entry, cui, startOpen, onToggle }: {
   const card = useRef<HTMLLIElement>(null)
   const detail = useQuery({ queryKey: ['saga-archive-entry', entry.id], queryFn: () => api.sagaArchiveEntry(entry.id), enabled: open })
   const openFolder = useMutation({ mutationFn: () => api.openSagaArchive(entry.id), onError: showError })
+  const where = useWhere()
   // Reached from an invoice's screen: the import it went to SAGA in is brought into view.
   useEffect(() => {
     if (startOpen) scrollBelowHeader(card.current)
@@ -61,9 +63,12 @@ export function ImportCard({ entry, cui, startOpen, onToggle }: {
         <Button variant="link" className="px-0" aria-expanded={open} aria-label={`${open ? 'Ascunde' : 'Arată'} facturile: ${title}`} onClick={toggle}>
           {open ? 'Ascunde facturile' : 'Arată facturile'}
         </Button>
-        <Button variant="outline" size="sm" aria-label={`Deschide folderul: ${title}`} disabled={openFolder.isPending} onClick={() => openFolder.mutate()}>
-          Deschide folderul
-        </Button>
+        {/* The archive is the program's own folder: on another computer its files are downloaded instead. */}
+        {opensWindowsHere(where) && (
+          <Button variant="outline" size="sm" aria-label={`Deschide folderul: ${title}`} disabled={openFolder.isPending} onClick={() => openFolder.mutate()}>
+            Deschide folderul
+          </Button>
+        )}
       </div>
       {open && (
         <div className="flex flex-col gap-3 border-t pt-3">

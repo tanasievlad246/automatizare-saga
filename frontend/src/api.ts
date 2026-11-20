@@ -6,7 +6,7 @@ import type {
   ProposedRules,
   RuleEvidence, RuleFields, RuleTestResult, RulesOverview, SagaFilePer, SagaImport, SagaImportDetail, SagaState, SchedulePeriod,
   ScheduleStatus, Secret,
-  SyncResult, WipeResult, TechnicalCounts, TechnicalRecord, TechnicalWhole, TrialAsk, UpdateStatus, WaitingFiles,
+  SyncResult, WipeResult, TechnicalCounts, TechnicalRecord, TechnicalWhole, TrialAsk, UpdateStatus, WaitingFiles, Where,
 } from './types'
 
 /** What the program answers when it refuses: a stable code and an English explanation. */
@@ -19,13 +19,19 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Sent with every call. In server mode the program takes a change only with it: another site can
+ * make a browser post a form to the program, but cannot add a header of its own.
+ */
+const FROM_THE_PAGE = { 'X-AutoSaga-Page': '1' }
+
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
   const isFile = body instanceof Blob
   let response: Response
   try {
     response = await fetch(`/api${path}`, {
       method,
-      headers: body === undefined || isFile ? undefined : { 'Content-Type': 'application/json' },
+      headers: body === undefined || isFile ? FROM_THE_PAGE : { ...FROM_THE_PAGE, 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : isFile ? body : JSON.stringify(body),
     })
   } catch {
@@ -42,7 +48,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 async function text(path: string): Promise<string> {
   let response: Response
   try {
-    response = await fetch(`/api${path}`)
+    response = await fetch(`/api${path}`, { headers: FROM_THE_PAGE })
   } catch {
     throw new ApiError('unreachable', 'The program did not answer.')
   }
@@ -89,6 +95,8 @@ export const api = {
   finishLogin: (address: string) => call<AuthStatus>('POST', '/auth/login/finish', { address }),
 
   sagaFolder: () => call<AppSettings>('GET', '/settings'),
+  /** Local or server mode, whether this browser is on the program's computer, and how the PCs reach the folder for SAGA. */
+  where: () => call<Where>('GET', '/where'),
   /**
    * The folder, one file per client or per invoice, or both; what is left out stays as it
    * is. `problems` names the clients whose files could not be written again.

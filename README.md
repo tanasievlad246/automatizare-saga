@@ -65,6 +65,41 @@ Then, on the page: fill in the ANAF client ID and secret and the OpenRouter key 
 
 `install.ps1` was written on a Mac without PowerShell and has had one run on Windows so far, which got as far as starting the program. See [Not yet confirmed](#not-yet-confirmed-against-the-real-services).
 
+## Server mode: one program for the whole office
+
+The program has two modes. They are started separately, and only one runs at a time.
+
+| | Local mode (as installed) | Server mode |
+|---|---|---|
+| Started by | the shortcuts, `start.bat`, `efactura serve`, `efactura start` / `open` | `start-server.bat`, `efactura serve --network`, or the NAS container (`efactura keep-serving`) |
+| Listens on | `127.0.0.1`: this computer only | every address of the computer: the whole office network |
+| The page is opened at | `http://autosaga.localhost:8765` | `http://<the computer's address>:8765/ui/` from any computer, Mac or Windows |
+| Login | none | none |
+
+**Server mode on a PC.** Stop the local mode first: close `start.bat`'s window, or run `uv run efactura stop`. The startup shortcut starts the local mode at the next sign-in, so remove it (`install.ps1 -Uninstall` removes both shortcuts, and keeps the folder) if that PC is to stay a server. Then start `start-server.bat` and keep its window open.
+- On a Mac: `uv run efactura serve --network`.
+- On Windows: the first time, Windows Firewall asks whether Python may be reached on the network. Allow it on **private** networks only.
+
+**Server mode on a Synology NAS.** The program runs there all the time, in a container. The PCs only open the page and reach the files for SAGA through a shared folder. [README-NAS.md](README-NAS.md) has every step, from cloning the repository on the NAS onward.
+
+**What changes in server mode:**
+- **Who gets in.** Anyone on the office network gets in, without a password, and has the whole program: every client's ANAF login, the keys on "Chei și parole", "Șterge toate datele". Keep it to the office network: never forward its port in the router, and keep guests on a separate Wi-Fi.
+- **What keeps other websites out.** A website someone opens in their browser cannot use the program, and neither can a site's name pointed at the program's address. The page is accepted only when it is opened under an IP address, `localhost`, the computer's own name or a name in `[server] names`. Every call it makes, reads included, carries a header of its own (`X-AutoSaga-Page`); only its two download links (the journal saved as a file, a file of a confirmed import) go without. A browser sending an `Origin` has to send the program's own, or a name the program knows: behind a proxy such as DSM's, the program may be asked as `localhost` from a page at `http://autosaga.ro`. Programs such as Power Automate still send the key from `config.toml`, as always.
+- **Windows open only on the computer that runs the program.** The folder picker ("Alege folderul"), "Deschide folderul" and the certificate login would open their window there, not on the computer asking. So only a browser on that same computer gets them; it has to open the page as `localhost`. Every other browser gets:
+  - the path with "Copiază calea";
+  - a field where the folder is typed, as the program's computer sees it (on the NAS: `/saga`, `/backups`);
+  - the login through the browser.
+
+  Asked anyway, the API answers `not_on_this_computer`.
+- **Paths as each computer sees them.** With `saga_folder_windows` and `saga_folder_mac` set under `[server]` in `config.toml`, every path in the folder for SAGA appears in the form of the computer looking at it:
+  - on Windows: `\\192.168.1.50\AutoSaga-SAGA\<client> - <CUI>\F_….xml`;
+  - on a Mac: `/Volumes/AutoSaga-SAGA/…`.
+
+  The API keeps the program's own paths. Power Automate builds its own from `SagaImportFolderPath`.
+- **A restore or an update starts the program again in the mode it ran in.** In the container a small keeper does it: the program is its child, and the keeper starts it again after a restore or a crash.
+- **A container is not updated from the page.** It says how to update it on the NAS. It cannot tell whether a newer release exists either; the releases page does.
+- **A database brought from another kind of computer** (a Windows PC's, on the NAS) may remember folders such as `C:\SAGA Import`. Those are no full path there and are left aside: the folder for SAGA from `config.toml` is used, and the backup folder is asked for again.
+
 ## Updating
 
 An installed copy updates itself to the newest release, from the page or from the terminal:
@@ -84,6 +119,8 @@ What an update does: while invoices are being downloaded it is refused at once, 
 - A newer release may add columns to the database when it first opens it; nothing is removed.
 
 Only a copy made by `install.ps1` can be updated this way: a folder standing on a release tag. A development checkout on a branch is refused, and the page shows no update button there; it looks for the newest release only when "Caută o versiune nouă" is pressed, never by itself, so opening its page (or the demo's) does not wait on the remote. Every tag counts as a release, and the highest version is the newest.
+
+The NAS container is not updated from the page either: it says so, and [README-NAS.md](README-NAS.md#updating-to-a-new-release) has the steps (fetch the release in the clone, build the container again).
 
 How the last update ended is kept in `data\last-update.json`, and what it printed in `data\update.log`.
 
@@ -415,6 +452,7 @@ Failure (from any command):
 | `busy` | Another sync or login renewal is running. For a restore or a wipe: a download, a classification, an update, a restore or a wipe is running. |
 | `backup_error` | A copy could not be made, checked or put back; for a wipe, nothing was deleted. |
 | `snapshot_too_new` | The copy was made by a newer version of the program than this one; update, then restore it. From the page and from `efactura restore`. |
+| `not_on_this_computer` | Server mode: the route would open a window (a folder, the folder picker, the certificate login) on the computer that runs the program, and the request came from another one. See [Server mode](#server-mode-one-program-for-the-whole-office). |
 | `config_error` | `config.toml` is missing or incomplete, or ANAF rejected the client ID/secret. In the certificate login: ANAF answered `invalid_client` (wrong Client ID) or `invalid_request` with "Redirect-URI ... does not match" (wrong Callback URL); the message keeps ANAF's words. |
 | `not_classifiable` | The message is not an invoice (received or issued), cannot be read as one, is marked as uploaded, was saved outside classification, or is already classified. `force` lifts the last two. |
 | `jev_error` | OpenRouter refused or could not be reached; the message says why (key, credit, rate limit). |
@@ -426,7 +464,7 @@ Letters outside ASCII are written as `\u....` escapes, so Romanian names are not
 
 ## Local API
 
-Start it with `uv run efactura serve` (or double-click `start.bat`). It listens on `http://127.0.0.1:8765` only, so other computers cannot reach it. Every route except `/health` needs the header `X-API-Key: <the key from config.toml>`.
+Start it with `uv run efactura serve` (or double-click `start.bat`). It listens on `http://127.0.0.1:8765` only, so other computers cannot reach it. In [server mode](#server-mode-one-program-for-the-whole-office) (`efactura serve --network`) it listens on every address instead, so a flow on another PC, or on the NAS's network, reaches it at `http://<that computer's address>:8765`, still with the key. Every route except `/health` needs the header `X-API-Key: <the key from config.toml>`.
 
 The screen uses the same routes under `/api/...` and needs no key. That is safe because the program only accepts a keyless request when the browser itself marks it as coming from the program's own page (`Sec-Fetch-Site: same-origin`, which a page cannot fake) and it is addressed to `autosaga.localhost`, `127.0.0.1` or `localhost` on the program's port. A page from any other site, and any other program, still needs the key.
 
@@ -475,6 +513,7 @@ Routes that exist for the screen and have no command:
 | `PUT /clients/{cui}/per-line` with `{"enabled": true}` or `false` | An account for each line of this client's invoices, or one for the whole invoice |
 | `POST /clients/{cui}/classify-again` with optional `{"jev": false}` | `classify-again`, for one client. Answers `{"cui", "client", "total", "classified", "review", "waiting", "skipped", "jev_asked", "jev_stopped", "jev_calls", "jev_cost_usd"}` |
 | `GET /classification/calls?since=...&until=...&cui=...&limit=...` | What Jev was asked, newest first |
+| `GET /where` | `mode` (`"local"` or `"network"`), `on_this_computer` (does the request come from the computer that runs the program), `saga_folder`, and `saga_folder_windows` and `saga_folder_mac` from `[server]` (or `null`). `GET /health` also says `mode` |
 | `GET /settings`, `PUT /settings` with `{"saga_folder", "saga_file_per", "show_issued"}` | The folder for SAGA, whether it gets one file per `"client"` or one per `"invoice"`, and `show_issued` (`true` or `false`), which an earlier version used to show [issued invoices](#issued-invoices) and which now changes nothing. Any field may be left out and then stays as it is; nothing is saved unless all of it is valid. When a setting for SAGA is given, what waits for SAGA is written again. The reply to `PUT` adds `problems`: the clients whose files could not be, an empty list when nothing was written |
 | `POST /saga-files/write` with `{"cui"}` or `{}` | Bring the files for SAGA up to date, for one client or for all. Answers `{"clients", "problems": [{"cui", "message", "at"}]}` |
 | `GET /saga-files`, `GET /saga-files/{cui}` | What waits for SAGA: every client with a file, or one client. Each has `cui`, `client`, `file_per`, `folder` (the client's folder, `<SAGA folder>\<name> - <CUI>`), `files` (`name`, `path`, `invoices`, `ids`, `written_at`, and `present`: still in the folder), `invoices`, `up_to_date` and `version`, a fingerprint of the files on disk |
@@ -498,7 +537,7 @@ Routes that exist for the screen and have no command:
 | `GET /events/technical?trace=...&before=...&limit=...` | The [technical side](#the-technical-view) of the journal: requests to ANAF and Jev and the program's debug records, newest first, 500 at a time (at most 2,000), without their bodies. `GET /events?technical=true` adds `technical`: for each operation on the page, `{"http", "problems", "log"}` |
 | `GET /events/technical/{id}` | One technical record whole: `body.request` and `body.response` (`headers` as pairs, `body` as kept), or `body.exception` |
 
-The body is the same JSON the command prints. Every answer carries an `X-Trace-Id` header: the number under which the journal holds what that request did. HTTP status: 200 success; 400 bad input; 401 missing or wrong key; 404 unknown id or route; 409 `login_needed`, `login_code_expired`, `login_refused`, `login_cancelled`, `busy`, `not_classifiable`, `update_error`, `backup_error` or `snapshot_too_new`; 502 ANAF or OpenRouter refused or was unreachable; 500 a bug or a settings problem.
+The body is the same JSON the command prints. Every answer carries an `X-Trace-Id` header: the number under which the journal holds what that request did. HTTP status: 200 success; 400 bad input; 401 missing or wrong key; 404 unknown id or route; 409 `login_needed`, `login_code_expired`, `login_refused`, `login_cancelled`, `busy`, `not_classifiable`, `update_error`, `backup_error`, `snapshot_too_new` or `not_on_this_computer`; 502 ANAF or OpenRouter refused or was unreachable; 500 a bug or a settings problem.
 
 ## Testing the rules
 

@@ -11,10 +11,14 @@ It listens on 127.0.0.1 only (see cli.run_server). Every route is served twice:
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import json
 import logging
 import os
+import re
+import socket
 import time
+from urllib.parse import urlsplit
 from datetime import datetime
 from functools import partial
 from pathlib import Path
@@ -51,6 +55,7 @@ from .errors import (
     NETWORK_ERROR,
     NO_SPV_RIGHTS,
     NOT_CLASSIFIABLE,
+    NOT_ON_THIS_COMPUTER,
     BACKUP_ERROR,
     SNAPSHOT_TOO_NEW,
     NOT_FOUND,
@@ -81,6 +86,7 @@ HTTP_STATUS = {
     SAGA_FILES_CHANGED: 409,
     SAGA_FILES_STALE: 409,
     SAGA_ARCHIVE_ERROR: 409,
+    NOT_ON_THIS_COMPUTER: 409,
     JEV_ERROR: 502,
     NO_SPV_RIGHTS: 502,
     ANAF_LIMIT_REACHED: 502,
@@ -96,6 +102,14 @@ OPEN_PATHS = {"/", "/health", "/api/health", "/openapi.json"}
 NO_FRAMING = {"X-Frame-Options": "DENY", "Content-Security-Policy": "frame-ancestors 'none'"}
 PAGE_PREFIX = "/ui"  # the built page and its files: no data in them
 PAGE_API_PREFIX = "/api"
+# Server mode: what the page adds to every call. Another site can make a browser post a form
+# here, but cannot add a header of its own without asking first, and this program never agrees.
+PAGE_HEADER = "x-autosaga-page"
+# The page's two links, followed by the browser itself and so without the header: the journal
+# saved as a file, and a file of a confirmed import (see api.ts, *Address).
+LINKED_DOWNLOADS = re.compile(r"/api/events/export|/api/saga-archive/\d+/files/[^/]+")
+LINK_METHODS = {"GET", "HEAD"}
+THIS_COMPUTER = {"127.0.0.1", "::1"}
 DEMO_LOGIN_PATH = "/api/demo/anaf-login"
 BUILT_PAGE = Path(__file__).parent / "ui"  # written there by `pnpm --dir frontend build`
 
@@ -284,6 +298,66 @@ def _from_own_page(request: Request, own_hosts: set[str]) -> bool:
     )
 
 
+def _from_page_on_the_network(request: Request, names: frozenset[str]) -> bool:
+    """Server mode: is this the page, opened on any computer of the office, calling its API?
+
+    Plain http on the office network carries no Sec-Fetch-Site, so the page is told from
+    another website by what such a site cannot fake:
+    - Host: an address, or a name this computer is known by. Another site's name pointed at
+      this computer (DNS rebinding) is refused, whatever its port.
+    - Origin, when the browser sends one: the same as Host.
+    - The page's own header, on reads too: another site's <img> or link sends none, and some
+      reads start work (asking ANAF for its list, looking for a release). Only the two downloads
+      the page offers as links go without: what they give is saved, never read by a site.
+    - Sec-Fetch-Site, when sent (over https, or on this computer): same-origin.
+    """
+    host = request.headers.get("host", "")
+    origin = request.headers.get("origin")
+    fetch_site = request.headers.get("sec-fetch-site")
+    path = request.url.path
+    return (
+        path.startswith(PAGE_API_PREFIX + "/")
+        and _known_name(_name_in(host), names)
+        and (origin is None or _same_or_known_origin(origin, host, names))
+        and (PAGE_HEADER in request.headers or (request.method in LINK_METHODS and LINKED_DOWNLOADS.fullmatch(path) is not None))
+        and fetch_site in (None, "same-origin")
+    )
+
+
+def _same_or_known_origin(origin: str, host: str, names: frozenset[str]) -> bool:
+    """The page's own origin: the same as Host or, behind a proxy that hands the request on
+    under another Host (DSM's reverse proxy for http://autosaga.ro), a name this computer is
+    known by. "null" (a sandboxed frame) is neither."""
+    netloc = urlsplit(origin).netloc.lower()
+    return bool(netloc) and (netloc == host.lower() or _known_name(_name_in(netloc), names))
+
+
+def _name_in(host: str) -> str:
+    """The name in a Host header, without its port: "[fe80::1]:8765" gives "fe80::1"."""
+    host = host.strip().lower()
+    if host.startswith("["):
+        return host[1:host.find("]")] if "]" in host else ""
+    return host.rsplit(":", 1)[0] if ":" in host else host
+
+
+def _known_name(name: str, names: frozenset[str]) -> bool:
+    if not name:
+        return False
+    try:
+        ipaddress.ip_address(name)
+        return True  # an address is never another site's name
+    except ValueError:
+        pass
+    own = socket.gethostname().lower()
+    return name in names or name in {"localhost", own, f"{own}.local"} or name.endswith(".localhost")
+
+
+def _on_this_computer(request: Request, network: bool) -> bool:
+    """Is the browser asking on the computer that runs the program? In local mode the program
+    answers this computer only; in server mode, only a request from its own address is."""
+    return not network or (request.client is not None and request.client.host in THIS_COMPUTER)
+
+
 def _worth_a_line(path: str, method: str) -> bool:
     """Should this request be written in the journal? Not the journal's own requests
     (reading it would write to it), nor the page's files, nor "are you there", nor the page
@@ -307,7 +381,10 @@ def create_app(
     service_factory: Callable[[Config], Service] | None = None,
     port: int | None = None,
     ui_dir: Path | None = None,
+    network: bool = False,
 ) -> FastAPI:
+    """The app. `network`: server mode, the page served to every computer on the office
+    network (see _from_page_on_the_network); otherwise the local mode, this computer only."""
     cfg.require_api_key()
     make_service = service_factory or Service  # on demo settings it takes the stand-ins by itself
     # The demo's login address is opened in a new tab, which carries no key.
@@ -315,6 +392,21 @@ def create_app(
     expected_key = cfg.api_key.encode()
     port = port or cfg.api_port
     own_hosts = _own_hosts(port)
+    known_names = frozenset(cfg.server_names) | {PAGE_HOSTNAME}
+    mode = "network" if network else "local"
+
+    def from_the_page(request: Request) -> bool:
+        if network:
+            return _from_page_on_the_network(request, known_names)
+        return _from_own_page(request, own_hosts)
+
+    def only_on_this_computer(request: Request) -> None:
+        if not _on_this_computer(request, network):
+            raise EfacturaError(
+                NOT_ON_THIS_COMPUTER,
+                "This opens a window on the computer that runs the program, not on this one. "
+                "Open the page on that computer to use it.",
+            )
     ui_dir = ui_dir or BUILT_PAGE
     router = APIRouter()
 
@@ -341,7 +433,7 @@ def create_app(
     async def require_key(request: Request, call_next):
         path = request.url.path
         is_open = path in open_paths or path == PAGE_PREFIX or path.startswith(PAGE_PREFIX + "/")
-        allowed = is_open or _from_own_page(request, own_hosts) or hmac.compare_digest(
+        allowed = is_open or from_the_page(request) or hmac.compare_digest(
             request.headers.get("x-api-key", "").encode(), expected_key
         )
         # One trace per request: every line written while it is served carries the same number.
@@ -406,11 +498,26 @@ def create_app(
 
     @router.get("/health", summary="Is the API running?")
     def health():
-        return call(lambda s: s.health())
+        return {**call(lambda s: s.health()), "mode": mode}
+
+    @router.get("/where", dependencies=documented_key, summary="Local or server mode, and how the PCs see the SAGA folder")
+    def where(request: Request):
+        saga_folder = call(lambda s: s.app_settings())["saga_folder"]
+        return {
+            "ok": True,
+            "mode": mode,
+            "on_this_computer": _on_this_computer(request, network),
+            "saga_folder": saga_folder,
+            "saga_folder_windows": cfg.saga_folder_windows,
+            "saga_folder_mac": cfg.saga_folder_mac,
+        }
 
     @router.get("/auth/status", dependencies=documented_key, summary="Is a login needed?")
-    def auth_status():
-        return call(lambda s: s.auth_status())
+    def auth_status(request: Request):
+        status = call(lambda s: s.auth_status())
+        if not _on_this_computer(request, network):
+            status["certificate_login"] = False  # its window would open on the other computer
+        return status
 
     @router.post("/auth/login/start", dependencies=documented_key, summary="ANAF login address")
     def login_start():
@@ -421,7 +528,8 @@ def create_app(
         return call(lambda s: s.login_finish(body.address))
 
     @router.post("/auth/login/certificate", dependencies=documented_key, summary="Log in with the Windows certificate")
-    def login_certificate():
+    def login_certificate(request: Request):
+        only_on_this_computer(request)
         # Waits for Windows and the person (minutes): a plain `def` runs off the event loop.
         return call(lambda s: s.login_with_certificate())
 
@@ -764,18 +872,21 @@ def create_app(
         return FileResponse(path, media_type="application/xml", filename=path.name)
 
     @router.post("/saga-archive/{import_id}/open", dependencies=documented_key, summary="Show a confirmed import's folder")
-    def open_saga_archive(import_id: int):
+    def open_saga_archive(import_id: int, request: Request):
+        only_on_this_computer(request)
         return call(lambda s: s.open_saga_archive(import_id))
 
     @router.post(
         "/settings/choose-folder", dependencies=documented_key,
         summary="Pick a folder in the computer's own dialog",
     )
-    def choose_folder(purpose: str = "saga"):
+    def choose_folder(request: Request, purpose: str = "saga"):
+        only_on_this_computer(request)
         return call(lambda s: s.choose_folder(purpose))
 
     @router.post("/folders/open", dependencies=documented_key, summary="Show the SAGA folder")
-    def open_folder(body: OpenFolderRequest):
+    def open_folder(body: OpenFolderRequest, request: Request):
+        only_on_this_computer(request)
         cui = str(body.cui) if body.cui is not None else None
         invoice_id = str(body.invoice_id) if body.invoice_id is not None else None
         return call(lambda s: s.open_saga_folder(cui, invoice_id))
@@ -814,7 +925,8 @@ def create_app(
         return backup.wipe(cfg)
 
     @router.post("/backups/open-folder", dependencies=documented_key, summary="Show the backup folder")
-    def open_backup_folder():
+    def open_backup_folder(request: Request):
+        only_on_this_computer(request)
         return call(lambda s: s.open_folder(backup.status(cfg)["folder"]))
 
     # --- the journal (the "Jurnal" screen) ---

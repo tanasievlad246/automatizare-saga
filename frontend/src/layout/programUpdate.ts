@@ -15,6 +15,8 @@ export function whatTheLookFound(status: UpdateStatus): string {
     return `Ultima versiune publicată este ${shownVersion(status.latest_release)}. O copie de dezvoltare se actualizează cu git, nu de aici.`
   if (status.why_not_kind === 'not_a_clone')
     return 'Această copie nu a fost instalată cu programul de instalare, așa că nu are de unde căuta.'
+  if (status.why_not_kind === 'container')
+    return 'Programul rulează pe NAS și se actualizează de acolo, cum scrie în README-NAS.md, nu de pe această pagină.'
   return status.update_available ? `Există versiunea ${shownVersion(status.latest_release)}.` : 'Aveți cea mai nouă versiune.'
 }
 

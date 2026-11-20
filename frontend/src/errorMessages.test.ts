@@ -11,3 +11,9 @@ describe('knowsCode', () => {
     expect(knowsCode('toString')).toBe(false)
   })
 })
+
+describe('server mode', () => {
+  it('has a sentence for a window that would open on the other computer', () => {
+    expect(knowsCode('not_on_this_computer')).toBe(true)
+  })
+})

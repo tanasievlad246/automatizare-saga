@@ -1,0 +1,33 @@
+# AutoSaga on a Synology NAS. README-NAS.md has every step.
+#
+# Copy this file to /volume1/docker/autosaga/docker-compose.yml, beside the folder "app" that
+# holds the cloned repository. Updating the repository then never touches your copy.
+#
+#   /volume1/docker/autosaga/
+#     docker-compose.yml   this file
+#     app/                 git clone of the repository
+#     config/              config.toml, tokens.json
+#     data/                database, invoices, archive, log
+#
+# If your shared folders are on another volume, change /volume1 below to match.
+services:
+  autosaga:
+    build: ./app
+    image: autosaga:local
+    container_name: autosaga
+    restart: unless-stopped
+    # A download under way gets time to finish when the NAS stops or restarts the container.
+    stop_grace_period: 30s
+    # Optional: run as a NAS user instead of root, so the files it writes in the shared folders
+    # belong to that user (`id <user>` over SSH prints the two numbers). That user needs
+    # Read/Write on AutoSaga-SAGA, AutoSaga-Copii and docker/autosaga.
+    # user: "1026:100"
+    ports:
+      - "8765:8765"   # the left number is the one the PCs type; the right one is [api] port in config.toml
+    environment:
+      TZ: Europe/Bucharest
+    volumes:
+      - ./config:/config
+      - ./data:/data
+      - /volume1/AutoSaga-SAGA:/saga
+      - /volume1/AutoSaga-Copii:/backups

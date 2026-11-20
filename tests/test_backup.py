@@ -306,7 +306,7 @@ def test_a_program_that_will_not_stop_is_recorded_and_nothing_is_replaced(saved,
 def test_a_restore_is_not_called_failed_because_the_program_did_not_start_again(saved, cfg, computer, monkeypatch):
     computer.answer = HEALTHY
 
-    def will_not_start(cfg, config_path):
+    def will_not_start(cfg, config_path, network=False):
         raise EfacturaError("config_error", "Port 9001 on this computer is used by another program.")
 
     monkeypatch.setattr(background, "start", will_not_start)
@@ -457,7 +457,7 @@ def test_an_old_copy_that_cannot_be_deleted_does_not_fail_the_restore(saved, fol
 def test_a_program_that_cannot_even_be_started_does_not_undo_what_was_restored(saved, cfg, computer, monkeypatch):
     computer.answer = HEALTHY
 
-    def cannot_be_spawned(cfg, config_path):
+    def cannot_be_spawned(cfg, config_path, network=False):
         raise OSError(8, "Not enough memory resources are available to process this command")
 
     monkeypatch.setattr(background, "start", cannot_be_spawned)

@@ -47,6 +47,19 @@ export type SagaFilePer = 'client' | 'invoice'
 /** `show_issued`: whether a client's screen also lists the invoices the client issued. */
 export type AppSettings = { saga_folder: string; saga_file_per: SagaFilePer; show_issued: boolean; demo?: boolean }
 
+/**
+ * Local mode (this computer only) or server mode (every computer of the office network), and
+ * whether this browser is on the computer that runs the program. The two shares are how the
+ * office's Windows PCs and Macs reach the folder for SAGA; null when config.toml does not say.
+ */
+export type Where = {
+  mode: 'local' | 'network'
+  on_this_computer: boolean
+  saga_folder: string
+  saga_folder_windows: string | null
+  saga_folder_mac: string | null
+}
+
 /** How one client's files for SAGA stand. `problem` is set while they could not be brought up to date. */
 export type SagaState = {
   file_per: SagaFilePer
@@ -390,7 +403,7 @@ export type UpdateStatus = {
   latest_release: string | null
   update_available: boolean
   can_update: boolean // false for a copy the installer did not make
-  why_not_kind: 'development' | 'not_a_clone' | null // why not, for the page to decide on
+  why_not_kind: 'development' | 'not_a_clone' | 'container' | null // why not, for the page to decide on
   checked_at: string | null
   check_error: string | null
   last_update: { at: string; ok: boolean; from: string | null; to: string; error: string | null } | null

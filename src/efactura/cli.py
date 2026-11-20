@@ -14,7 +14,7 @@ import threading
 import webbrowser
 from pathlib import Path, PureWindowsPath
 
-from . import __version__, backup, background, demo, journal, schedule, update
+from . import __version__, backup, background, demo, journal, keeper, schedule, update
 from .anaf import TYPE_PREFIXES
 from .config import Config, load_config, page_address
 from .errors import (
@@ -50,6 +50,8 @@ PAGE_PATH = "/ui/"
 DEV_PAGE_PORT = 5173  # Vite's dev server, see frontend/vite.config.ts
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 OPEN_DELAY = 1.5  # seconds: the server has to be listening before the browser asks
+EVERY_ADDRESS = "0.0.0.0"  # server mode: the office network reaches the program on any of this computer's addresses
+MODE_NAMES = {"local": "the local mode", "network": "server mode"}
 
 
 def started_through_the_launcher(system: str | None = None, started_as: str | None = None) -> bool:
@@ -85,13 +87,35 @@ def open_page_soon(url: str) -> None:
     threading.Timer(OPEN_DELAY, open_browser, [url]).start()
 
 
-def run_server(cfg: Config, port: int) -> None:
+def _refuse_if_already_running(port: int) -> None:
+    """One copy at a time, in whichever mode: two would download the same invoices and write
+    the files for SAGA twice. Said plainly, before the second one fails to listen, or, on
+    Windows, listens beside the first one on every address."""
+    answer = background.probe(port)
+    if answer is None:
+        return
+    if answer.get("service") != background.SERVICE:
+        raise EfacturaError(
+            CONFIG_ERROR, f"Port {port} on this computer is used by another program. Set another [api] port in config.toml.",
+        )
+    running = MODE_NAMES.get(answer.get("mode"), MODE_NAMES["local"])
+    raise EfacturaError(
+        CONFIG_ERROR,
+        f"The program already runs on port {port}, in {running}. Only one may run at a time: "
+        "stop it first (efactura stop), then start this one.",
+    )
+
+
+def run_server(cfg: Config, port: int, network: bool = False) -> None:
+    """The program, until it is told to stop. `network`: server mode, on every address of this
+    computer for the whole office network; otherwise this computer alone."""
     import uvicorn
 
     from .api import create_app
 
-    app = create_app(cfg, port=port)
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    app = create_app(cfg, port=port, network=network)
+    host = EVERY_ADDRESS if network else "127.0.0.1"
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="warning"))
     app.state.stop = lambda: setattr(server, "should_exit", True)  # what POST /shutdown calls
     stopped = threading.Event()
     threading.Thread(target=_bring_saga_files_up_to_date, args=(cfg,), daemon=True).start()
@@ -290,6 +314,14 @@ def _parser() -> argparse.ArgumentParser:
     serve = commands.add_parser("serve", help="start the page and the local REST API")
     serve.add_argument("--port", type=int)
     serve.add_argument("--open", action="store_true", help="also open the page in the browser")
+    serve.add_argument(
+        "--network", action="store_true",
+        help="server mode: every computer on the office network opens the page, without a login",
+    )
+    commands.add_parser(
+        "keep-serving",
+        help="for a container: server mode, started again after a restore or a crash",
+    )
 
     dev = commands.add_parser("dev", help="for development: API and page, both reloading on change")
     dev.add_argument("--port", type=int)
@@ -322,6 +354,12 @@ def main(argv: list[str] | None = None) -> int:
         cfg = load_config(args.config)
         if args.config:  # so a restarted dev server reads the same settings file
             os.environ["EFACTURA_CONFIG"] = str(Path(args.config).resolve())
+        if args.command == "keep-serving":
+            # Before the program's logging, which writes to the database: a restore replaces that
+            # file while the keeper waits, and a connection held open under it ends in SIGBUS.
+            cfg.require_api_key()
+            keeper.keep_serving(cfg, config_path)
+            return EXIT_OK
         configure_logging(cfg)
         with journal.trace():  # everything this command writes in the journal belongs together
             result = _dispatch(args, cfg, config_path)
@@ -414,13 +452,23 @@ def _dispatch(args: argparse.Namespace, cfg: Config, config_path: Path) -> dict 
             _emit({"ok": True, "page": page, "listening": address, "routes": f"{address}/openapi.json"})
             run_dev(cfg, port)
             return None
-        page = page_address(port)
-        _emit({"ok": True, "page": page, "listening": address, "routes": f"{address}/openapi.json"})
+        network = args.network
+        _refuse_if_already_running(port)
+        mode = "network" if network else "local"
+        listening = f"http://{EVERY_ADDRESS}:{port}" if network else address
+        page = page_address(port)  # on this computer; the others type its address
+        said = {"ok": True, "mode": mode, "page": page, "listening": listening, "routes": f"{address}/openapi.json"}
+        if network:
+            said["note"] = f"From the other computers, open http://<this computer's address>:{port}/ui/"
+        _emit(said)
         if args.open:
             open_page_soon(page)
-        journal.record("program", "program.started", f"The program started: version {__version__}, port {port}.",
-                       version=__version__, port=port)
-        run_server(cfg, port)
+        journal.record(
+            "program", "program.started",
+            f"The program started in {MODE_NAMES[mode]}: version {__version__}, port {port}.",
+            version=__version__, port=port, mode=mode,
+        )
+        run_server(cfg, port, network=network)
         journal.record("program", "program.stopped", "The program stopped.")
         return None
 

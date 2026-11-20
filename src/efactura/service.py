@@ -2921,7 +2921,9 @@ class Service:
         """The folder for SAGA as it is set now. Another part of the program may have
         changed it since this Service was made (a download can run for minutes)."""
         saved = store.get_setting("saga_dir")
-        return Path(saved) if saved else self._file_cfg.saga_dir
+        # A folder chosen on another kind of system (C:\... in a database moved to the NAS) is
+        # no full path here: written to, it would become a folder of that name in the data folder.
+        return Path(saved) if saved and Path(saved).is_absolute() else self._file_cfg.saga_dir
 
     def _saga_state(self, store: Store, cui: str, with_version: bool = False) -> dict:
         """How this client's files for SAGA stand, for the screen. The version, which reads

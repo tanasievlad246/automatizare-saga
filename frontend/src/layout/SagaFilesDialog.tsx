@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils'
 import { api } from '../api'
 import { SAGA_WAYS } from '../invoices/sagaFiles'
 import type { AppSettings, SagaFilePer } from '../types'
+import { opensWindowsHere, typeTheFolder, useWhere } from '../where'
 
 /**
  * The files for SAGA: the folder they are written to (picked in Windows' own dialog, or
@@ -48,6 +49,7 @@ export function SagaFilesDialog({ saved, onClose }: { saved: AppSettings; onClos
   })
   const failure = save.error ?? choose.error
   const changed = typed.trim() !== '' && (folderChanged || wayChanged)
+  const here = opensWindowsHere(useWhere())
 
   return (
     <Dialog open onOpenChange={(isOpen) => !isOpen && onClose()}>
@@ -69,10 +71,13 @@ export function SagaFilesDialog({ saved, onClose }: { saved: AppSettings; onClos
             <Label htmlFor="saga-folder">Folderul</Label>
             <div className="flex flex-wrap gap-2.5">
               <Input id="saga-folder" className="min-w-0 flex-[1_1_280px]" value={typed} onChange={(event) => setTyped(event.target.value)} />
-              <Button type="button" variant="outline" disabled={choose.isPending} onClick={() => choose.mutate()}>
-                Alege folderul
-              </Button>
+              {here && (
+                <Button type="button" variant="outline" disabled={choose.isPending} onClick={() => choose.mutate()}>
+                  Alege folderul
+                </Button>
+              )}
             </div>
+            {!here && <p className="text-[0.95rem] text-muted-foreground">{typeTheFolder('/saga')}</p>}
             {choose.isPending && (
               <p role="status" className="text-[0.95rem] text-muted-foreground">
                 Alegeți folderul în fereastra deschisă. Dacă nu o vedeți, este în spatele acestei pagini.

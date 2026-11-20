@@ -45,6 +45,7 @@ def run(config_path, anaf, opened, monkeypatch, capsys):
     monkeypatch.setattr(
         cli, "build_service", lambda cfg: Service(cfg, http=anaf.client(), now=lambda: NOW)
     )
+    monkeypatch.setattr(cli.background, "probe", lambda port: None)  # `serve`: nothing runs on the port yet
 
     def invoke(*argv, stdin="", config=config_path):
         monkeypatch.setattr("sys.stdin", io.StringIO(stdin))
@@ -350,7 +351,7 @@ def test_login_with_nothing_pasted_is_invalid_input(run):
 
 def test_serve_starts_the_local_api_on_the_configured_port(run, monkeypatch):
     started = []
-    monkeypatch.setattr(cli, "run_server", lambda cfg, port: started.append(port))
+    monkeypatch.setattr(cli, "run_server", lambda cfg, port, network=False: started.append(port))
 
     code, out, _ = run("serve")
 
@@ -361,7 +362,7 @@ def test_serve_starts_the_local_api_on_the_configured_port(run, monkeypatch):
 
 def test_serve_port_can_be_overridden(run, monkeypatch):
     started = []
-    monkeypatch.setattr(cli, "run_server", lambda cfg, port: started.append(port))
+    monkeypatch.setattr(cli, "run_server", lambda cfg, port, network=False: started.append(port))
 
     run("serve", "--port", "9100")
 
@@ -370,7 +371,7 @@ def test_serve_port_can_be_overridden(run, monkeypatch):
 
 def test_serve_refuses_to_start_without_an_api_key(run, tmp_path, monkeypatch):
     started = []
-    monkeypatch.setattr(cli, "run_server", lambda cfg, port: started.append(port))
+    monkeypatch.setattr(cli, "run_server", lambda cfg, port, network=False: started.append(port))
     keyless = tmp_path / "keyless.toml"
     keyless.write_text("", encoding="utf-8")
 

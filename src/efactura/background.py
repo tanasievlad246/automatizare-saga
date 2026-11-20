@@ -33,6 +33,7 @@ EXAMPLE_SETTINGS = "config.example.toml"
 PORTS_TRIED = 20
 SERVICE = "efactura"  # what GET /health answers with
 SERVER_OUTPUT = "server.log"  # in the data folder: what the background program printed
+KEEPER_VARIABLE = "EFACTURA_KEEPER"  # set by `efactura keep-serving` for the program it runs
 
 START_TIMEOUT = 30.0  # seconds; a first start behind an antivirus scan can be slow
 STOP_TIMEOUT = 15.0
@@ -76,14 +77,15 @@ def first_settings(config_path: Path, port: int | None = None) -> dict:
     return _settings_reply(config_path, port, created=True)
 
 
-def start(cfg: Config, config_path: Path) -> dict:
-    """Run `efactura serve` as a process of its own, unless this program already answers."""
+def start(cfg: Config, config_path: Path, network: bool = False) -> dict:
+    """Run `efactura serve` as a process of its own, unless this program already answers.
+    `network`: in server mode, as it was before a restore or an update stopped it."""
     cfg.require_api_key()
     port = cfg.api_port
     if is_running(port):
         return {"ok": True, "started": False, "page": page_address(port)}
     output = cfg.data_dir / SERVER_OUTPUT
-    spawn_server(config_path, output)
+    spawn_server(config_path, output, network)
     if not _wait_until(lambda: is_running(port), START_TIMEOUT):
         raise EfacturaError(
             INTERNAL_ERROR,
@@ -93,7 +95,8 @@ def start(cfg: Config, config_path: Path) -> dict:
 
 
 def stop(cfg: Config) -> dict:
-    """Ask the running program to stop, and wait until it has."""
+    """Ask the running program to stop, and wait until it has. `network` says whether it ran in
+    server mode, so whoever stopped it can start it again the same way."""
     port = cfg.api_port
     answer = probe(port)
     if not answer or answer.get("service") != SERVICE:
@@ -103,7 +106,22 @@ def stop(cfg: Config) -> dict:
         raise EfacturaError(
             INTERNAL_ERROR, f"The program is still running {STOP_TIMEOUT:.0f} seconds after being asked to stop."
         )
-    return {"ok": True, "stopped": True}
+    return {"ok": True, "stopped": True, "network": answer.get("mode") == "network"}
+
+
+def start_again(cfg: Config, stopped: dict) -> bool:
+    """After a restore or an update: start the program again in the mode it ran in. Under the
+    keeper (a container) it is left to the keeper, which starts it once the work is done."""
+    if not stopped.get("stopped"):
+        return False
+    if under_the_keeper():
+        return False
+    return start(cfg, cfg.path, network=stopped.get("network", False))["ok"]
+
+
+def under_the_keeper() -> bool:
+    """Was this process started by `efactura keep-serving`, which starts the program again by itself?"""
+    return os.environ.get(KEEPER_VARIABLE) == "1"
 
 
 def keep_house(cfg: Config, now=None) -> None:
@@ -198,8 +216,8 @@ def ask_to_stop(port: int, key: str) -> None:
         pass  # it may close the connection as it goes; stop() checks what happened
 
 
-def spawn_server(config_path: Path, output: Path) -> None:
-    spawn_command(config_path, output, "serve")
+def spawn_server(config_path: Path, output: Path, network: bool = False) -> None:
+    spawn_command(config_path, output, "serve", *(["--network"] if network else []))
 
 
 def spawn_command(config_path: Path, output: Path, *command: str) -> None:

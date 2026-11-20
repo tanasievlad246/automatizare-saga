@@ -131,7 +131,10 @@ function jevRefusal(data: Data): string {
 }
 
 const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
-  'program.started': (data) => `Programul a pornit. Versiunea ${text(data.version)}.`,
+  'program.started': (data) =>
+    data.mode === 'network'
+      ? `Programul a pornit în modul server: îl deschid toate calculatoarele din rețea. Versiunea ${text(data.version)}.`
+      : `Programul a pornit. Versiunea ${text(data.version)}.`,
   'program.stopped': () => 'Programul s-a oprit.',
   'page.request': (data) => `Pagina a cerut ${text(data.method)} ${text(data.path)} și a primit răspunsul ${text(data.status)}.`,
 

@@ -10,6 +10,7 @@ import { importedLine } from '../archive/archiveTexts'
 import { COPY_REFUSED, copyText } from '../clipboard'
 import { showError } from '../errorMessages'
 import type { Invoice, SagaState } from '../types'
+import { opensWindowsHere, pathOnThisPC, useWhere } from '../where'
 import { fileCardNote } from './sagaFiles'
 
 /** Which file for SAGA the invoice is in, if any, and whether it has been imported there. */
@@ -23,10 +24,12 @@ export function SagaFileCard({ invoice, saga }: { invoice: Invoice; saga: SagaSt
     onError: showError,
   })
   const openFolder = useMutation({ mutationFn: () => api.openFolderOf(invoice.id), onError: showError })
+  const where = useWhere()
   const note = fileCardNote(invoice, saga)
   // While the client's folder is not up to date, the file may not say what this screen says.
   const stale = saga.problem !== null || !saga.up_to_date
-  const path = stale ? null : invoice.saga_xml_path
+  // As this computer reaches it: through the shared folder when the program runs on the NAS.
+  const path = stale || !invoice.saga_xml_path ? null : pathOnThisPC(invoice.saga_xml_path, where)
   const copyPath = () =>
     copyText(path ?? '').then(
       () => toast.success('Calea a fost copiată.'),
@@ -42,9 +45,11 @@ export function SagaFileCard({ invoice, saga }: { invoice: Invoice; saga: SagaSt
           <p className="rounded-lg bg-background px-3.5 py-3 font-mono text-[0.88rem] break-all">{path}</p>
           <div className="flex flex-wrap gap-2.5">
             <Button variant="outline" onClick={copyPath}>Copiază calea</Button>
-            <Button variant="outline" disabled={openFolder.isPending} onClick={() => openFolder.mutate()}>
-              Deschide folderul
-            </Button>
+            {opensWindowsHere(where) && (
+              <Button variant="outline" disabled={openFolder.isPending} onClick={() => openFolder.mutate()}>
+                Deschide folderul
+              </Button>
+            )}
           </div>
         </>
       )}

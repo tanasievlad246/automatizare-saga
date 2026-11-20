@@ -32,6 +32,7 @@ LATEST = "update_latest"  # in the settings table
 CHECKED_AT = "update_checked_at"
 RECORD = "last-update.json"  # in the data folder: how the last update ended, for the page
 UPDATE_OUTPUT = "update.log"
+CONTAINER_VARIABLE = "EFACTURA_IN_CONTAINER"
 
 # Seconds a step may take before it counts as failed.
 LOOK_TIMEOUT = 30
@@ -77,7 +78,7 @@ def status(cfg: Config, check: bool = False, project: Path | None = None, now: d
         "can_update": why_not is None,
         "why_not": why_not,
         # For the page to decide on without reading the English sentence above.
-        "why_not_kind": None if why_not is None else ("development" if is_clone else "not_a_clone"),
+        "why_not_kind": None if why_not is None else _why_not_kind(project),
         "checked_at": checked_at,
         "check_error": check_error,
         "last_update": _last_record(cfg),
@@ -141,7 +142,8 @@ def _move_to_latest(cfg: Config, project: Path, now: datetime, installed: str | 
     # would go on writing while its code is replaced. A download running refuses the update now;
     # one that would start meanwhile waits until the new release is in place.
     with backup.held_or_busy(cfg.lock_path, "Invoices are being downloaded. Wait for that to finish, then update."):
-        was_running = background.stop(cfg)["stopped"]
+        stopped = background.stop(cfg)
+        was_running = stopped["stopped"]
 
         failure, copy = None, None
         try:
@@ -157,7 +159,7 @@ def _move_to_latest(cfg: Config, project: Path, now: datetime, installed: str | 
     restarted, not_started = False, None
     if was_running:
         try:
-            restarted = background.start(cfg, cfg.path)["ok"]
+            restarted = background.start_again(cfg, stopped)  # in the mode it ran in
         except Exception as exc:
             not_started = _said(exc)
     if failure:
@@ -227,8 +229,24 @@ def sync_dependencies(project: Path) -> None:
 # --- the steps ---------------------------------------------------------------------------------
 
 
+def in_a_container() -> bool:
+    """Set in the image the NAS builds (see Dockerfile)."""
+    return os.environ.get(CONTAINER_VARIABLE) == "1"
+
+
+def _why_not_kind(project: Path) -> str:
+    if in_a_container():
+        return "container"
+    return "development" if (project / ".git").exists() else "not_a_clone"
+
+
 def _why_not_updatable(project: Path) -> str | None:
     """None for a copy the installer made; otherwise the reason this one is left alone."""
+    if in_a_container():
+        return (
+            "The program runs in a container, on the NAS. It is updated there: fetch the new release "
+            "in the folder it was built from and build the container again (see README-NAS.md)."
+        )
     if not (project / ".git").exists():
         return "This folder was not made by the installer, so there is nothing to update it from."
     branch = _git_quietly(project, "symbolic-ref", "--quiet", "--short", "HEAD")

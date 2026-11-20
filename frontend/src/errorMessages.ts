@@ -27,8 +27,9 @@ const MESSAGES: Record<string, string> = {
   saga_files_changed: 'Fișierul pentru SAGA s-a schimbat de când ați deschis pagina, așa că nu s-a marcat nimic. Importați în SAGA fișierul așa cum este acum, apoi confirmați din nou.',
   saga_archive_error: 'Fișierul nu a putut fi pus în arhivă: discul programului este plin sau nu se poate scrie pe el. Nu s-a marcat nimic. Faceți loc pe disc, apoi confirmați din nou.',
   saga_files_stale: 'Folderul pentru SAGA nu este la zi, așa că nu se știe ce a primit SAGA. Nu s-a marcat nimic. Aduceți folderul la zi cu „Încearcă din nou”, importați fișierul și confirmați apoi.',
-  unauthorized: 'Pagina nu mai are voie să vorbească cu programul. Închideți pagina și porniți programul din nou.',
-  unreachable: 'Programul nu răspunde. Faceți dublu clic pe „AutoSaga” de pe Desktop, apoi încercați din nou.',
+  not_on_this_computer: 'Aceasta ar deschide o fereastră pe calculatorul pe care rulează programul, nu pe acesta. Folosiți „Copiază calea”, sau deschideți pagina pe acel calculator.',
+  unauthorized: 'Pagina nu mai are voie să vorbească cu programul. Închideți pagina și porniți programul din nou. Dacă programul rulează pe NAS, deschideți pagina cu adresa NAS-ului, de exemplu http://192.168.1.50:8765.',
+  unreachable: 'Programul nu răspunde. Faceți dublu clic pe „AutoSaga” de pe Desktop, apoi încercați din nou. Dacă programul rulează pe NAS, verificați că NAS-ul este pornit.',
 }
 const UNKNOWN = 'A apărut o problemă în program. Încercați din nou. Dacă se repetă, arătați „Detaliile tehnice” celui care vă ajută.'
 

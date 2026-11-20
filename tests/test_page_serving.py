@@ -5,7 +5,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from efactura import cli
+from efactura import background, cli
 from efactura.api import create_app
 from efactura.config import load_config
 
@@ -158,7 +158,8 @@ def test_a_page_that_was_never_built_says_how_to_build_it(cfg, tmp_path):
 @pytest.fixture
 def run(config_path, monkeypatch, capsys):
     started = {}
-    monkeypatch.setattr(cli, "run_server", lambda cfg, port: started.setdefault("server", port))
+    monkeypatch.setattr(cli, "run_server", lambda cfg, port, network=False: started.setdefault("server", port))
+    monkeypatch.setattr(background, "probe", lambda port: None)  # nothing runs on the port yet
     monkeypatch.setattr(cli, "open_page_soon", lambda url: started.setdefault("opened", url))
     monkeypatch.setattr(cli, "run_dev", lambda cfg, port: started.setdefault("dev", port))
 

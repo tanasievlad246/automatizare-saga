@@ -11,6 +11,7 @@ import { showError } from '../errorMessages'
 import { formatWhen } from '../format'
 import { goesToSales, kindsLine } from './issuedInvoices'
 import type { Invoice, SagaState } from '../types'
+import { opensWindowsHere, pathOnThisPC, useWhere } from '../where'
 import { importedButton, isStale, NOT_UP_TO_DATE, placeLine, readyPlaces } from './sagaFiles'
 
 /**
@@ -83,6 +84,7 @@ export function ImportedInSagaCard({
     onError: showError,
   })
   const openFolder = useMutation({ mutationFn: api.openFolderOf, onError: showError })
+  const where = useWhere()
 
   if (!saga) return null
   const stale = isStale(ready, saga)
@@ -123,13 +125,15 @@ export function ImportedInSagaCard({
           {readyPlaces(ready, saga.file_per).map(({ path, invoices }) => (
             <li key={path} className="flex flex-col gap-2.5">
               <p className="text-muted-foreground">{placeLine(invoices.length, saga.file_per)}</p>
-              <p className="rounded-lg bg-background px-3.5 py-3 font-mono text-[0.88rem] break-all">{path}</p>
+              <p className="rounded-lg bg-background px-3.5 py-3 font-mono text-[0.88rem] break-all">{pathOnThisPC(path, where)}</p>
               {kindsOf(invoices) && <p>{kindsOf(invoices)}</p>}
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
-                <Button variant="outline" size="sm" disabled={openFolder.isPending} onClick={() => showFolder(invoices[0].id)}>
-                  Deschide folderul
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => copyPath(path)}>Copiază calea</Button>
+                {opensWindowsHere(where) && (
+                  <Button variant="outline" size="sm" disabled={openFolder.isPending} onClick={() => showFolder(invoices[0].id)}>
+                    Deschide folderul
+                  </Button>
+                )}
+                <Button variant="outline" size="sm" onClick={() => copyPath(pathOnThisPC(path, where))}>Copiază calea</Button>
                 {onShowFiles && (
                   <Link to={`/clienti/${cui}?fel=saga`} className="inline-flex min-h-11 items-center font-semibold" onClick={onShowFiles}>
                     {saga.file_per === 'client' ? 'Vezi ce este în fișier' : 'Vezi fișierele'}
