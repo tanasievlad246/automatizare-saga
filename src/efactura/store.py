@@ -604,6 +604,18 @@ class Store:
         with self._conn:
             self._conn.execute("DELETE FROM saga_files WHERE path = ?", (path,))
 
+    def move_saga_files(self, cui: str, moved: dict[str, str]) -> None:
+        """This company's folder was renamed: each path in `moved` becomes the one beside it,
+        on record and on its invoices, and keeps the time it was written at. All or nothing."""
+        with self._conn:
+            for old, new in moved.items():
+                self._conn.execute(
+                    "UPDATE OR REPLACE saga_files SET path = ? WHERE path = ? AND cui = ?", (new, old, cui)
+                )
+                self._conn.execute(
+                    "UPDATE messages SET saga_xml_path = ? WHERE saga_xml_path = ? AND cui = ?", (new, old, cui)
+                )
+
     def place_in_saga_files(self, cui: str, placed: dict[str, str], when: str) -> None:
         """Which file each of this company's invoices is in: `placed` by message id, and no
         file for all its other invoices. All or nothing.

@@ -151,6 +151,10 @@ EDITABLE_SECRETS = ("openrouter_api_key", "anaf_client_id", "anaf_client_secret"
 SAGA_FILE_PER = "saga_file_per"
 # Whether a client's screen also lists the invoices the client issued. Only the page reads it.
 SHOW_ISSUED = "show_issued"
+# The name of a client's folder inside the folder for SAGA, as the program last had it: this
+# setting's name ends with the CUI. It says which folder to rename when the client's name
+# changes, and which one a client taken off the list keeps.
+SAGA_FOLDER_OF = "saga_folder:"
 # Bringing a client's files up to date takes a moment; a second writer waits this long for it.
 SAGA_LOCK_WAIT = 30.0
 # Who confirmed an import in SAGA: a program through the API (the automation), or a person on screen.
@@ -942,6 +946,8 @@ class Service:
         try:
             store.save_client(cui, name, self._now().isoformat())
             journal.record("clients", "client.saved", f"Client {cui} saved.", cui=cui, client=name)
+            # Its folder for SAGA carries its name, so it follows a new one at once.
+            self._write_saga_files(store, cui)
         finally:
             store.close()
         return self.clients()
@@ -1042,6 +1048,8 @@ class Service:
                     updated.append({"cui": cui, "name": name})
                 else:
                     unchanged += 1
+                if known_as != name:
+                    self._write_saga_files(store, cui)  # its folder for SAGA carries its name
         finally:
             store.close()
         journal.record(
@@ -1131,7 +1139,11 @@ class Service:
         folder or of way, and for trying again after a file could not be written."""
         store = self._open_store()
         try:
-            clients = [normalize_cui(cui)] if cui else store.clients_with_saga_files()
+            # With no client named, also those in the list that have no file: a folder of
+            # theirs named as an earlier version named it is given its name of now.
+            clients = [normalize_cui(cui)] if cui else sorted(
+                {*store.clients_with_saga_files(), *(client["cui"] for client in store.clients())}
+            )
             problems = []
             for client in clients:
                 self._write_saga_files(store, client)
@@ -1157,6 +1169,22 @@ class Service:
         finally:
             store.close()
         return {"ok": True, "clients": [entry for entry in listed if entry["files"]]}
+
+    def saga_file(self, cui: str, name: str) -> Path:
+        """One of the client's files waiting for SAGA, as it is in its folder now."""
+        store = self._open_store()
+        try:
+            client = self._known_client(store, cui)
+            placed = [self.cfg.data_dir / stored for stored in store.saga_placement(client)]
+        finally:
+            store.close()
+        # Only the files on record, by name: nothing else in the folder, and nothing outside it.
+        path = next((each for each in placed if each.name == name), None)
+        if path is None:
+            raise EfacturaError(NOT_FOUND, f"No file named {name} waits for SAGA for {client}.")
+        if not path.is_file():
+            raise EfacturaError(NOT_FOUND, f"The file is gone from the client's folder: {path}")
+        return path
 
     def confirm_saga_import(self, cui: str, version: str | None = None, source: str = "api") -> dict:
         """SAGA has imported this client's files: mark every invoice in them as imported,
@@ -1277,15 +1305,18 @@ class Service:
 
     def _saga_waiting(self, store: Store, cui: str) -> dict:
         """One client's files for SAGA as the program last wrote them, for confirming an import."""
-        files = []
+        files, written = [], store.saga_ledger(cui)
         for stored, ids in store.saga_placement(cui).items():
             path = self.cfg.data_dir / stored
-            files.append({"name": path.name, "path": str(path), "invoices": len(ids), "ids": ids})
-        on_disk = all(Path(file["path"]).is_file() for file in files)
+            files.append({
+                "name": path.name, "path": str(path), "invoices": len(ids), "ids": ids,
+                "written_at": written.get(stored), "present": path.is_file(),
+            })
         return {
-            "cui": cui, "client": store.client_name(cui), "file_per": _saga_file_per(store), "files": files,
+            "cui": cui, "client": store.client_name(cui), "file_per": _saga_file_per(store),
+            "folder": str(self._client_folder(store, cui)), "files": files,
             "invoices": sum(file["invoices"] for file in files),
-            "up_to_date": store.saga_problem(cui) is None and on_disk,
+            "up_to_date": store.saga_problem(cui) is None and all(file["present"] for file in files),
             "version": _saga_version([Path(file["path"]) for file in files]),
         }
 
@@ -1371,7 +1402,11 @@ class Service:
         """Let the person pick a folder in the computer's own dialog; None if they cancel.
         The dialog says which folder it is asking for, and starts where that one is now."""
         if purpose == "saga":
-            start, title = str(self.cfg.saga_dir), "Folderul pentru SAGA"
+            store = self._open_store()
+            try:
+                start, title = str(self._saga_dir(store)), "Folderul pentru SAGA"
+            finally:
+                store.close()
         elif purpose == "backups":
             from . import backup  # here, because that module imports this one
 
@@ -1392,7 +1427,11 @@ class Service:
         if message_id is not None:
             folder = self._folder_of_saga_file(message_id)
         else:
-            folder = self.cfg.saga_dir / normalize_cui(cui) if cui else self.cfg.saga_dir
+            store = self._open_store()
+            try:
+                folder = self._client_folder(store, normalize_cui(cui)) if cui else self._saga_dir(store)
+            finally:
+                store.close()
             folder.mkdir(parents=True, exist_ok=True)
         _reveal(folder)
         return {"ok": True, "folder": str(folder)}
@@ -2014,7 +2053,7 @@ class Service:
             **tally,
         }
         if counts[CLASSIFIED]:
-            result["saga_folder"] = str(self.cfg.saga_dir / cui)
+            result["saga_folder"] = str(self._client_folder(store, cui))
 
     def _classify_each(
         self, store: Store, ids: list[str], tally: dict, jev: bool = True, again: bool = False,
@@ -2603,12 +2642,90 @@ class Service:
             waiting.append(saga.Entry(
                 invoice, row["cont"], row["id_solicitare"], row["id"], _line_conts(row), issued=_is_sale(cui, invoice),
             ))
-        return self._saga_dir(store) / cui, saga.files_for(waiting, _saga_file_per(store))
+        return self._client_folder(store, cui), saga.files_for(waiting, _saga_file_per(store))
+
+    def _client_folder(self, store: Store, cui: str) -> Path:
+        """The client's folder inside the folder for SAGA as it is set now: "<name> - <CUI>".
+        A company that is not in the client list (taken off it, or never put on) keeps the
+        folder it had, or gets one named by its CUI alone."""
+        name = store.client_name(cui)
+        if name:
+            return self._saga_dir(store) / saga.client_folder_name(name, cui)
+        return self._saga_dir(store) / (self._folder_name_kept(store, cui) or cui)
+
+    def _folder_name_kept(self, store: Store, cui: str) -> str | None:
+        """The name the program last had this client's folder under, if it is one."""
+        kept = store.get_setting(SAGA_FOLDER_OF + cui)
+        return kept if kept and Path(kept).name == kept and saga.is_client_folder(kept, cui) else None
+
+    def _earlier_folders(self, store: Store, cui: str, folder: Path) -> list[Path]:
+        """The client's folders under other names, beside the one it should have: the one the
+        program last used, the one an earlier version named by the CUI alone, and those its
+        files are on record in. Only inside the folder for SAGA as it is set now."""
+        saga_dir = folder.parent
+        found = [saga_dir / name for name in (self._folder_name_kept(store, cui), cui) if name]
+        for stored in store.saga_ledger(cui):
+            parent = (self.cfg.data_dir / stored).parent
+            if parent.parent == saga_dir and saga.is_client_folder(parent.name, cui):
+                found.append(parent)
+        return [old for old in dict.fromkeys(found) if old != folder]
+
+    def _rename_into_place(self, store: Store, cui: str, earlier: list[Path], folder: Path) -> None:
+        """Give the client's folder its name of now by renaming the one it has, whole: what
+        the program did not write goes with it, and the records follow.
+
+        A folder that cannot be renamed (SAGA has a file of it open, the share does not
+        answer, both folders are there) is left to the way that follows: the files are
+        written in the new folder and the old ones removed one by one.
+        """
+        for old in earlier:
+            try:
+                # A name that changed only in capital letters is the same folder to Windows.
+                if not old.is_dir() or (folder.exists() and not _same_file(old, folder)):
+                    continue
+                old.rename(folder)
+            except OSError as exc:
+                log.info("The folder for SAGA %s could not be renamed to %s: %s", old, folder.name, exc)
+                continue
+            store.move_saga_files(cui, {
+                stored: self._stored_path(folder / Path(stored).name)
+                for stored in store.saga_ledger(cui)
+                if (self.cfg.data_dir / stored).parent == old
+            })
+            journal.record(
+                "accounts", "saga.folder_moved",
+                f"The folder for SAGA of {cui} was renamed from {old.name} to {folder.name}.",
+                cui=cui, client=store.client_name(cui), old=old.name, new=folder.name,
+            )
+            return
+
+    def _note_client_folder(self, store: Store, cui: str, folder: Path, left: list[Path]) -> None:
+        """Keep the name the client's folder now has. Said once, when the name changes: a folder
+        under an earlier name that is still there, with files the program did not write."""
+        if self._folder_name_kept(store, cui) == folder.name or not folder.parent.is_dir():
+            return  # the folder for SAGA away: what is kept still says where the folder was
+        store.set_setting(SAGA_FOLDER_OF + cui, folder.name)
+        for old in left:
+            journal.record(
+                "accounts", "saga.folder_left",
+                f"The earlier folder for SAGA of {cui}, {old.name}, was left as it is: it holds files "
+                f"the program did not write. The client's files are in {folder.name}.",
+                level="warning", cui=cui, client=store.client_name(cui), old=old.name, new=folder.name,
+            )
 
     def _place_saga_files(self, store: Store, cui: str, when: str) -> None:
         folder, files = self._saga_files_now(store, cui)
         saga_dir = folder.parent
+        earlier = self._earlier_folders(store, cui, folder)
+        self._rename_into_place(store, cui, earlier, folder)
         known = store.saga_ledger(cui)
+        if not saga_dir.is_dir() and any(
+            _is_inside(old, saga_dir) and old.parent != folder for old in (self.cfg.data_dir / stored for stored in known)
+        ):
+            # Files wait in a folder of the client that is to be moved, and the folder for SAGA
+            # is away (a stick, a share). Writing now would make an empty folder for SAGA in
+            # its place and forget them: nothing is done until it is back.
+            raise FileNotFoundError(f"The folder for SAGA cannot be reached: {saga_dir}")
         wanted: dict[str, Path] = {}
         placed: dict[str, str] = {}
         for file in files:
@@ -2617,7 +2734,11 @@ class Service:
             wanted[stored] = path
             placed.update(dict.fromkeys(file.ids, stored))
             if _holds(path, file.content):
-                continue  # as it should be already: SAGA may have it open, so it is left alone
+                # As it should be already: SAGA may have it open, so it is left alone. One the
+                # records do not know here (its folder was renamed by hand) goes on record.
+                if stored not in known:
+                    store.note_saga_file(stored, cui, when)
+                continue
             # On record before it exists, so the folder never holds a file nobody knows of.
             store.note_saga_file(stored, cui, known.get(stored) or when)
             folder.mkdir(parents=True, exist_ok=True)
@@ -2626,6 +2747,7 @@ class Service:
         store.place_in_saga_files(cui, placed, when)
         # Only now the files that are no longer wanted: the new ones are in place.
         failure = None
+        emptied: list[Path] = []
         for stored in known:
             if stored in wanted:
                 continue
@@ -2640,12 +2762,26 @@ class Service:
                         # without holding anything up, and removed once it can be reached again.
                         continue
                     old.unlink(missing_ok=True)
+                    if saga.is_client_folder(old.parent.name, cui):
+                        emptied.append(old.parent)
             except OSError as exc:
                 failure = failure or exc  # it stays on record and is tried again
                 continue
             store.forget_saga_file(stored)
+        # A folder of the client under an earlier name goes once it is empty. What is in it
+        # that the program did not write is never removed, so such a folder stays.
+        left = []
+        for old in dict.fromkeys([*earlier, *emptied]):
+            if old == folder or _same_file(old, folder):
+                continue
+            try:
+                old.rmdir()
+            except OSError:
+                if old in earlier and old.is_dir():
+                    left.append(old)
         if failure:
             raise failure
+        self._note_client_folder(store, cui, folder, left)
 
     def _saga_dir(self, store: Store) -> Path:
         """The folder for SAGA as it is set now. Another part of the program may have

@@ -104,7 +104,9 @@ def calls(cfg):
 
 
 def saga_file(cfg, name=SAGA_NAME, cui=VALID_CUI):
-    return cfg.saga_dir / cui / name
+    """In the company's folder: named by its CUI alone, or, for a client in the list, by its name and CUI."""
+    named = sorted(cfg.saga_dir.glob(f"* - {cui}")) if cfg.saga_dir.exists() else []
+    return (named[0] if named else cfg.saga_dir / cui) / name
 
 
 def conts_in(path):
