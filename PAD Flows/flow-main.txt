@@ -14,7 +14,11 @@ LOOP FOREACH CurrentItem IN ExcelData
     END
     IF SkipCurrentCui = $'''false''' THEN
         IF CurrentCuiFolders.Count = 0 THEN
-            SET SkipCurrentCui TO $'''true'''
+            # Niciun folder cu nume: o firma care nu este in lista de clienti din AutoSaga are folderul numit doar cu CUI-ul, ca inainte.
+            Folder.GetFiles Folder: $'''%SagaImportFolderPath%\\%CurrentItem['CUI']%''' FileFilter: $'''*''' IncludeSubfolders: False FailOnAccessDenied: True SortBy1: Folder.SortBy.NoSort SortDescending1: False SortBy2: Folder.SortBy.NoSort SortDescending2: False SortBy3: Folder.SortBy.NoSort SortDescending3: False Files=> CurrentCuiFiles
+            ON ERROR
+                SET SkipCurrentCui TO $'''true'''
+            END
         ELSE
             Folder.GetFiles Folder: CurrentCuiFolders[0] FileFilter: $'''*''' IncludeSubfolders: False FailOnAccessDenied: True SortBy1: Folder.SortBy.NoSort SortDescending1: False SortBy2: Folder.SortBy.NoSort SortDescending2: False SortBy3: Folder.SortBy.NoSort SortDescending3: False Files=> CurrentCuiFiles
             ON ERROR

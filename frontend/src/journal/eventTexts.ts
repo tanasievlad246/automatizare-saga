@@ -197,8 +197,10 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
   'saga.folder_moved': (data) =>
     `Folderul pentru SAGA al clientului ${who(data)} a fost mutat: din „${text(data.old)}” în „${text(data.new)}”.`,
   'saga.folder_left': (data) =>
-    `Folderul vechi „${text(data.old)}” al clientului ${who(data)} a rămas: are fișiere pe care nu le-a scris programul. ` +
-    `Fișierele clientului sunt acum în „${text(data.new)}”.`,
+    `Folderul vechi „${text(data.old)}” al clientului ${who(data)} a rămas: ` +
+    (data.empty ? 'îl folosește alt program. ' : 'are în el fișiere pe care nu le-a scris programul. ') +
+    `Fișierele clientului se scriu în „${text(data.new)}”. ` +
+    (data.empty ? 'Programul șterge singur folderul vechi când poate.' : 'Folderul vechi dispare singur după ce îl goliți.'),
   'settings.confidence': (data) => `Cât de sigur trebuie să fie Jev: acum ${formatPercent(Number(data.level_set))}.`,
   'settings.jev_question': () => 'A fost schimbată întrebarea pusă lui Jev.',
   'settings.jev_line_question': () => 'A fost schimbată întrebarea pusă lui Jev despre o linie.',

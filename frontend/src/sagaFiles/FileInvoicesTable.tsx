@@ -1,5 +1,5 @@
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronRight } from 'lucide-react'
-import { Fragment, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { Pager } from '@/components/Pager'
 import { pageOf, rangeLine } from '@/components/paging'
@@ -11,6 +11,7 @@ import { INVOICES_PER_PAGE } from '../invoices/invoiceList'
 import { listAccount } from '../invoices/lineAccounts'
 import type { Invoice } from '../types'
 import { InvoiceLines } from './InvoiceLines'
+import { recallTable, rememberTable } from './tableMemory'
 import {
   COLUMNS, FILES_TAB, type Sort, type SortColumn, kindOf, nextSort, partyOf, sortFileInvoices, sortLabel, sortedLine,
 } from './waitingFiles'
@@ -20,11 +21,14 @@ const INVOICE_NOUN = { one: 'Factura', many: 'Facturile' }
 /**
  * The invoices of one file for SAGA, a page at a time, in the order of the file until a column's
  * heading is pressed. The arrow in front of an invoice shows its lines in the rows under it.
+ * `memory` names the table (the client and the file): how it is left is found again after a
+ * look at one of its invoices.
  */
-export function FileInvoicesTable({ fileName, invoices }: { fileName: string; invoices: Invoice[] }) {
-  const [sort, setSort] = useState<Sort | null>(null)
-  const [wanted, setWanted] = useState(1)
-  const [open, setOpen] = useState<ReadonlySet<string>>(new Set())
+export function FileInvoicesTable({ fileName, memory, invoices }: { fileName: string; memory: string; invoices: Invoice[] }) {
+  const [sort, setSort] = useState<Sort | null>(() => recallTable(memory).sort)
+  const [wanted, setWanted] = useState(() => recallTable(memory).page)
+  const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set(recallTable(memory).open))
+  useEffect(() => rememberTable(memory, { sort, page: wanted, open: [...open] }), [memory, sort, wanted, open])
   const page = pageOf(sortFileInvoices(invoices, sort), wanted, INVOICES_PER_PAGE)
   // One invoice: nothing to put in order, so the headings are plain words.
   const sortable = invoices.length > 1

@@ -166,3 +166,23 @@ Then an independent review of the whole branch.
 - **On a narrow screen** the invoice table scrolls sideways, as the other tables do, and the lines of an open invoice stay in sight at the width that is seen.
 - **`XmlViewer` has an `inWindow` switch** for its margins and height inside the window.
 - **`LineTarget` and `lineTarget()` moved to `lineAccounts.ts`**, so the invoice's screen and the new tab build the window's subject the same way.
+
+## After the independent review
+
+The reviewer found no way to delete a file the program did not write, to mark an invoice SAGA never got, or to read another file through the new route. What it did find, each now with a test:
+
+- **A file could be left in the folder, unknown to the program.** If the program was stopped, or the database refused, between renaming a folder and noting where its files were, and an invoice then left the file before the next clean try, the old record was forgotten and the renamed folder kept a file nobody knew. The records now follow first (`_records_follow`), before anything is written or forgotten. The same step takes a folder renamed by hand, with each file's time kept.
+- **A folder renamed by hand under another name** is found by the CUI at the end of its name and renamed back, so its files are not left behind either.
+- **An old folder that could not be renamed or removed was given up after one pass.** The kept setting now also names any earlier folder that is still there (`new/old`), so it is tried again at every write and start; the journal says once that it was left, and whether it is held by another program or holds someone else's file.
+- **On Windows a name changed only in capital letters was not renamed**, because Windows' paths compare equal whatever their capitals. Folders are now compared as written. A test puts that comparison on, so it says the same on a Mac; it has not been run on Windows.
+- **`POST /folders/open` with a CUI made the new folder beside the old one**, which kept the old one from being renamed whole. It now brings the client's folder up to date first.
+- **A client taken off the list, with no name kept,** stays in the folder its files are on record in.
+- **A share that does not answer:** adding a client that has nothing for SAGA no longer touches the SAGA folder, the start pass leaves clients without files alone while the folder is away, and each pass asks once whether the folder is there.
+- **On the tab, "Vezi XML-ul", "Copiază calea" and "Deschide folderul" now count as having seen the file**, like the two buttons of the card under it. Before, checking the file on the tab and then confirming was refused once.
+- **"Vezi ce este în fișier"** now shows the tab from its top and puts the keyboard on it; before, the person stayed at the foot of the page.
+- **A table's order, page and open invoices are kept** while the page is open, so the way back from an invoice finds them.
+- **The notice for a folder that is not up to date** no longer points at a heading that is not always drawn.
+- **The "Fișierele pentru SAGA" window** now says that this is the folder to choose in SAGA and that the old folders were renamed.
+- **The flow** falls back to the folder named by the CUI alone, for a company that is not in the client list.
+
+Left as it is, and said in the PR: nothing was run on Windows or in Power Automate.

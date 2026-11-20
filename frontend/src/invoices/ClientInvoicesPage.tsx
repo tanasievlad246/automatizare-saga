@@ -56,7 +56,11 @@ export function ClientInvoicesPage() {
   const [search, setSearch] = useSearchParams()
   const [syncing, setSyncing] = useState(false)
   const [classifying, setClassifying] = useState(false)
+  // Goes up each time the person looks at one of the files waiting for SAGA, for the card that confirms the import.
+  const [lookedAt, setLookedAt] = useState(0)
   const listTop = useRef<HTMLDivElement>(null)
+  // Set by "Vezi ce este în fișier", at the foot of a long list: the tab it leads to is brought into view.
+  const showingFiles = useRef(false)
   const client = useQuery({ queryKey: ['clients'], queryFn: api.clients }).data?.clients.find((each) => each.cui === cui)
   const tab = tabFrom(search)
   // The two tabs that list invoices; the other two show files and imports.
@@ -82,6 +86,15 @@ export function ClientInvoicesPage() {
     : automaticDownloadRuns
       ? 'Programul descarcă acum facturile, singur. Butonul revine când se termină.'
       : null
+
+  // The link pressed went away with the list it was under: the files' tab is shown from its
+  // top, and the keyboard is on it.
+  useEffect(() => {
+    if (!showingFiles.current || tab !== 'saga') return
+    showingFiles.current = false
+    scrollBelowHeader(listTop.current)
+    listTop.current?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')?.focus({ preventScroll: true })
+  }, [tab])
 
   // A link back from an invoice, or from the client list, returns to this list as it is now.
   const path = `/clienti/${cui}`
@@ -215,6 +228,7 @@ export function ClientInvoicesPage() {
           received={received.data?.invoices}
           issued={issued.data?.invoices}
           stale={Boolean(ready && received.data && isStale(ready, received.data.saga))}
+          onLook={() => setLookedAt((times) => times + 1)}
         />
       )}
       {listing && !error && (narrowed && invoices.length > 0 && found.length === 0 ? (
@@ -242,7 +256,10 @@ export function ClientInvoicesPage() {
       )}
       {/* Under the lists and under the files: the import is confirmed from wherever it was checked. */}
       {tab !== 'archive' && ready && (
-        <ImportedInSagaCard cui={cui} ready={ready} saga={received.data?.saga} linkToFiles={tab !== 'saga'} />
+        <ImportedInSagaCard
+          cui={cui} ready={ready} saga={received.data?.saga} lookedAt={lookedAt}
+          onShowFiles={tab === 'saga' ? undefined : () => { showingFiles.current = true }}
+        />
       )}
 
       <ClassifyAgainDialog clients={classifying && client ? [client] : null} onClose={() => setClassifying(false)} />

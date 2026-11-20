@@ -12,10 +12,11 @@ const FILE_NOUN = { one: 'Fișierul', many: 'Fișierele' }
 /**
  * The "Fișiere pentru SAGA" tab of a client's screen: every file in the client's folder that
  * still has to be imported, each with its invoices. `stale`: the folder may not hold what the
- * screen shows; the card under the tab has the button that brings it up to date.
+ * screen shows; the card under the tab has the button that brings it up to date. `onLook`: the
+ * person looked at one of the files as it is now (its XML, its path, its folder).
  */
 export function SagaFilesTab({
-  cui, waiting, error, received, issued, stale,
+  cui, waiting, error, received, issued, stale, onLook,
 }: {
   cui: string
   waiting: WaitingFiles | undefined
@@ -23,6 +24,7 @@ export function SagaFilesTab({
   received: Invoice[] | undefined
   issued: Invoice[] | undefined
   stale: boolean
+  onLook: () => void
 }) {
   const [wanted, setWanted] = useState(1)
   const files = waiting?.files ?? []
@@ -52,7 +54,7 @@ export function SagaFilesTab({
       ) : (
         <ol aria-label="Fișierele de importat" className="flex flex-col gap-3.5">
           {page.items.map((file) => (
-            <WaitingFileCard key={file.path} cui={cui} file={file} invoices={invoicesOf(file.ids, received, issued)} />
+            <WaitingFileCard key={file.path} cui={cui} file={file} invoices={invoicesOf(file.ids, received, issued)} onLook={onLook} />
           ))}
         </ol>
       )}

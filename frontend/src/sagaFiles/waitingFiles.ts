@@ -10,7 +10,8 @@ export const FILES_TAB = {
   emptyTitle: 'Nu este niciun fișier de importat în SAGA pentru acest client.',
   emptyText: 'Un fișier apare aici când o factură primește un cont și nu este încă marcată ca importată. Ce s-a importat deja este la fila „Arhivă”.',
   staleTitle: NOT_UP_TO_DATE.title,
-  staleText: `Fișierele de mai jos pot să nu arate ce așteaptă acum. Mai jos, la „Ați importat facturile în SAGA?”, apăsați „${NOT_UP_TO_DATE.retry}”.`,
+  // True also when no file is listed and nothing is ready: the button is under the tab whenever the folder is not up to date.
+  staleText: `Ce se vede aici poate să nu fie ce este acum în folder. Apăsați „${NOT_UP_TO_DATE.retry}”, mai jos.`,
   missing: 'Fișierul lipsește din folder.',
   xmlButton: 'Vezi XML-ul',
   xmlExplanation: 'Așa este fișierul în folderul clientului. Pe acesta îl importă SAGA.',

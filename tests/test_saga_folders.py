@@ -1,8 +1,9 @@
 """A client's folder for SAGA carries the client's name and its CUI, and follows the name:
 renamed whole when it can be, file by file when it cannot, and never at the cost of a file."""
 
+import sqlite3
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PurePath
 from xml.etree import ElementTree
 
 import pytest
@@ -403,6 +404,7 @@ def test_a_file_the_program_did_not_write_is_never_deleted_with_the_old_folder(s
     assert state_of(service)["problem"] is None  # the program's own files are where they should be
     (left,) = events_named(cfg, "saga.folder_left")
     assert (left["data"]["cui"], left["data"]["old"], left["data"]["new"]) == (VALID_CUI, ALFA, ALFA_GRUP)
+    assert left["data"]["empty"] is False  # it holds someone else's file: that is why it stays
 
 
 def test_an_old_folder_left_with_someone_elses_file_is_said_once(service, anaf, cfg, monkeypatch):
@@ -589,3 +591,185 @@ def test_a_waiting_file_that_is_gone_from_the_folder_is_not_found(service, anaf,
         service.saga_file(VALID_CUI, name_of("A1"))
 
     assert refused.value.code == "not_found"
+
+
+# --- after the independent review ----------------------------------------------------------------
+
+
+def records_cannot_be_moved(monkeypatch):
+    """The folder is renamed, then the database refuses: as when the program is closed, or the
+    database is busy, between the two."""
+
+    def refuse(self, cui, moved):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(Store, "move_saga_files", refuse)
+
+
+def test_records_that_did_not_follow_a_renamed_folder_follow_before_anything_is_forgotten(service, anaf, cfg, monkeypatch):
+    service.save_client(VALID_CUI, "Alfa Construct SRL")
+    downloaded(service, anaf, "A1", "A2")
+    with monkeypatch.context() as cut_short:
+        records_cannot_be_moved(cut_short)
+        service.save_client(VALID_CUI, "Alfa Grup SRL")  # the folder is renamed, its records are not
+
+    service.mark_uploaded(["3001"])  # the first invoice leaves, so the file is named after A2 now
+
+    wanted = cfg.saga_dir / ALFA_GRUP / name_of("A2")
+    assert files_in(cfg.saga_dir / ALFA_GRUP) == [name_of("A2")]  # the file named after A1 is not left behind
+    assert list(ledger(cfg)) == [wanted.relative_to(cfg.data_dir).as_posix()]
+    assert (state_of(service)["up_to_date"], state_of(service)["problem"]) == (True, None)
+
+
+def test_with_a_file_per_invoice_too_nothing_unknown_is_left_in_a_renamed_folder(service, anaf, cfg, monkeypatch):
+    service.set_saga_output(per="invoice")
+    service.save_client(VALID_CUI, "Alfa Construct SRL")
+    downloaded(service, anaf, "A1", "A2")
+    with monkeypatch.context() as cut_short:
+        records_cannot_be_moved(cut_short)
+        service.save_client(VALID_CUI, "Alfa Grup SRL")
+
+    service.mark_uploaded(["3002"])
+
+    assert files_in(cfg.saga_dir / ALFA_GRUP) == [name_of("A1")]
+    assert [Path(stored).name for stored in ledger(cfg)] == [name_of("A1")]
+
+
+def test_a_file_in_a_folder_renamed_by_hand_keeps_the_time_it_was_written_at(service, anaf, cfg, clock):
+    service.save_client(VALID_CUI, "Alfa Construct SRL")
+    downloaded(service, anaf, "A1")
+    (cfg.saga_dir / ALFA).rename(cfg.saga_dir / ALFA_GRUP)
+    clock["now"] = LATER
+
+    service.save_client(VALID_CUI, "Alfa Grup SRL")
+
+    assert state_of(service)["written_at"] == NOW.isoformat()  # taken as it is, not written again
+
+
+def test_a_folder_renamed_by_hand_is_followed_also_when_something_changes_before_the_client_is_renamed(service, anaf, cfg):
+    service.save_client(VALID_CUI, "Alfa Construct SRL")
+    downloaded(service, anaf, "A1", "A2")
+    (cfg.saga_dir / ALFA).rename(cfg.saga_dir / ALFA_GRUP)  # in Explorer; the program still calls the client Alfa Construct
+
+    service.mark_uploaded(["3001"])  # written under the name the program knows; the old file is forgotten
+    service.save_client(VALID_CUI, "Alfa Grup SRL")
+
+    # The folder that carries the CUI was found again: no file with an imported invoice is left in it.
+    assert folders_in(cfg) == [ALFA_GRUP]
+    assert files_in(cfg.saga_dir / ALFA_GRUP) == [name_of("A2")]
+    assert [Path(stored).name for stored in ledger(cfg)] == [name_of("A2")]
+    assert state_of(service)["problem"] is None
+
+
+def test_an_old_folder_that_could_be_neither_renamed_nor_removed_is_removed_at_a_later_try(service, anaf, cfg, monkeypatch):
+    service.save_client(VALID_CUI, "Alfa Construct SRL")
+    downloaded(service, anaf, "A1")
+    real_rmdir = Path.rmdir
+
+    def in_use(self):
+        if self.name == ALFA:
+            raise PermissionError("the folder is used by another program")
+        real_rmdir(self)
+
+    with monkeypatch.context() as held:
+        no_folder_can_be_renamed(held)
+        held.setattr(Path, "rmdir", in_use)
+        service.save_client(VALID_CUI, "Alfa Grup SRL")
+
+        assert folders_in(cfg) == sorted([ALFA, ALFA_GRUP])
+        assert files_in(cfg.saga_dir / ALFA) == []
+        (left,) = events_named(cfg, "saga.folder_left")
+        assert left["data"]["empty"] is True  # nobody's file is in it: it is only held
+
+    service.write_saga_files(VALID_CUI)
+
+    assert folders_in(cfg) == [ALFA_GRUP]
+
+
+def test_a_rename_refused_while_nothing_waits_is_made_at_a_later_try(service, anaf, cfg, monkeypatch):
+    service.save_client(VALID_CUI, "Alfa Construct SRL")
+    downloaded(service, anaf, "A1")
+    service.mark_uploaded(["3001"])
+    (cfg.saga_dir / ALFA / "pus de mana.xml").write_text("<Facturi/>", encoding="utf-8")
+    with monkeypatch.context() as held:
+        no_folder_can_be_renamed(held)
+        service.save_client(VALID_CUI, "Alfa Grup SRL")
+
+        assert folders_in(cfg) == [ALFA]  # nothing was written, so the new folder is not there
+
+    service.write_saga_files()
+
+    assert folders_in(cfg) == [ALFA_GRUP]
+    assert files_in(cfg.saga_dir / ALFA_GRUP) == ["pus de mana.xml"]
+    assert len(events_named(cfg, "saga.folder_moved")) == 1
+
+
+def test_capital_letters_are_followed_where_paths_are_the_same_whatever_their_capitals(service, anaf, cfg, monkeypatch):
+    """Windows' own paths compare equal whatever their capitals; here that is put on, so the
+    test says the same on a Mac as on the accountant's PC."""
+    service.save_client(VALID_CUI, "Alfa Construct SRL")
+    downloaded(service, anaf, "A1")
+    if not (cfg.saga_dir / ALFA.upper()).exists():
+        pytest.skip("this disk tells file names apart by letter case; Windows does not")
+    kind = type(cfg.saga_dir)
+    monkeypatch.setattr(kind, "__eq__", lambda self, other: isinstance(other, PurePath) and str(self).lower() == str(other).lower())
+    monkeypatch.setattr(kind, "__hash__", lambda self: hash(str(self).lower()))
+
+    service.save_client(VALID_CUI, "ALFA CONSTRUCT SRL")
+
+    assert folders_in(cfg) == [f"ALFA CONSTRUCT SRL - {VALID_CUI}"]
+    assert len(events_named(cfg, "saga.folder_moved")) == 1
+    assert Path(next(iter(ledger(cfg)))).parent.name == f"ALFA CONSTRUCT SRL - {VALID_CUI}"
+    assert state_of(service)["written_at"] == NOW.isoformat()
+
+
+def test_opening_a_clients_folder_renames_an_old_one_instead_of_making_a_second(service, anaf, cfg, monkeypatch):
+    monkeypatch.setattr(service_module, "_reveal", lambda folder: None)
+    downloaded(service, anaf, "A1")
+    (cfg.saga_dir / VALID_CUI / "pus de mana.xml").write_text("<Facturi/>", encoding="utf-8")
+    put_on_the_list_as_an_earlier_version_did(cfg)
+
+    assert service.open_saga_folder(cui=VALID_CUI)["folder"] == str(cfg.saga_dir / ALFA)
+
+    assert folders_in(cfg) == [ALFA]
+    assert files_in(cfg.saga_dir / ALFA) == sorted([name_of("A1"), "pus de mana.xml"])
+
+
+def test_a_client_taken_off_the_list_stays_where_its_files_are_when_no_name_was_kept(service, anaf, cfg):
+    service.save_client(VALID_CUI, "Alfa Construct SRL")
+    downloaded(service, anaf, "A1")
+    store = Store(cfg.db_path)
+    store.delete_setting(f"saga_folder:{VALID_CUI}")  # as when every try since the folder got its name ended in a failure
+    store.close()
+
+    service.remove_client(VALID_CUI)
+    service.set_cont("3001", "628")
+
+    assert folders_in(cfg) == [ALFA]
+
+
+def test_adding_a_client_that_has_nothing_for_saga_does_not_touch_the_folder_for_saga(service, cfg, monkeypatch):
+    placed = []
+    real_place = Service._place_saga_files
+    monkeypatch.setattr(Service, "_place_saga_files", lambda self, store, cui, when: placed.append(cui) or real_place(self, store, cui, when))
+
+    service.save_client(VALID_CUI, "Alfa Construct SRL")
+    service.import_clients("clienti.csv", f"nume;cui\nBeta Instal SRL;{OTHER_VALID_CUI}\n".encode())
+
+    assert placed == []  # a share that does not answer would have made each of them wait
+
+    service.save_client(VALID_CUI, "Alfa Grup SRL")  # a new name: its folder has to follow
+
+    assert placed == [VALID_CUI]
+
+
+def test_while_the_folder_for_saga_is_away_the_start_leaves_clients_without_files_alone(service, anaf, cfg, tmp_path):
+    service.save_client(VALID_CUI, "Alfa Construct SRL")
+    service.save_client(OTHER_VALID_CUI, "Beta Instal SRL")
+    downloaded(service, anaf, "A1")
+
+    assert service.write_saga_files()["clients"] == 2  # there: every client in the list is gone through
+
+    cfg.saga_dir.rename(tmp_path / "the share, not answering")
+
+    assert service.write_saga_files()["clients"] == 1  # away: only the one with a file to look after

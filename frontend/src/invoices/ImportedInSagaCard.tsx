@@ -18,12 +18,14 @@ import { importedButton, isStale, NOT_UP_TO_DATE, placeLine, readyPlaces } from 
  * folder with a file per invoice), then one button that marks every invoice in it as imported
  * and moves the file to the archive. The version of the file as the person saw it goes with
  * it: if the file has changed since (a download added an invoice, even one the page then
- * reloaded by itself), nothing is marked and the card says so. `linkToFiles`: beside the path, a
- * way to the "Fișiere pentru SAGA" tab, where what the file holds is seen.
+ * reloaded by itself), nothing is marked and the card says so. `onShowFiles`: beside the path, a
+ * way to the "Fișiere pentru SAGA" tab, where what the file holds is seen; called as it is taken.
+ * `lookedAt` goes up each time the person looks at a file on that tab (its XML, its path, its
+ * folder): what they saw there is the file as it is now, as with this card's own two buttons.
  */
 export function ImportedInSagaCard({
-  cui, ready, saga, linkToFiles = false,
-}: { cui: string; ready: Invoice[]; saga: SagaState | undefined; linkToFiles?: boolean }) {
+  cui, ready, saga, lookedAt = 0, onShowFiles,
+}: { cui: string; ready: Invoice[]; saga: SagaState | undefined; lookedAt?: number; onShowFiles?: () => void }) {
   const queryClient = useQueryClient()
   const refresh = () => {
     for (const key of ['invoices', 'invoice', 'clients', 'saga-archive']) queryClient.invalidateQueries({ queryKey: [key] })
@@ -39,6 +41,11 @@ export function ImportedInSagaCard({
   const current = saga?.version ?? null
   // Taken while drawing, once: React's way of keeping something from an earlier render.
   if (seen === null && current !== null && current !== outdated && ready.length > 0) setSeen(current)
+  const [counted, setCounted] = useState(lookedAt)
+  if (lookedAt !== counted) {
+    setCounted(lookedAt)
+    setSeen(current)
+  }
   const forget = () => {
     setOutdated(current)
     setSeen(null)
@@ -123,8 +130,8 @@ export function ImportedInSagaCard({
                   Deschide folderul
                 </Button>
                 <Button variant="outline" size="sm" onClick={() => copyPath(path)}>Copiază calea</Button>
-                {linkToFiles && (
-                  <Link to={`/clienti/${cui}?fel=saga`} className="inline-flex min-h-11 items-center font-semibold">
+                {onShowFiles && (
+                  <Link to={`/clienti/${cui}?fel=saga`} className="inline-flex min-h-11 items-center font-semibold" onClick={onShowFiles}>
                     {saga.file_per === 'client' ? 'Vezi ce este în fișier' : 'Vezi fișierele'}
                   </Link>
                 )}
