@@ -1,5 +1,13 @@
 import { countOf, formatPercent } from '../format'
-import type { Invoice, LineAccount } from '../types'
+import type { Invoice, InvoiceLine, LineAccount } from '../types'
+
+/**
+ * What the window for an account is about: one line of the invoice, or all of them at once.
+ * `followers`: for the largest line, the lines that take its account.
+ */
+export type LineTarget =
+  | { entry: LineAccount; description: string; details: string | null; value: string | null; followers: number[] }
+  | 'all'
 
 const CHOSEN_BY: Record<string, (entry: LineAccount) => string> = {
   rules: (entry) => (entry.rule ? `după regula „${entry.rule}”` : 'după o regulă a dumneavoastră'),
@@ -48,6 +56,38 @@ export function largestLine(lines: { number: number; value: string }[]): number 
     if (largest === null || size > largest.size) largest = { number: line.number, size }
   }
   return largest?.number ?? null
+}
+
+/**
+ * What the window is about when a line's number, or "all", is chosen on an invoice with an
+ * account on each line. Nothing for a line the invoice does not have.
+ */
+export function lineTarget(
+  document: { lines: Pick<InvoiceLine, 'number' | 'description' | 'details' | 'value'>[] },
+  entries: LineAccount[] | null, choosing: number | 'all' | null,
+): LineTarget | null {
+  if (choosing === 'all') return 'all'
+  const line = document.lines.find((each) => each.number === choosing)
+  const entry = entries?.find((each) => each.line === choosing)
+  if (!line || !entry) return null
+  // The lines that take the largest line's account change with it: its window says so.
+  const followers = (entries ?? []).filter((each) => each.method === 'follows').map((each) => each.line)
+  return {
+    entry, description: line.description, details: line.details, value: line.value,
+    followers: line.number === largestLine(document.lines) ? followers : [],
+  }
+}
+
+const INVOICE_CHOSEN_BY: Record<string, (invoice: Invoice) => string> = {
+  rules: () => 'ales de o regulă a dumneavoastră',
+  jev: (invoice) => `ales de Jev, sigur ${formatPercent(invoice.confidence)}`,
+  jev_accepted: () => 'propus de Jev, acceptat de dumneavoastră',
+  human: () => 'ales de dumneavoastră',
+}
+
+/** Beside the one account of an invoice, in a sentence: who chose it. Null when that is not known. */
+export function whoChoseInvoice(invoice: Pick<Invoice, 'classification_method' | 'confidence'>): string | null {
+  return INVOICE_CHOSEN_BY[invoice.classification_method ?? '']?.(invoice as Invoice) ?? null
 }
 
 /** The accounts the lines are on, with how many lines each; the most used first, then in line order. */

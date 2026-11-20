@@ -194,6 +194,11 @@ const SENTENCES: Record<string, (data: Data, line: JournalLine) => string> = {
     `Importul în SAGA al clientului ${who(data)} a fost confirmat ${data.source === 'screen' ? 'de pe ecran' : 'din automatizare'}: ` +
     `${countOf(Number(data.invoices), 'o factură marcată', 'facturi marcate')} ca importat${Number(data.invoices) === 1 ? 'ă' : 'e'}, iar fișierul este acum în arhivă.`,
   'saga.files_written': (data) => `Fișierele pentru SAGA ale clientului ${who(data)} sunt din nou la zi.`,
+  'saga.folder_moved': (data) =>
+    `Folderul pentru SAGA al clientului ${who(data)} a fost mutat: din „${text(data.old)}” în „${text(data.new)}”.`,
+  'saga.folder_left': (data) =>
+    `Folderul vechi „${text(data.old)}” al clientului ${who(data)} a rămas: are fișiere pe care nu le-a scris programul. ` +
+    `Fișierele clientului sunt acum în „${text(data.new)}”.`,
   'settings.confidence': (data) => `Cât de sigur trebuie să fie Jev: acum ${formatPercent(Number(data.level_set))}.`,
   'settings.jev_question': () => 'A fost schimbată întrebarea pusă lui Jev.',
   'settings.jev_line_question': () => 'A fost schimbată întrebarea pusă lui Jev despre o linie.',

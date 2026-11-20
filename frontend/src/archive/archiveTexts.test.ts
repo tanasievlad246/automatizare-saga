@@ -9,16 +9,22 @@ describe('the tabs of a client\'s screen', () => {
   it('reads the tab from the address, the received invoices when it says nothing', () => {
     expect(tabFrom(new URLSearchParams('fel=arhiva&import=12'))).toBe('archive')
     expect(tabFrom(new URLSearchParams('fel=emise'))).toBe('issued')
+    expect(tabFrom(new URLSearchParams('fel=saga'))).toBe('saga')
     expect(tabFrom(new URLSearchParams(''))).toBe('received')
     expect(searchForTab('archive')).toEqual({ fel: 'arhiva' })
+    expect(searchForTab('saga')).toEqual({ fel: 'saga' })
     expect(searchForTab('issued')).toEqual({ fel: 'emise' })
     expect(searchForTab('received')).toEqual({})
   })
 
   it('counts each tab once what it counts is known', () => {
-    expect(clientTabs(7, 3, 2).map((tab) => tab.label)).toEqual(['Facturi primite (7)', 'Facturi emise (3)', 'Arhivă (2)'])
-    expect(clientTabs(undefined, undefined, undefined).map((tab) => tab.label)).toEqual(['Facturi primite', 'Facturi emise', 'Arhivă'])
-    expect(clientTabs(7, 3, 0).at(-1)?.value).toBe('archive')
+    expect(clientTabs(7, 3, 1, 2).map((tab) => tab.label)).toEqual([
+      'Facturi primite (7)', 'Facturi emise (3)', 'Fișiere pentru SAGA (1)', 'Arhivă (2)',
+    ])
+    expect(clientTabs(undefined, undefined, undefined, undefined).map((tab) => tab.label)).toEqual([
+      'Facturi primite', 'Facturi emise', 'Fișiere pentru SAGA', 'Arhivă',
+    ])
+    expect(clientTabs(7, 3, 0, 0).map((tab) => tab.value)).toEqual(['received', 'issued', 'saga', 'archive'])
   })
 })
 

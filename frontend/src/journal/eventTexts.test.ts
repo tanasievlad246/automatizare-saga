@@ -242,6 +242,10 @@ describe('the files for SAGA in the journal', () => {
   it('says whose files could not be written, and when they are up to date again', () => {
     expect(line('saga.files_failed', { client: 'Alfa SRL', cui: '1' })).toBe('Fișierele pentru SAGA ale clientului Alfa SRL nu au putut fi scrise. Programul încearcă din nou la următoarea schimbare.')
     expect(line('saga.files_written', { cui: '12345674' })).toBe('Fișierele pentru SAGA ale clientului CUI 12345674 sunt din nou la zi.')
+    expect(line('saga.folder_moved', { client: 'Alfa Construct SRL', cui: '12345674', old: '12345674', new: 'Alfa Construct SRL - 12345674' }))
+      .toBe('Folderul pentru SAGA al clientului Alfa Construct SRL a fost mutat: din „12345674” în „Alfa Construct SRL - 12345674”.')
+    expect(line('saga.folder_left', { client: 'Alfa Construct SRL', cui: '12345674', old: '12345674', new: 'Alfa Construct SRL - 12345674' }))
+      .toBe('Folderul vechi „12345674” al clientului Alfa Construct SRL a rămas: are fișiere pe care nu le-a scris programul. Fișierele clientului sunt acum în „Alfa Construct SRL - 12345674”.')
   })
 })
 

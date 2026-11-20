@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Invoice, LineAccount } from '../types'
-import { accountsUsed, largestLine, linesLeft, linesLeftNote, listAccount, whoChoseLine } from './lineAccounts'
+import { accountsUsed, largestLine, lineTarget, linesLeft, linesLeftNote, listAccount, whoChoseInvoice, whoChoseLine } from './lineAccounts'
 
 const entry = (over: Partial<LineAccount>): LineAccount => ({
   line: 1, cont: null, method: null, rule: null, reason: '',
@@ -96,5 +96,41 @@ describe('the largest line', () => {
     expect(largestLine([{ number: 1, value: '40.00' }, { number: 2, value: '-450.00' }, { number: 3, value: '100' }])).toBe(2)
     expect(largestLine([{ number: 1, value: '10' }, { number: 2, value: '10.00' }])).toBe(1)
     expect(largestLine([])).toBeNull()
+  })
+})
+
+describe('what the window for a line is about', () => {
+  const document = {
+    lines: [
+      { number: 1, description: 'Ciment 40 kg', details: null, value: '510.00' },
+      { number: 2, description: 'Transport marfă', details: 'Livrare la șantier', value: '120.00' },
+    ],
+  }
+  const entries = [entry({ line: 1, cont: '302', method: 'rules' }), entry({ line: 2, cont: '302', method: 'follows' })]
+
+  it('is the line with its account; for the largest line, also the lines that take its account', () => {
+    expect(lineTarget(document, entries, 1)).toEqual({
+      entry: entries[0], description: 'Ciment 40 kg', details: null, value: '510.00', followers: [2],
+    })
+    expect(lineTarget(document, entries, 2)).toEqual({
+      entry: entries[1], description: 'Transport marfă', details: 'Livrare la șantier', value: '120.00', followers: [],
+    })
+  })
+
+  it('is every line at once, or nothing when no line of the invoice is meant', () => {
+    expect(lineTarget(document, entries, 'all')).toBe('all')
+    expect(lineTarget(document, entries, null)).toBeNull()
+    expect(lineTarget(document, entries, 7)).toBeNull()
+    expect(lineTarget(document, null, 1)).toBeNull()
+  })
+})
+
+describe('who chose the one account of an invoice', () => {
+  it('names a rule, Jev with how sure it was, or the person', () => {
+    expect(whoChoseInvoice(invoice({ classification_method: 'rules' }))).toBe('ales de o regulă a dumneavoastră')
+    expect(whoChoseInvoice(invoice({ classification_method: 'jev', confidence: 0.93 }))).toBe('ales de Jev, sigur 93%')
+    expect(whoChoseInvoice(invoice({ classification_method: 'jev_accepted' }))).toBe('propus de Jev, acceptat de dumneavoastră')
+    expect(whoChoseInvoice(invoice({ classification_method: 'human' }))).toBe('ales de dumneavoastră')
+    expect(whoChoseInvoice(invoice({ classification_method: null }))).toBeNull()
   })
 })

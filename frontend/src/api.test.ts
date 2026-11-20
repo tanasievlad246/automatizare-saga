@@ -51,3 +51,31 @@ describe('choosing a folder in Windows’ own dialog', () => {
     ])
   })
 })
+
+describe('a file waiting for SAGA, read as it is in the folder', () => {
+  it('is asked for by its client and its name, and comes as text', async () => {
+    const asked: string[] = []
+    vi.stubGlobal('fetch', async (address: string) => {
+      asked.push(address)
+      return new Response('<?xml version="1.0"?><Facturi/>', { headers: { 'content-type': 'application/xml' } })
+    })
+
+    expect(await api.sagaFileXml('12345674', 'F_1_A&B 1_09.11.2026.xml')).toBe('<?xml version="1.0"?><Facturi/>')
+    expect(asked).toEqual(['/api/saga-files/12345674/files/F_1_A%26B%201_09.11.2026.xml'])
+  })
+
+  it('says with the program\'s own code why it could not be read', async () => {
+    vi.stubGlobal('fetch', async () =>
+      new Response(JSON.stringify({ ok: false, error: { code: 'not_found', message: 'The file is gone from the client\'s folder.' } }), { status: 404 }))
+
+    await expect(api.sagaFileXml('12345674', 'F.xml')).rejects.toMatchObject({ code: 'not_found' })
+  })
+
+  it('says the program did not answer when it did not', async () => {
+    vi.stubGlobal('fetch', async () => {
+      throw new TypeError('Failed to fetch')
+    })
+
+    await expect(api.sagaFileXml('12345674', 'F.xml')).rejects.toMatchObject({ code: 'unreachable' })
+  })
+})

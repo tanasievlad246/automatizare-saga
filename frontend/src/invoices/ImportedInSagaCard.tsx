@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { Link } from 'react-router'
 import { toast } from 'sonner'
 import { Notice } from '@/components/Notice'
 import { Button } from '@/components/ui/button'
@@ -17,9 +18,12 @@ import { importedButton, isStale, NOT_UP_TO_DATE, placeLine, readyPlaces } from 
  * folder with a file per invoice), then one button that marks every invoice in it as imported
  * and moves the file to the archive. The version of the file as the person saw it goes with
  * it: if the file has changed since (a download added an invoice, even one the page then
- * reloaded by itself), nothing is marked and the card says so.
+ * reloaded by itself), nothing is marked and the card says so. `linkToFiles`: beside the path, a
+ * way to the "Fișiere pentru SAGA" tab, where what the file holds is seen.
  */
-export function ImportedInSagaCard({ cui, ready, saga }: { cui: string; ready: Invoice[]; saga: SagaState | undefined }) {
+export function ImportedInSagaCard({
+  cui, ready, saga, linkToFiles = false,
+}: { cui: string; ready: Invoice[]; saga: SagaState | undefined; linkToFiles?: boolean }) {
   const queryClient = useQueryClient()
   const refresh = () => {
     for (const key of ['invoices', 'invoice', 'clients', 'saga-archive']) queryClient.invalidateQueries({ queryKey: [key] })
@@ -119,6 +123,11 @@ export function ImportedInSagaCard({ cui, ready, saga }: { cui: string; ready: I
                   Deschide folderul
                 </Button>
                 <Button variant="outline" size="sm" onClick={() => copyPath(path)}>Copiază calea</Button>
+                {linkToFiles && (
+                  <Link to={`/clienti/${cui}?fel=saga`} className="inline-flex min-h-11 items-center font-semibold">
+                    {saga.file_per === 'client' ? 'Vezi ce este în fișier' : 'Vezi fișierele'}
+                  </Link>
+                )}
                 {saga.file_per === 'client' && (
                   <span className="text-muted-foreground">
                     {saga.written_at && `Scris: ${formatWhen(saga.written_at)}. `}

@@ -149,3 +149,20 @@ Each says the new folder name, what has to be changed in SAGA and in the flow, a
 - the demo on port 8774, at desktop and phone width.
 
 Then an independent review of the whole branch.
+
+## Changes made while building
+
+- **The folder's last name is kept in the settings**, as `saga_folder:<CUI>`, with no change to the tables.
+  - The plan had `save_client` name the old folder at the moment of the rename. That is lost when the SAGA folder is away and nothing waits, so the old empty folder would never be renamed.
+  - The kept name also says which folder a client taken off the list keeps, once nothing of its is on record.
+  - It is updated only while the SAGA folder can be reached.
+- **A pending move does not write while the SAGA folder is away.** Where the path can simply be made again (a local folder that was moved), writing would have made a new, empty SAGA folder and forgotten the files in the old one. The client's files are now said to be not up to date until the folder is back.
+- **A folder renamed by hand** to its new name before the program got to it is taken as it is: the files in it go on record there.
+- **An empty client folder left in an earlier SAGA folder** (after "Schimbă" on the SAGA folder) is removed too, by the same step that removes an emptied folder under an old name.
+- **`GET /saga-files/{cui}` also has `present`** for each file, so the tab can say "Fișierul lipsește din folder" without reading every file.
+- **The start pass goes through the whole client list**, so `POST /saga-files/write` with `{}` counts every client in `clients`, not only those with files.
+- **The rows under an open invoice end with the discounts and charges on the whole invoice**, since SAGA gets each as a line of its own on the invoice's account.
+- **The account column is ordered as a chart of accounts lists it** (`6022` before `626`), not as numbers.
+- **On a narrow screen** the invoice table scrolls sideways, as the other tables do, and the lines of an open invoice stay in sight at the width that is seen.
+- **`XmlViewer` has an `inWindow` switch** for its margins and height inside the window.
+- **`LineTarget` and `lineTarget()` moved to `lineAccounts.ts`**, so the invoice's screen and the new tab build the window's subject the same way.

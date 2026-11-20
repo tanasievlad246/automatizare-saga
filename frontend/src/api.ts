@@ -6,7 +6,7 @@ import type {
   ProposedRules,
   RuleEvidence, RuleFields, RuleTestResult, RulesOverview, SagaFilePer, SagaImport, SagaImportDetail, SagaState, SchedulePeriod,
   ScheduleStatus, Secret,
-  SyncResult, TrialAsk, UpdateStatus,
+  SyncResult, TrialAsk, UpdateStatus, WaitingFiles,
 } from './types'
 
 /** What the program answers when it refuses: a stable code and an English explanation. */
@@ -36,6 +36,21 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
     throw new ApiError(reply?.error?.code ?? 'internal_error', reply?.error?.message ?? response.statusText)
   }
   return reply as T
+}
+
+/** A file the program serves as it is on disk, as text. A refusal comes as the usual answer, with its code. */
+async function text(path: string): Promise<string> {
+  let response: Response
+  try {
+    response = await fetch(`/api${path}`)
+  } catch {
+    throw new ApiError('unreachable', 'The program did not answer.')
+  }
+  if (!response.ok) {
+    const reply = await response.json().catch(() => null)
+    throw new ApiError(reply?.error?.code ?? 'internal_error', reply?.error?.message ?? response.statusText)
+  }
+  return response.text()
 }
 
 /** A query string without the empty values. */
@@ -136,7 +151,10 @@ export const api = {
       'POST', `/saga-files/${cui}/imported`, { version, source: 'screen' },
     ),
   /** One client's files for SAGA as they are now, with their version. */
-  sagaFiles: (cui: string) => call<{ version: string | null; up_to_date: boolean }>('GET', `/saga-files/${cui}`),
+  /** What waits for SAGA for one client: its folder, its files with their invoices, and their version. */
+  sagaFiles: (cui: string) => call<WaitingFiles>('GET', `/saga-files/${cui}`),
+  /** One waiting file, as it is in the client's folder now. */
+  sagaFileXml: (cui: string, name: string) => text(`/saga-files/${cui}/files/${encodeURIComponent(name)}`),
   sagaArchive: (cui: string) => call<{ imports: SagaImport[] }>('GET', `/saga-archive${query({ cui })}`),
   sagaArchiveEntry: (id: number) => call<{ import: SagaImportDetail }>('GET', `/saga-archive/${id}`),
   /** Where the browser saves a file of a confirmed import from, as SAGA got it. */

@@ -6,9 +6,21 @@ Excel.ReadFromExcel.ReadCells Instance: ExcelInstance StartColumn: FirstColumnIn
 LOOP FOREACH CurrentItem IN ExcelData
     SET SkipCurrentCui TO $'''false'''
     DISABLE Display.ShowMessageDialog.ShowMessage Title: $'''Firma - %CurrentItem['NUME']%''' Message: $'''%CurrentItem['NUME']% - %CurrentItem['CUI']%''' Icon: Display.Icon.None Buttons: Display.Buttons.OK DefaultButton: Display.DefaultButton.Button1 IsTopMost: False ButtonPressed=> ButtonPressed2
-    Folder.GetFiles Folder: $'''%SagaImportFolderPath%\\%CurrentItem['CUI']%''' FileFilter: $'''*''' IncludeSubfolders: False FailOnAccessDenied: True SortBy1: Folder.SortBy.NoSort SortDescending1: False SortBy2: Folder.SortBy.NoSort SortDescending2: False SortBy3: Folder.SortBy.NoSort SortDescending3: False Files=> CurrentCuiFiles
+    # Folderul unui client se numeste "<nume> - <CUI>" (de exemplu "Alfa Construct SRL - 12345674"), deci se cauta dupa CUI-ul de la sfarsitul numelui.
+    # Schimbare facuta odata cu folderele cu nume; nu a fost inca incercata in Power Automate.
+    Folder.GetSubfolders Folder: SagaImportFolderPath FolderFilter: $'''* - %CurrentItem['CUI']%''' IncludeSubfolders: False FailOnAccessDenied: True SortBy1: Folder.SortBy.NoSort SortDescending1: False SortBy2: Folder.SortBy.NoSort SortDescending2: False SortBy3: Folder.SortBy.NoSort SortDescending3: False Subfolders=> CurrentCuiFolders
     ON ERROR
         SET SkipCurrentCui TO $'''true'''
+    END
+    IF SkipCurrentCui = $'''false''' THEN
+        IF CurrentCuiFolders.Count = 0 THEN
+            SET SkipCurrentCui TO $'''true'''
+        ELSE
+            Folder.GetFiles Folder: CurrentCuiFolders[0] FileFilter: $'''*''' IncludeSubfolders: False FailOnAccessDenied: True SortBy1: Folder.SortBy.NoSort SortDescending1: False SortBy2: Folder.SortBy.NoSort SortDescending2: False SortBy3: Folder.SortBy.NoSort SortDescending3: False Files=> CurrentCuiFiles
+            ON ERROR
+                SET SkipCurrentCui TO $'''true'''
+            END
+        END
     END
     IF SkipCurrentCui = $'''true''' THEN
         DISABLE Display.ShowMessageDialog.ShowMessage Title: $'''Skiping current cui''' Message: $'''Skiping %CurrentItem['NUME']% - %CurrentItem['CUI']%''' Icon: Display.Icon.None Buttons: Display.Buttons.OK DefaultButton: Display.DefaultButton.Button1 IsTopMost: False ButtonPressed=> ButtonPressed3
