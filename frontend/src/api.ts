@@ -6,7 +6,7 @@ import type {
   ProposedRules,
   RuleEvidence, RuleFields, RuleTestResult, RulesOverview, SagaFilePer, SagaImport, SagaImportDetail, SagaState, SchedulePeriod,
   ScheduleStatus, Secret,
-  SyncResult, TrialAsk, UpdateStatus,
+  SyncResult, TechnicalCounts, TechnicalRecord, TechnicalWhole, TrialAsk, UpdateStatus,
 } from './types'
 
 /** What the program answers when it refuses: a stable code and an English explanation. */
@@ -56,12 +56,16 @@ export type JournalFilter = {
   q?: string
   since?: string
   trace?: string
+  /** The technical view: the lines come with how many requests each operation made, and the saved file holds them. */
+  technical?: boolean
 }
 
 /** The most Jev calls the program lists at once. */
 export const MOST_CALLS_LISTED = 1000
 /** The most journal lines the program gives in one answer. */
 const MOST_LINES_AT_ONCE = 1000
+/** The most technical records the program gives in one answer. */
+const MOST_RECORDS_AT_ONCE = 2000
 
 export const api = {
   authStatus: () => call<AuthStatus>('GET', '/auth/status'),
@@ -182,9 +186,16 @@ export const api = {
 
   /** One operation is asked for as whole as the program gives it: it is read from its first step. */
   journal: (filter: JournalFilter, before?: number) =>
-    call<{ events: JournalLine[]; has_more: boolean }>(
+    call<{ events: JournalLine[]; has_more: boolean; technical?: TechnicalCounts }>(
       'GET', `/events${query({ ...filter, before, limit: filter.trace ? MOST_LINES_AT_ONCE : undefined })}`,
     ),
+  /** One operation's requests and program records, newest first, without what was sent and received. */
+  technical: (trace: string, before?: number) =>
+    call<{ records: TechnicalRecord[]; has_more: boolean }>(
+      'GET', `/events/technical${query({ trace, before, limit: MOST_RECORDS_AT_ONCE })}`,
+    ),
+  /** One request whole: its headers and bodies, or a program record's exception. */
+  technicalRecord: (id: number) => call<{ record: TechnicalWhole }>('GET', `/events/technical/${id}`),
   /**
    * Where the browser saves the same lines as a text file from. Whether the details are in
    * it is always said: left out, the program would add them even when the page hides them.

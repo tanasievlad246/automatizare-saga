@@ -15,7 +15,7 @@ from typing import Callable
 
 import httpx
 
-from . import journal
+from . import journal, technical
 from .config import Config
 from .errors import (
     ANAF_ERROR,
@@ -108,8 +108,13 @@ class AnafService:
         for page in range(1, _MAX_PAGES + 1):
             payload = _json(self._get("listaMesajePaginatieFactura", {**window, "pagina": str(page)}))
             if str(payload.get("eroare", "")).startswith(_NO_MESSAGES):
+                log.debug("ANAF has no messages for %s from %s to %s", cui, start.isoformat(), end.isoformat())
                 break
             _raise_if_refused(payload)
+            log.debug(
+                "Page %s of %s of the messages of %s: %s message(s)", page,
+                payload.get("numar_total_pagini", "?"), cui, len(payload.get("mesaje") or []),
+            )
             for entry in payload.get("mesaje") or []:
                 message_id = str(entry.get("id") or "")
                 if message_id:
@@ -135,6 +140,7 @@ class AnafService:
         """A GET with the saved login. A rejected token is renewed and the call repeated once."""
         response = self._send(endpoint, params, renew_token=False)
         if response.status_code == 401:
+            log.debug("ANAF refused the access token for %s; it is renewed and the call made again", endpoint)
             response = self._send(endpoint, params, renew_token=True)
         if response.status_code == 401:
             raise EfacturaError(
@@ -152,17 +158,30 @@ class AnafService:
         try:
             response = self._http.get(f"{self._base}/{endpoint}", params=params, headers=headers)
         except httpx.RequestError as exc:
+            technical.unanswered(exc, _elapsed_ms(started))
             journal.record(
                 "anaf", "anaf.unreachable", f"ANAF could not be reached for {endpoint}.", level="warning",
                 endpoint=endpoint, error=type(exc).__name__, duration_ms=_elapsed_ms(started),
+                **_what_was_asked(params),
             )
             raise EfacturaError(NETWORK_ERROR, f"Could not reach ANAF: {said_by(exc)}") from None
         # The address and what was asked for, never the login sent with it.
         journal.record(
             "anaf", "anaf.call", f"ANAF answered {response.status_code} for {endpoint}.", level="detail",
             endpoint=endpoint, status=response.status_code, duration_ms=_elapsed_ms(started),
+            **_what_was_asked(params),
         )
         return response
+
+
+def _what_was_asked(params: dict) -> dict:
+    """The page of the list, or the message downloaded, for the journal line of a call."""
+    asked = {}
+    if "pagina" in params:
+        asked["page"] = _int(params["pagina"], default=None)
+    if "id" in params:
+        asked["id"] = str(params["id"])
+    return asked
 
 
 def _elapsed_ms(started: float) -> int:
