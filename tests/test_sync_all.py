@@ -206,6 +206,33 @@ def test_a_run_waits_for_a_download_made_by_hand(service, anaf, monkeypatch):
     assert pauses == [BUSY_PAUSE] * 3
 
 
+def test_a_client_deleted_while_its_download_waited_is_left_out(service, cfg, anaf, monkeypatch):
+    # "Șterge toate datele" holds the lock while it works; the run waits for it, and once the
+    # lock is free the client it was waiting for is gone. Its invoices must not come back.
+    anaf.add("3001", cui=VALID_CUI)
+    switch_off(service, OTHER_VALID_CUI)
+    held = service._lock()
+    held.__enter__()
+
+    def pause(seconds):
+        store = Store(cfg.db_path)
+        with store._conn:
+            store._conn.execute("DELETE FROM clients")
+        store.close()
+        held.__exit__(None, None, None)
+
+    monkeypatch.setattr("efactura.service._pause", pause)
+
+    answer = service.sync_all()
+
+    assert answer["results"] == [] and answer["new"] == 0
+    store = Store(cfg.db_path)
+    try:
+        assert store.list_messages() == [] and store.runs() == []
+    finally:
+        store.close()
+
+
 def test_a_client_whose_turn_never_comes_is_its_failure(service, monkeypatch):
     switch_off(service, OTHER_VALID_CUI)
     pauses = []

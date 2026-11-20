@@ -29,7 +29,7 @@ from pydantic import BaseModel, StrictBool, StrictInt
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import __version__, backup, journal, update
+from . import __version__, backup, journal, technical, update
 from .config import PAGE_HOSTNAME, Config, load_config
 from .errors import (
     ANAF_ERROR,
@@ -52,6 +52,7 @@ from .errors import (
     NO_SPV_RIGHTS,
     NOT_CLASSIFIABLE,
     BACKUP_ERROR,
+    SNAPSHOT_TOO_NEW,
     NOT_FOUND,
     UNAUTHORIZED,
     UPDATE_ERROR,
@@ -75,6 +76,7 @@ HTTP_STATUS = {
     NOT_CLASSIFIABLE: 409,
     UPDATE_ERROR: 409,
     BACKUP_ERROR: 409,
+    SNAPSHOT_TOO_NEW: 409,
     CLIENT_OFF: 409,
     SAGA_FILES_CHANGED: 409,
     SAGA_FILES_STALE: 409,
@@ -804,6 +806,13 @@ def create_app(
     def restore_backup(body: RestoreRequest):
         return backup.start_restore_in_background(cfg, body.name)
 
+    @router.post(
+        "/backups/wipe", dependencies=documented_key,
+        summary="Delete every client, invoice, account and rule, after a backup that is checked first",
+    )
+    def wipe_data():
+        return backup.wipe(cfg)
+
     @router.post("/backups/open-folder", dependencies=documented_key, summary="Show the backup folder")
     def open_backup_folder():
         return call(lambda s: s.open_folder(backup.status(cfg)["folder"]))
@@ -820,20 +829,41 @@ def create_app(
     def events(
         details: bool = False, problems: bool = False, area: str | None = None, q: str | None = None,
         since: str | None = None, trace: str | None = None, before: int | None = None, limit: int = journal.PAGE,
+        technical_side: bool = Query(False, alias="technical"),
     ):
-        return journal_lines(details, problems, area, q, since, trace, before, limit)
+        found = journal_lines(details, problems, area, q, since, trace, before, limit)
+        if technical_side:
+            # For each operation on the page: how many requests and program records it has.
+            found["technical"] = technical.counts(cfg.db_path, (line["trace"] for line in found["events"]))
+        return found
 
     @router.get("/events/export", dependencies=documented_key, summary="The same lines as a text file")
     def export_events(
         details: bool = True, problems: bool = False, area: str | None = None, q: str | None = None,
-        since: str | None = None, trace: str | None = None,
+        since: str | None = None, trace: str | None = None, technical_side: bool = Query(False, alias="technical"),
     ):
         # Whole: a file cut short without saying so would send whoever reads it down the wrong path.
         lines = journal_lines(details, problems, area, q, since, trace, None, journal.PAGE, everything=True)["events"]
+        # With the technical side: one line per request and program record, without the bodies.
+        records = technical.for_export(cfg.db_path, {line["trace"] for line in lines}) if technical_side else []
         name = f"autosaga-jurnal-{datetime.now():%Y%m%d-%H%M}.txt"
         return PlainTextResponse(
-            journal.as_text(lines) + "\n", headers={"Content-Disposition": f'attachment; filename="{name}"'}
+            journal.as_text(lines, records) + "\n", headers={"Content-Disposition": f'attachment; filename="{name}"'}
         )
+
+    @router.get(
+        "/events/technical", dependencies=documented_key,
+        summary="The journal's technical side: requests and program records, newest first, without their bodies",
+    )
+    def technical_records(trace: str | None = None, before: int | None = None, limit: int = technical.PAGE):
+        return technical.records(cfg.db_path, trace=trace, before=before, limit=limit)
+
+    @router.get(
+        "/events/technical/{record_id}", dependencies=documented_key,
+        summary="One technical record whole: what was sent and what came back",
+    )
+    def technical_record(record_id: int):
+        return {"ok": True, "record": technical.record(cfg.db_path, record_id)}
 
     # --- updating the installed program ---
 

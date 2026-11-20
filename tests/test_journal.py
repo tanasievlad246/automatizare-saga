@@ -15,6 +15,7 @@ from efactura import auth, jev, journal, service as service_module
 from efactura.api import create_app
 from efactura.auth import Tokens
 from efactura.config import load_config
+from efactura.errors import EfacturaError
 from efactura.rules import Rule, Rulebook
 from efactura.service import Service, configure_logging
 from efactura.store import Store
@@ -388,3 +389,82 @@ def test_the_journal_is_read_and_saved_over_the_api(cfg):
     assert saved.status_code == 200 and "Rule added.  name=ciment" in saved.text
     assert "attachment" in saved.headers["content-disposition"]
     assert api.get("/events").status_code == 401
+
+
+# --- the lines say more ----------------------------------------------------------------------------------
+
+
+def test_the_start_of_a_download_says_which_days_it_asks_for(cfg):
+    with journal.trace() as trace:
+        Service(cfg, http=FakeAnaf().client(), now=lambda: NOW).sync(VALID_CUI, days=5)
+
+    started = rows(cfg, trace=trace, oldest_first=True)[0]
+
+    assert started["event"] == "sync.started"
+    assert (started["data"]["start"], started["data"]["end"]) == ("2026-11-09", "2026-11-14")
+
+
+def test_a_download_of_chosen_days_ends_on_the_last_of_them(cfg):
+    with journal.trace() as trace:
+        Service(cfg, http=FakeAnaf().client(), now=lambda: NOW).sync(VALID_CUI, start="2026-11-02", end="2026-11-06")
+
+    started = rows(cfg, trace=trace, oldest_first=True)[0]
+
+    assert (started["data"]["start"], started["data"]["end"]) == ("2026-11-02", "2026-11-06")
+
+
+def test_a_failed_download_and_a_message_not_saved_say_why_by_a_code(cfg):
+    anaf = FakeAnaf()
+    anaf.add("3001")
+    anaf.unreachable_downloads.add("3001")
+    with journal.trace() as trace:
+        Service(cfg, http=anaf.client(), now=lambda: NOW).sync(VALID_CUI)
+    anaf.list_error = "S-au facut deja 1000 de interogari pentru lista de mesaje"
+    with journal.trace() as refused, pytest.raises(EfacturaError):
+        Service(cfg, http=anaf.client(), now=lambda: NOW).sync(VALID_CUI)
+
+    (not_saved,) = [line_ for line_ in rows(cfg, trace=trace) if line_["event"] == "sync.message_failed"]
+    (failed,) = [line_ for line_ in rows(cfg, trace=refused) if line_["event"] == "sync.failed"]
+
+    assert (not_saved["data"]["id"], not_saved["data"]["code"]) == ("3001", "network_error")
+    assert failed["data"]["code"] == "anaf_limit_reached"
+
+
+def test_each_answer_from_anaf_says_which_page_or_message_it_was_for(cfg):
+    anaf = FakeAnaf()
+    anaf.add("3001", xml=rich_invoice_xml(lines=[line("Motorina Euro 5", "450.00")], number="FV-1"))
+    with journal.trace() as trace:
+        Service(cfg, http=anaf.client(), now=lambda: NOW).sync(VALID_CUI)
+
+    calls = [line_ for line_ in rows(cfg, trace=trace, oldest_first=True) if line_["event"] == "anaf.call"]
+
+    assert [(c["data"]["endpoint"], c["data"].get("page"), c["data"].get("id")) for c in calls] == [
+        ("listaMesajePaginatieFactura", 1, None), ("descarcare", None, "3001"),
+    ]
+
+
+def test_a_login_and_a_renewal_say_until_when_they_are_valid(cfg):
+    anaf = FakeAnaf()
+    service = Service(cfg, http=anaf.client(), now=lambda: NOW)
+    service.login_finish("https://localhost/callback?code=good-code")
+    auth.save_tokens(
+        cfg.token_file,
+        Tokens("access-2", "refresh-2", NOW - timedelta(minutes=1), NOW + timedelta(days=300), NOW),
+    )
+    service.sync(VALID_CUI)
+
+    connected, renewed = (
+        next(line_ for line_ in rows(cfg) if line_["event"] == event) for event in ("anaf.connected", "anaf.renewed")
+    )
+
+    assert connected["data"]["valid_until"] == (NOW + timedelta(seconds=7776000)).isoformat()
+    assert renewed["data"]["valid_until"] == (NOW + timedelta(seconds=7776000)).isoformat()
+
+
+def test_a_value_shaped_like_a_secret_is_hidden_in_a_line_whatever_its_name(cfg):
+    journal.record("anaf", None, "ANAF said: Bearer abcdef123456 is wrong", reply="refresh_token=xyz-123456")
+
+    (line_,) = rows(cfg)
+
+    assert line_["message"] == "ANAF said: Bearer [hidden] is wrong"
+    assert line_["data"]["reply"] == "refresh_token=[hidden]"

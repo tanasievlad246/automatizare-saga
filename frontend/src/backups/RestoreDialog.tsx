@@ -14,7 +14,10 @@ import type { Snapshot } from '../types'
 
 // When the program refuses to start a restore over the copy, the copy is no longer where
 // the list showed it. The usual sentence for this code is about making a copy.
-const WHY_NOT_STARTED = { backup_error: 'Restaurarea nu a putut începe: copia nu mai este în folder.' }
+const WHY_NOT_STARTED = {
+  backup_error: 'Restaurarea nu a putut începe: copia nu mai este în folder.',
+  busy: 'Nu s-a restaurat nimic. Acum programul descarcă sau clasifică facturi, se actualizează sau șterge datele. Așteptați să se termine, apoi încercați din nou.',
+}
 
 /**
  * Putting a snapshot back, from the warning to the result. It replaces everything saved
