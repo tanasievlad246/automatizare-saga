@@ -11,7 +11,7 @@ temporary name first, so a half-written file is never taken for a backup.
 
 Starting from zero ("Șterge toate datele") makes a copy first, reads it back from the folder
 and checks it whole; only then is anything deleted, and only the rows (store.WIPED): the
-settings, the journal and every file on disk stay.
+settings, the journal's lines and every file on disk stay. The journal's technical records go.
 """
 
 from __future__ import annotations
@@ -571,9 +571,10 @@ def wipe(cfg: Config, now: datetime | None = None) -> dict:
     """Delete every client, invoice, account and rule (store.WIPED), after a copy of it all.
 
     The copy is made in the backup folder, read back from there and checked whole; if any of
-    that fails, nothing is deleted. The settings, the keys typed on screen, the journal, the
-    connection to ANAF, config.toml and every file on disk stay. The example accounts and
-    rules come back, as on the first day.
+    that fails, nothing is deleted. The settings, the keys typed on screen, the journal's lines,
+    the connection to ANAF, config.toml and every file on disk stay. The journal's technical
+    records (what ANAF and Jev were sent and answered) go with the invoices. The example
+    accounts and rules come back, as on the first day.
 
     It runs inside the program, which goes on running: the database file stays where it is,
     so there is nothing for Windows to refuse, and the next request already reads the empty
@@ -629,7 +630,7 @@ def _delete_rows(cfg: Config, expected: dict[str, tuple[int, str]]) -> dict[str,
 def check_snapshot(path: Path) -> dict[str, tuple[int, str]]:
     """Open a copy in the folder as a restore would, and check all of it: SQLite's full check,
     every table this program has, and the fingerprints (rows and what they hold) of each
-    table a wipe empties."""
+    table a wipe empties, but for the journal's technical records (see store.fingerprints)."""
     expected_tables = set(stored.WIPED) | set(stored.KEPT_BY_WIPE)
     try:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as scratch:

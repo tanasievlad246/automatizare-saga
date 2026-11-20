@@ -9,10 +9,11 @@ import zipfile
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from efactura import backup, background, journal
+from efactura import backup, background, journal, technical
 from efactura import rules as rule_examples
 from efactura.api import create_app
 from efactura.config import load_config
@@ -27,6 +28,7 @@ HEALTHY = {"ok": True, "service": "efactura", "version": "0.3.0"}
 KEY = {"X-API-Key": "local-key"}
 BEFORE_WIPE = "autosaga-20261114-090000-before-wipe.zip"
 MARKER = "TEXT-DE-PROBA-CARE-TREBUIE-SA-DISPARA"  # in the made-up invoice, to look for after a wipe
+RECEIVED = "TEXT-PRIMIT-DE-LA-ANAF-CARE-TREBUIE-SA-DISPARA"  # in the made-up reply from ANAF, the same
 
 
 @pytest.fixture
@@ -92,7 +94,26 @@ def fill(cfg) -> None:
         store.set_setting("saga_dir", r"C:\SAGA Import")
     finally:
         store.close()
-    journal.record("sync", "sync.finished", "An old line.", now=NOW - timedelta(days=1))
+    with journal.trace(fresh=True):  # one operation: its journal line, and what it asked of ANAF
+        call_anaf()
+        journal.record("sync", "sync.finished", "An old line.", now=NOW - timedelta(days=1))
+
+
+def call_anaf() -> None:
+    """One made-up call to ANAF, kept on the journal's technical side with what came back."""
+    anaf = technical.watch(httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"mesaje": [{"detalii": RECEIVED}]}),
+    )))
+    anaf.get(f"https://api.anaf.ro/prod/FCTEL/rest/listaMesajeFactura?zile=60&cif={VALID_CUI}")
+
+
+def technical_records(cfg) -> list[dict]:
+    return technical.records(cfg.db_path)["records"]
+
+
+def on_disk(cfg) -> bytes:
+    """The database file and the files SQLite keeps beside it, as they are on the disk."""
+    return b"".join(path.read_bytes() for path in cfg.data_dir.glob("efactura.db*"))
 
 
 def counts(db_path) -> dict[str, int]:
@@ -202,6 +223,53 @@ def test_the_names_kept_for_the_clients_folders_for_saga_go_with_the_clients(fol
     # The copy made before the wipe still has them: a restore brings the clients back with their folders' names.
     with sqlite3.connect(opened(folder / BEFORE_WIPE, tmp_path)) as copy:
         assert copy.execute("SELECT value FROM settings WHERE key = ?", (f"saga_folder:{VALID_CUI}",)).fetchone() == (kept,)
+
+
+def test_the_journals_technical_records_are_deleted_and_the_copy_holds_them(folder, cfg, tmp_path):
+    fill(cfg)
+    (kept,) = technical_records(cfg)
+
+    result = backup.wipe(cfg, now=NOW)
+
+    assert technical_records(cfg) == []
+    assert result["deleted"]["technical"] == 1
+    in_the_copy = technical.record(opened(folder / BEFORE_WIPE, tmp_path), kept["id"])
+    assert RECEIVED in in_the_copy["body"]["response"]["body"]["text"]
+
+
+def test_a_technical_record_written_while_the_copy_was_made_does_not_refuse_the_wipe(folder, cfg, monkeypatch):
+    fill(cfg)
+    make = backup.snapshot
+
+    def with_a_record_meanwhile(*args, **kwargs):
+        made = make(*args, **kwargs)
+        call_anaf()  # the program writes these by itself all the time: nobody's work, so no reason to stop
+        return made
+
+    monkeypatch.setattr(backup, "snapshot", with_a_record_meanwhile)
+
+    result = backup.wipe(cfg, now=NOW)
+
+    assert technical_records(cfg) == []
+    assert (result["ok"], result["deleted"]["technical"]) == (True, 2)
+    assert counts(cfg.db_path)["clients"] == 0
+
+
+def test_the_journals_technical_view_shows_nothing_from_before_the_wipe(folder, cfg):
+    fill(cfg)
+    (kept,) = technical_records(cfg)
+    operation = kept["trace"]
+    api = TestClient(create_app(cfg))
+
+    before = api.get("/events?technical=true", headers=KEY).json()
+    api.post("/backups/wipe", headers=KEY)
+    after = api.get("/events?technical=true", headers=KEY).json()
+
+    assert before["technical"][operation]["http"] == 1
+    assert operation in {line["trace"] for line in after["events"]}  # the journal's own line stays
+    assert operation not in after["technical"]
+    assert api.get(f"/events/technical?trace={operation}", headers=KEY).json()["records"] == []
+    assert api.get(f"/events/technical/{kept['id']}", headers=KEY).status_code == 404
 
 
 def test_every_table_is_either_wiped_or_kept_on_purpose():
@@ -470,8 +538,16 @@ def test_the_deleted_invoices_do_not_linger_in_the_file(folder, cfg):
 
     backup.wipe(cfg, now=NOW)
 
-    left = b"".join(path.read_bytes() for path in cfg.data_dir.glob("efactura.db*"))
-    assert MARKER.encode() not in left  # not in a free page, nor in the journal file beside it
+    assert MARKER.encode() not in on_disk(cfg)  # not in a free page, nor in the journal file beside it
+
+
+def test_what_anaf_and_jev_answered_does_not_linger_in_the_file_either(folder, cfg):
+    fill(cfg)
+    assert RECEIVED.encode() in on_disk(cfg)  # kept on the journal's technical side
+
+    backup.wipe(cfg, now=NOW)
+
+    assert RECEIVED.encode() not in on_disk(cfg)
 
 
 def test_the_wipe_is_not_called_failed_when_only_its_last_tidying_goes_wrong(folder, cfg, monkeypatch):
