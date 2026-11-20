@@ -21,6 +21,9 @@ The same rules hold as for the journal, and three more:
     KEEP_RECORDS records, the oldest going first, and nothing older than KEEP_DAYS: checked at
     the first record each process writes, then every TRIM_EVERY records or TRIM_BYTES bytes,
     and at the running program's quarter-hour housekeeping. It never leaves this computer.
+
+    "Șterge toate datele" empties it with the invoices (store.WIPED): the bodies hold what the
+    invoices say. The copy made just before holds the records as they were.
 """
 
 from __future__ import annotations

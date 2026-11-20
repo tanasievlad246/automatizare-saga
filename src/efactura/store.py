@@ -253,15 +253,19 @@ _ACCOUNT_TABLES = {RECEIVED: "accounts", ISSUED: "issued_accounts"}
 # saga_import_invoices -> saga_imports). The example accounts and rules come back afterwards.
 WIPED = (
     "decisions", "saga_import_invoices", "saga_imports", "saga_files", "saga_problems", "jev_calls",
-    "messages", "sync_runs", "rules", "accounts", "issued_accounts", "clients",
+    "messages", "sync_runs", "rules", "accounts", "issued_accounts", "clients", "technical",
 )
 # What it keeps: the settings (folders, the keys typed on screen, the schedule, Jev's questions)
-# and the journal. A new table must be put in one list or the other; a test checks.
+# and the journal's lines. A new table must be put in one list or the other; a test checks.
 KEPT_BY_WIPE = ("settings", "events")
 # One kind of row in `settings` is not a setting anyone chose but something the program knows
 # of a client: the name its folder for SAGA last had. Its name is this, then the CUI. It goes
 # with the clients at a wipe.
 SAGA_FOLDER_OF = "saga_folder:"
+# Emptied without being held against the copy first: the journal's technical records, which hold
+# what ANAF and Jev were sent and what they answered. The program writes and clears them by itself
+# all the time, so comparing them would refuse a wipe though nothing a person did had changed.
+_NOT_COMPARED = {"technical"}
 # Left out of a table's fingerprint: large, and written once with the row, never changed.
 _NOT_FINGERPRINTED = {
     "messages": {"invoice_xml", "signature_xml", "raw_metadata_json"},
@@ -270,12 +274,15 @@ _NOT_FINGERPRINTED = {
 
 
 def fingerprints(connection: sqlite3.Connection) -> dict[str, tuple[int, str]]:
-    """For each table a wipe empties: how many rows it holds, and a digest of what they say.
+    """For each table a wipe empties and holds against its copy (all but _NOT_COMPARED): how
+    many rows it holds, and a digest of what they say.
 
     Two databases with the same fingerprints hold the same rows: a row added, removed or
     changed (an invoice ticked as imported, a rule renamed) changes its table's digest."""
     found = {}
     for table in WIPED:
+        if table in _NOT_COMPARED:
+            continue
         left_out = _NOT_FINGERPRINTED.get(table, set())
         columns = [row[1] for row in connection.execute(f"PRAGMA table_info({table})") if row[1] not in left_out]
         digest, count = hashlib.sha256(), 0
@@ -465,26 +472,27 @@ class Store:
 
     def wipe(self, expected: dict[str, tuple[int, str]]) -> dict[str, int]:
         """Empty every table in WIPED in one transaction, then put back the example accounts
-        and rules, as on the first day. The settings and the journal are not touched, but for
-        the names kept for the clients' folders for SAGA, which go with the clients.
+        and rules, as on the first day. The settings and the journal's lines are not touched,
+        but for the names kept for the clients' folders for SAGA, which go with the clients.
 
         `expected` is the fingerprints of the copy made just before. They are taken again
         here, under the write lock: a row saved or changed after the copy was made (a rule
-        edited on another tab) is in no copy, so then nothing is deleted. The deleted rows
-        are overwritten, not only let go of. Returns how many rows each table lost."""
+        edited on another tab) is in no copy, so then nothing is deleted. The journal's
+        technical records are not compared (_NOT_COMPARED): one written since the copy goes
+        with the rest. The deleted rows are overwritten, not only let go of. Returns how many
+        rows each table lost."""
         self._conn.execute("PRAGMA secure_delete = ON")  # this connection only; it is closed after
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             found = fingerprints(self._conn)
-            differ = [table for table in WIPED if found[table] != tuple(expected.get(table) or ())]
+            differ = [table for table in found if found[table] != tuple(expected.get(table) or ())]
             if differ:
                 raise EfacturaError(
                     BUSY,
                     f"The copy and the database do not hold the same rows ({', '.join(differ)}): "
                     "something changed while the copy was being made. Nothing was deleted; try again.",
                 )
-            for table in WIPED:
-                self._conn.execute(f"DELETE FROM {table}")
+            deleted = {table: self._conn.execute(f"DELETE FROM {table}").rowcount for table in WIPED}
             # Compared as written: in LIKE, the "_" of the name would stand for any character.
             self._conn.execute(
                 "DELETE FROM settings WHERE substr(key, 1, ?) = ?", (len(SAGA_FOLDER_OF), SAGA_FOLDER_OF)
@@ -498,7 +506,7 @@ class Store:
         except BaseException:
             self._conn.execute("ROLLBACK")
             raise
-        return {table: rows for table, (rows, _) in found.items()}
+        return deleted
 
     # --- messages -----------------------------------------------------------
 
