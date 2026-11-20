@@ -10,7 +10,11 @@ Two rules hold everywhere:
     or the click carries on.
 
     Keys never get in. Callers do not pass them, and anything named like one is hidden
-    here as well, in case a caller forgets.
+    here as well, in case a caller forgets; so is anything shaped like one, or equal to a
+    key or token the program holds (see redact.py).
+
+The requests to ANAF and Jev and the program's debug records are on the journal's technical
+side (technical.py), filed under the same traces.
 """
 
 from __future__ import annotations
@@ -24,6 +28,8 @@ from contextvars import ContextVar
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterator
+
+from . import redact
 
 LEVELS = ("detail", "info", "warning", "error")  # detail: the page hides it until asked
 KEEP_DAYS = 30
@@ -46,6 +52,16 @@ def configure(db_path: Path | None) -> None:
     """Say which database the journal lives in. The table itself is made by the Store."""
     global _database
     _database = Path(db_path) if db_path else None
+
+
+def database() -> Path | None:
+    """The database the journal is written in, if it has been said."""
+    return _database
+
+
+def current_trace() -> str | None:
+    """The operation being traced at this moment, if any."""
+    return _trace.get()
 
 
 @contextmanager
@@ -79,27 +95,32 @@ def record(
     """Write one line. `event` is a stable code the page knows how to say in Romanian;
     `message` is the same thing in English, for whoever debugs."""
     safe = {
-        name: "[hidden]" if any(part in name.lower() for part in _NEVER_WRITTEN) else value
+        name: "[hidden]" if any(part in name.lower() for part in _NEVER_WRITTEN) else redact.value(value)
         for name, value in data.items()
         if value is not None
     }
+    message = redact.clean(message)
     _write(area, event, message, level, duration_ms, now, safe)
     # The text log gets the line too. `journaled` keeps the handler below from writing it twice.
     _file_log.log(_LOG_LEVELS.get(level, logging.INFO), "%s %s %s", event, message, safe or "", extra={"journaled": True})
 
 
 class JournalHandler(logging.Handler):
-    """Puts the program's ordinary log lines in the journal as well."""
+    """Puts the program's ordinary log lines in the journal as well, from information up,
+    with the place in the code that wrote them. Debug records go to the technical side."""
+
+    def __init__(self):
+        super().__init__(logging.INFO)
 
     def emit(self, entry: logging.LogRecord) -> None:
-        if getattr(entry, "journaled", False):
+        if getattr(entry, "journaled", False) or entry.levelno < logging.INFO:
             return
         level = "error" if entry.levelno >= logging.ERROR else "warning" if entry.levelno >= logging.WARNING else "info"
-        data = {}
-        if entry.exc_info:
-            data["traceback"] = logging.Formatter().formatException(entry.exc_info)
         try:
-            _write("program", None, entry.getMessage(), level, None, None, data)
+            data = {"logger": entry.name, "where": f"{entry.filename}:{entry.lineno} ({entry.funcName})"}
+            if entry.exc_info:
+                data["traceback"] = redact.clean(logging.Formatter().formatException(entry.exc_info))
+            _write("program", None, redact.clean(entry.getMessage()), level, None, None, data)
         except Exception:  # a log line must never raise
             pass
 
@@ -155,13 +176,39 @@ def events(
     return {"ok": True, "events": lines, "has_more": len(found) > limit}
 
 
-def as_text(lines: list[dict]) -> str:
-    """The lines as a text file, to send to whoever helps."""
+def as_text(lines: list[dict], technical: list[dict] = ()) -> str:
+    """The lines as a text file, to send to whoever helps. `technical`: records of the technical
+    side, newest first as the lines are, each put where it happened among them."""
     return "\n".join(
-        f"{line['at']}  {line['level'].upper():<8} {line['area']:<8} {line['message']}"
-        + ("  " + " ".join(f"{name}={value}" for name, value in line["data"].items()) if line["data"] else "")
-        for line in lines
+        _technical_text(item) if "kind" in item else _line_text(item) for item in _newest_first(lines, list(technical))
     )
+
+
+def _line_text(line: dict) -> str:
+    return f"{line['at']}  {line['level'].upper():<8} {line['area']:<8} {line['message']}" + (
+        "  " + " ".join(f"{name}={value}" for name, value in line["data"].items()) if line["data"] else ""
+    )
+
+
+def _technical_text(item: dict) -> str:
+    where = f"  [{item['logger']} {item['where']}]" if item["kind"] == "log" else ""
+    return f"{item['at']}  {item['level'].upper():<8} {item['kind']:<8} {item['summary']}{where}"
+
+
+def _newest_first(lines: list[dict], technical: list[dict]) -> list[dict]:
+    """Both lists, newest first, merged by time. The lines keep their own order; a record
+    written at the same moment as a line goes after it, being the older of the two."""
+    merged, waiting = [], iter(technical)
+    record = next(waiting, None)
+    for line in lines:
+        while record is not None and record["at"] > line["at"]:
+            merged.append(record)
+            record = next(waiting, None)
+        merged.append(line)
+    if record is not None:
+        merged.append(record)
+    merged.extend(waiting)
+    return merged
 
 
 def prune(db_path: Path, now: datetime) -> int:

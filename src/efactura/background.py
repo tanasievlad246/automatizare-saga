@@ -108,15 +108,17 @@ def stop(cfg: Config) -> dict:
 
 def keep_house(cfg: Config, now=None) -> None:
     """What the running program does every quarter of an hour: the daily backup when it is
-    due, and the journal's clean-up. Never raises: it runs where nobody is watching."""
-    from . import backup, journal  # here, because both of them import this module
+    due, and the clean-up of the journal and its technical side. Never raises: it runs where
+    nobody is watching."""
+    from . import backup, journal, technical  # here, because both of them import this module
 
     with journal.trace(fresh=True):  # each round is its own story, not part of the program's start
         backup.run_if_due(cfg, now)
-        try:
-            journal.prune(cfg.db_path, now or datetime.now().astimezone())
-        except sqlite3.Error:
-            pass
+        for prune in (journal.prune, technical.prune):
+            try:
+                prune(cfg.db_path, now or datetime.now().astimezone())
+            except sqlite3.Error:
+                pass
 
 
 def is_running(port: int) -> bool:

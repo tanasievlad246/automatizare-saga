@@ -133,6 +133,24 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_events_at ON events (at);
 CREATE INDEX IF NOT EXISTS idx_events_trace ON events (trace);
 
+-- The journal's technical side (see technical.py): each HTTP exchange with ANAF and OpenRouter,
+-- and the program's debug records, filed under the journal's traces. Every secret is hidden
+-- before a row is written and binary bodies are never kept; KEEP_DAYS, KEEP_RECORDS and
+-- TOTAL_BYTES there bound it. `head` is what the list shows, `body` is read only when one is opened.
+CREATE TABLE IF NOT EXISTS technical (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    at      TEXT NOT NULL,
+    trace   TEXT,
+    kind    TEXT NOT NULL,                  -- http | log
+    level   TEXT NOT NULL,                  -- debug | info | warning | error
+    summary TEXT NOT NULL,                  -- one line, for the saved journal
+    head    TEXT NOT NULL DEFAULT '{}',     -- JSON: method, url, status, duration; or logger, where
+    body    TEXT NOT NULL DEFAULT '{}',     -- JSON: headers and bodies; or the exception
+    size    INTEGER NOT NULL DEFAULT 0      -- bytes of summary, head and body, for the cap on the whole
+);
+CREATE INDEX IF NOT EXISTS idx_technical_trace ON technical (trace);
+CREATE INDEX IF NOT EXISTS idx_technical_at ON technical (at);
+
 -- The companies whose invoices are fetched. Removing one leaves its invoices in place.
 CREATE TABLE IF NOT EXISTS clients (
     cui      TEXT PRIMARY KEY,
@@ -227,7 +245,7 @@ ISSUED_BACKLOG = "issued_backlog_added"
 # carries it is opened by reading alone: bringing one up to date takes the write lock, and would
 # make every page request wait for a long write by another program. Raise it with every change
 # to SCHEMA or to _migrate.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # 2: the table `technical`
 _ACCOUNT_TABLES = {RECEIVED: "accounts", ISSUED: "issued_accounts"}
 
 # What "Șterge toate datele" empties: everything the program gathered and the accountant built.

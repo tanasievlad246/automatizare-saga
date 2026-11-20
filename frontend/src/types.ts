@@ -318,6 +318,50 @@ export type JournalLine = {
   duration_ms: number | null
 }
 
+/** How many records of the journal's technical side an operation holds, by its trace. */
+export type TechnicalCounts = Record<string, { http: number; problems: number; log: number }>
+
+/**
+ * One record of the journal's technical side, as a list gives it (without what was sent and
+ * received): a request to ANAF or Jev, or one of the program's own debug records.
+ */
+export type TechnicalRecord = {
+  id: number
+  at: string // down to the microsecond
+  trace: string | null
+  kind: 'http' | 'log'
+  level: 'debug' | 'info' | 'warning' | 'error'
+  summary: string
+  // a request
+  method?: string
+  url?: string // with every secret parameter hidden
+  status?: number | null // null: no answer came
+  duration_ms?: number | null
+  service?: string // anaf | anaf_login | jev, or the host
+  error?: string | null // why no answer came
+  sent?: { type: string | null; bytes: number }
+  received?: { type: string | null; bytes: number } | null
+  // a program record
+  logger?: string
+  where?: string // "service.py:441"
+  function?: string
+  has_exception?: boolean
+}
+
+/** A body as it was kept: its text, or only what it was when it is not kept. */
+export type TechnicalBody =
+  | { empty: true }
+  | { binary: true; type: string | null; bytes: number }
+  | { too_large: true; type: string | null; bytes: number }
+  | { format: 'json' | 'xml' | 'form' | 'text'; type: string | null; bytes: number; text: string; cut?: boolean }
+
+export type TechnicalExchange = { headers: [string, string][]; body: TechnicalBody }
+
+/** One record whole: what was sent and what came back, or the exception of a program record. */
+export type TechnicalWhole = TechnicalRecord & {
+  body: { request?: TechnicalExchange; response?: TechnicalExchange | null; exception?: string }
+}
+
 /** Which release of the program is installed, and whether a newer one exists. */
 export type UpdateStatus = {
   version: string

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from . import technical
 from .errors import said_by
 
 DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
@@ -83,6 +84,7 @@ def ask(http: httpx.Client, api_key: str, request: dict) -> JevCall:
             timeout=TIMEOUT,
         )
     except httpx.RequestError as exc:
+        technical.unanswered(exc, int((time.monotonic() - started) * 1000))
         return finished(None, None, f"Could not reach OpenRouter: {said_by(exc)}", transient=True)
 
     try:
