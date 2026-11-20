@@ -186,3 +186,8 @@ The reviewer found no way to delete a file the program did not write, to mark an
 - **The flow** falls back to the folder named by the CUI alone, for a company that is not in the client list.
 
 Left as it is, and said in the PR: nothing was run on Windows or in Power Automate.
+
+## After main was merged in (the wipe, and the technical journal)
+
+- **A wipe forgets the names kept for the clients' folders.** "Șterge toate datele" keeps the settings, and the kept names (`saga_folder:<CUI>`) are rows of that table. Left there, a client added again under another name would have taken over the folder from before, with files the program no longer knows. You chose to have the wipe drop them. The name's prefix now lives in `store.py` (`SAGA_FOLDER_OF`), where the wipe is.
+- **One test fails on `main` itself** and so here too: `test_every_table_is_either_wiped_or_kept_on_purpose`, because the table `technical` is in neither of the wipe's lists. It is not this change's to settle; a separate session has it.

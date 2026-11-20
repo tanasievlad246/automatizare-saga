@@ -80,7 +80,7 @@ from .rules import (
 )
 from .store import (
     ISSUED as ISSUED_KIND, JEV_INSTRUCTIONS, JEV_ISSUED_INSTRUCTIONS, JEV_ISSUED_LINE_INSTRUCTIONS,
-    JEV_LINE_INSTRUCTIONS, KINDS, RECEIVED as RECEIVED_KIND, RULE_TEST, Store,
+    JEV_LINE_INSTRUCTIONS, KINDS, RECEIVED as RECEIVED_KIND, RULE_TEST, SAGA_FOLDER_OF, Store,
 )
 from .suggestions import propose, ticked_words, words_of_line
 
@@ -151,10 +151,9 @@ EDITABLE_SECRETS = ("openrouter_api_key", "anaf_client_id", "anaf_client_secret"
 SAGA_FILE_PER = "saga_file_per"
 # Whether a client's screen also lists the invoices the client issued. Only the page reads it.
 SHOW_ISSUED = "show_issued"
-# The name of a client's folder inside the folder for SAGA, as the program last had it: this
-# setting's name ends with the CUI. It says which folder to rename when the client's name
-# changes, and which one a client taken off the list keeps.
-SAGA_FOLDER_OF = "saga_folder:"
+# The name of a client's folder inside the folder for SAGA, as the program last had it, kept in
+# the setting named store.SAGA_FOLDER_OF and then the CUI. It says which folder to rename when
+# the client's name changes, and which one a client taken off the list keeps.
 # Bringing a client's files up to date takes a moment; a second writer waits this long for it.
 SAGA_LOCK_WAIT = 30.0
 # Who confirmed an import in SAGA: a program through the API (the automation), or a person on screen.

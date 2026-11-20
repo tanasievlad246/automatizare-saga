@@ -8,7 +8,7 @@ from xml.etree import ElementTree
 
 import pytest
 
-from efactura import auth, journal, service as service_module
+from efactura import auth, backup, journal, service as service_module
 from efactura.auth import Tokens
 from efactura.config import load_config
 from efactura.rules import Rule, Rulebook
@@ -773,3 +773,23 @@ def test_while_the_folder_for_saga_is_away_the_start_leaves_clients_without_file
     cfg.saga_dir.rename(tmp_path / "the share, not answering")
 
     assert service.write_saga_files()["clients"] == 1  # away: only the one with a file to look after
+
+
+# --- after "Șterge toate datele" ------------------------------------------------------------------
+
+
+def test_after_a_wipe_a_client_added_again_does_not_take_over_the_folder_from_before(service, anaf, cfg, tmp_path):
+    backup.set_folder(cfg, str(tmp_path / "copii"))
+    service.save_client(VALID_CUI, "Alfa Construct SRL")
+    downloaded(service, anaf, "A1")
+
+    backup.wipe(cfg, now=NOW)
+    again = Service(cfg, http=anaf.client(), now=lambda: NOW)
+    again.save_client(VALID_CUI, "Alfa Grup SRL")
+    again.write_saga_files()  # as at the next start
+
+    # The folder from before, with a file the program no longer knows, is left as it was: it is
+    # not renamed to the new client's name, where SAGA would find that file again.
+    assert folders_in(cfg) == [ALFA]
+    assert files_in(cfg.saga_dir / ALFA) == [name_of("A1")]
+    assert events_named(cfg, "saga.folder_moved") == []

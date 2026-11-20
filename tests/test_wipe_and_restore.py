@@ -180,6 +180,30 @@ def test_the_settings_the_journal_and_the_files_on_disk_stay(folder, cfg):
     assert cfg.path.read_bytes() == config_before
 
 
+def test_the_names_kept_for_the_clients_folders_for_saga_go_with_the_clients(folder, cfg, tmp_path):
+    fill(cfg)
+    kept = f"Alfa Construct SRL - {VALID_CUI}"
+    store = Store(cfg.db_path)
+    try:
+        store.set_setting(f"saga_folder:{VALID_CUI}", kept)
+        store.set_setting("saga_folder:14399840", "Beta Instal SRL - 14399840/14399840")
+        store.set_setting("saga_file_per", "invoice")  # chosen on screen: a setting, not something known of a client
+        store.set_setting("sagaXfolder:1", "a name that only looks alike")
+    finally:
+        store.close()
+
+    backup.wipe(cfg, now=NOW)
+
+    assert setting(cfg, f"saga_folder:{VALID_CUI}") is None
+    assert setting(cfg, "saga_folder:14399840") is None
+    assert setting(cfg, "saga_file_per") == "invoice"
+    assert setting(cfg, "sagaXfolder:1") == "a name that only looks alike"
+    assert setting(cfg, "saga_dir") == r"C:\SAGA Import"
+    # The copy made before the wipe still has them: a restore brings the clients back with their folders' names.
+    with sqlite3.connect(opened(folder / BEFORE_WIPE, tmp_path)) as copy:
+        assert copy.execute("SELECT value FROM settings WHERE key = ?", (f"saga_folder:{VALID_CUI}",)).fetchone() == (kept,)
+
+
 def test_every_table_is_either_wiped_or_kept_on_purpose():
     database = sqlite3.connect(":memory:")
     database.executescript(SCHEMA)
