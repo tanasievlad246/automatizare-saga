@@ -6,7 +6,7 @@ import type {
   ProposedRules,
   RuleEvidence, RuleFields, RuleTestResult, RulesOverview, SagaFilePer, SagaImport, SagaImportDetail, SagaState, SchedulePeriod,
   ScheduleStatus, Secret,
-  SyncResult, TechnicalCounts, TechnicalRecord, TechnicalWhole, TrialAsk, UpdateStatus,
+  SyncResult, WipeResult, TechnicalCounts, TechnicalRecord, TechnicalWhole, TrialAsk, UpdateStatus,
 } from './types'
 
 /** What the program answers when it refuses: a stable code and an English explanation. */
@@ -183,6 +183,7 @@ export const api = {
   /** The program stops, puts the snapshot in place of the database and starts again. */
   restoreBackup: (name: string) => call('POST', '/backups/restore', { name }),
   openBackupFolder: () => call('POST', '/backups/open-folder'),
+  wipeData: () => call<WipeResult>('POST', '/backups/wipe'),
 
   /** One operation is asked for as whole as the program gives it: it is read from its first step. */
   journal: (filter: JournalFilter, before?: number) =>

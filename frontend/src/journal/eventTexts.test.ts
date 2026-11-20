@@ -160,6 +160,15 @@ describe('a line of the journal, in Romanian', () => {
       .toBe('Clienți importați din clienti.xlsx: adăugați: 1, modificați: 0, respinși: 1.')
   })
 
+  it('tells that everything was deleted, and where the copy from just before is', () => {
+    expect(describeEvent(line('backup.made', { kind: 'before-wipe' })))
+      .toBe('A fost făcută o copie de siguranță, înaintea ștergerii datelor.')
+    expect(describeEvent(line('wipe.finished', { kept_as: 'autosaga-20261114-090000-before-wipe.zip', deleted: { clients: 3 } })))
+      .toBe('Toate datele au fost șterse: clienții, facturile, conturile și regulile. Copia de dinainte este autosaga-20261114-090000-before-wipe.zip.')
+    expect(describeEvent(line('wipe.failed', { error: 'Invoices are being downloaded or classified.' })))
+      .toBe('Ștergerea datelor nu s-a făcut; nu s-a șters nimic.')
+  })
+
   it('tells where the earlier database is when it could not be copied before a restore', () => {
     expect(describeEvent(line('restore.kept_aside', { kept_as: 'efactura.before-restore.db', error: 'No space left on device' })))
       .toBe('Baza de date de dinainte nu a putut fi copiată în folderul copiilor; a fost păstrată lângă program, în fișierul efactura.before-restore.db.')

@@ -52,6 +52,7 @@ from .errors import (
     NO_SPV_RIGHTS,
     NOT_CLASSIFIABLE,
     BACKUP_ERROR,
+    SNAPSHOT_TOO_NEW,
     NOT_FOUND,
     UNAUTHORIZED,
     UPDATE_ERROR,
@@ -75,6 +76,7 @@ HTTP_STATUS = {
     NOT_CLASSIFIABLE: 409,
     UPDATE_ERROR: 409,
     BACKUP_ERROR: 409,
+    SNAPSHOT_TOO_NEW: 409,
     CLIENT_OFF: 409,
     SAGA_FILES_CHANGED: 409,
     SAGA_FILES_STALE: 409,
@@ -791,6 +793,13 @@ def create_app(
     @router.post("/backups/restore", dependencies=documented_key, summary="Put a snapshot back, in the background")
     def restore_backup(body: RestoreRequest):
         return backup.start_restore_in_background(cfg, body.name)
+
+    @router.post(
+        "/backups/wipe", dependencies=documented_key,
+        summary="Delete every client, invoice, account and rule, after a backup that is checked first",
+    )
+    def wipe_data():
+        return backup.wipe(cfg)
 
     @router.post("/backups/open-folder", dependencies=documented_key, summary="Show the backup folder")
     def open_backup_folder():

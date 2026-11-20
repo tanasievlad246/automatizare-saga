@@ -286,7 +286,10 @@ export type JevCall = {
 export type Secret = { key: string; value: string; editable: boolean }
 
 /** One copy of the database in the backup folder. */
-export type Snapshot = { name: string; at: string; kind: 'auto' | 'manual' | 'before-restore'; size: number }
+export type Snapshot = { name: string; at: string; kind: 'auto' | 'manual' | 'before-restore' | 'before-wipe'; size: number }
+
+/** A wipe that went through: the copy made just before it, and how many rows each table lost. */
+export type WipeResult = { ok: true; kept_as: string; kept_at: string; deleted: Record<string, number> }
 
 /** Where backups go, which ones are kept, and how the last attempts ended. */
 export type BackupStatus = {

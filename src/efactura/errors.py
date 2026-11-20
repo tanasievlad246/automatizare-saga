@@ -22,6 +22,8 @@ JEV_ERROR = "jev_error"
 NOT_CLASSIFIABLE = "not_classifiable"
 UPDATE_ERROR = "update_error"
 BACKUP_ERROR = "backup_error"
+# A backup made by a newer version of the program than the one installed: it is not restored.
+SNAPSHOT_TOO_NEW = "snapshot_too_new"
 CLIENT_OFF = "client_off"
 # Confirming an import in SAGA: the files changed since their version was read, or they are
 # not what the program last decided (one could not be written, or is gone).

@@ -9,6 +9,7 @@ const WHO_MADE_IT: Record<Snapshot['kind'], string> = {
   auto: 'făcută de program',
   manual: 'făcută de dumneavoastră',
   'before-restore': 'făcută înaintea unei restaurări',
+  'before-wipe': 'făcută înainte de ștergerea datelor',
 }
 
 /**
@@ -43,7 +44,9 @@ export function SnapshotsList({ status, onRestore }: { status: BackupStatus; onR
       ))}
       {status.count > 0 && (
         <p className="border-t px-4.5 py-3.5 text-[0.95rem] text-muted-foreground">
-          Când se face o copie nouă și sunt deja {status.max}, cea mai veche se șterge singură.
+          Când se face o copie nouă și sunt deja {status.max}, cea mai veche se șterge singură
+          {/* The program never removes the copy made before the latest wipe (backup._keep_the_newest). */}
+          {status.snapshots.some((snapshot) => snapshot.kind === 'before-wipe') && ', în afară de cea făcută înainte de ștergerea datelor'}.
         </p>
       )}
     </section>
