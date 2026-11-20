@@ -819,6 +819,40 @@ def test_a_saga_problem_is_kept_per_client_until_cleared(store):
     assert store.saga_problem(VALID_CUI) is None
 
 
+def test_files_moved_with_their_folder_are_known_in_their_new_place_with_their_time(store):
+    classified(store, "3001")
+    classified(store, "3002", cui=OTHER_VALID_CUI)
+    written = "2026-11-11T09:30:00+02:00"
+    store.note_saga_file("SAGA Import/12345674/a.xml", VALID_CUI, written)
+    store.note_saga_file("SAGA Import/12345674/old.xml", VALID_CUI, written)
+    store.note_saga_file("SAGA Import/14399840/a.xml", OTHER_VALID_CUI, written)
+    store.place_in_saga_files(VALID_CUI, {"3001": "SAGA Import/12345674/a.xml"}, written)
+    store.place_in_saga_files(OTHER_VALID_CUI, {"3002": "SAGA Import/14399840/a.xml"}, written)
+
+    store.move_saga_files(VALID_CUI, {
+        "SAGA Import/12345674/a.xml": "SAGA Import/Alfa - 12345674/a.xml",
+        "SAGA Import/12345674/old.xml": "SAGA Import/Alfa - 12345674/old.xml",
+    })
+
+    assert store.saga_ledger(VALID_CUI) == {
+        "SAGA Import/Alfa - 12345674/a.xml": written, "SAGA Import/Alfa - 12345674/old.xml": written,
+    }
+    assert store.saga_placement(VALID_CUI) == {"SAGA Import/Alfa - 12345674/a.xml": ["3001"]}
+    # Another company's files, even of the same name, stay where they are.
+    assert store.saga_placement(OTHER_VALID_CUI) == {"SAGA Import/14399840/a.xml": ["3002"]}
+
+
+def test_a_file_remembered_only_by_its_invoice_moves_too(store):
+    classified(store, "3001")
+    store.place_in_saga_files(VALID_CUI, {"3001": "SAGA Import/12345674/a.xml"}, "2026-11-11T09:30:00+02:00")
+    store._conn.execute("DELETE FROM saga_files")  # as a version that kept no record of its files left it
+    store._conn.commit()
+
+    store.move_saga_files(VALID_CUI, {"SAGA Import/12345674/a.xml": "SAGA Import/Alfa - 12345674/a.xml"})
+
+    assert store.saga_ledger(VALID_CUI) == {"SAGA Import/Alfa - 12345674/a.xml": None}
+
+
 # --- issued invoices in the process ------------------------------------------------------
 
 

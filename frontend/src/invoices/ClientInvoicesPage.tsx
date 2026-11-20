@@ -19,6 +19,7 @@ import { formatWhen } from '../format'
 import { placeOf, rememberPlace } from '../listPlace'
 import { useSchedule } from '../schedule/useSchedule'
 import { SagaArchive } from '../archive/SagaArchive'
+import { SagaFilesTab } from '../sagaFiles/SagaFilesTab'
 import { clientTabs, searchForTab, tabFrom } from '../archive/archiveTexts'
 import type { Client, ClientTab, Invoice, InvoiceKind } from '../types'
 import { ImportedInSagaCard } from './ImportedInSagaCard'
@@ -31,6 +32,7 @@ import { InvoicesTable } from './InvoicesTable'
 import { needsAnAccount } from './invoiceState'
 import { PerLineSwitch } from './PerLineSwitch'
 import { readyForSaga, whenNoneIssued, whenNoneReceived } from './issuedInvoices'
+import { isStale } from './sagaFiles'
 
 // The four ways to look at a client's invoices. The first one that has anything is shown.
 const VIEWS = [
@@ -46,16 +48,23 @@ const INVOICE_NOUN = { one: 'Factura', many: 'Facturile' }
  * One client's invoices, received or issued (two tabs, the received ones first): what is new, what
  * needs an account, what waits for SAGA; found by name, number, days or account, in the order
  * chosen, a page at a time. Under them, the one file for SAGA with both kinds. A third tab,
- * "Arhivă", holds the imports in SAGA confirmed, with their files and invoices.
+ * "Fișiere pentru SAGA", shows the files that wait to be imported, each with its invoices and
+ * their lines; a fourth, "Arhivă", the imports in SAGA confirmed, with their files and invoices.
  */
 export function ClientInvoicesPage() {
   const { cui = '' } = useParams()
   const [search, setSearch] = useSearchParams()
   const [syncing, setSyncing] = useState(false)
   const [classifying, setClassifying] = useState(false)
+  // Goes up each time the person looks at one of the files waiting for SAGA, for the card that confirms the import.
+  const [lookedAt, setLookedAt] = useState(0)
   const listTop = useRef<HTMLDivElement>(null)
+  // Set by "Vezi ce este în fișier", at the foot of a long list: the tab it leads to is brought into view.
+  const showingFiles = useRef(false)
   const client = useQuery({ queryKey: ['clients'], queryFn: api.clients }).data?.clients.find((each) => each.cui === cui)
   const tab = tabFrom(search)
+  // The two tabs that list invoices; the other two show files and imports.
+  const listing = tab === 'received' || tab === 'issued'
   const kind: InvoiceKind = tab === 'issued' ? 'issued' : 'received'
   const party = kind === 'issued' ? 'customer' : 'supplier'
   const received = useQuery({ queryKey: ['invoices', cui], queryFn: () => api.receivedInvoices(cui) })
@@ -64,6 +73,9 @@ export function ClientInvoicesPage() {
   const rules = useQuery({ queryKey: ['rules'], queryFn: api.rules }).data
   // Counted on its tab from the start; the archive tab reads the same answer.
   const archive = useQuery({ queryKey: ['saga-archive', cui], queryFn: () => api.sagaArchive(cui) })
+  // The files waiting for SAGA, counted on their tab. Kept under "invoices": whatever changes an
+  // invoice (an account, a tick, a download) may change the files, and has them read again.
+  const waiting = useQuery({ queryKey: ['invoices', cui, 'saga-files'], queryFn: () => api.sagaFiles(cui) })
   const descriptions = (kind === 'issued' ? rules?.issued_accounts : rules?.accounts) ?? {}
   const { data, error, isPending } = kind === 'issued' ? issued : received
   const invoices = data?.invoices ?? []
@@ -74,6 +86,15 @@ export function ClientInvoicesPage() {
     : automaticDownloadRuns
       ? 'Programul descarcă acum facturile, singur. Butonul revine când se termină.'
       : null
+
+  // The link pressed went away with the list it was under: the files' tab is shown from its
+  // top, and the keyboard is on it.
+  useEffect(() => {
+    if (!showingFiles.current || tab !== 'saga') return
+    showingFiles.current = false
+    scrollBelowHeader(listTop.current)
+    listTop.current?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')?.focus({ preventScroll: true })
+  }, [tab])
 
   // A link back from an invoice, or from the client list, returns to this list as it is now.
   const path = `/clienti/${cui}`
@@ -166,9 +187,12 @@ export function ClientInvoicesPage() {
         <KindTabs
           value={tab}
           onChange={chooseTab}
-          tabs={clientTabs(received.data?.invoices.length, issued.data?.invoices.length ?? received.data?.issued_count, archive.data?.imports.length)}
+          tabs={clientTabs(
+            received.data?.invoices.length, issued.data?.invoices.length ?? received.data?.issued_count,
+            waiting.data?.files.length, archive.data?.imports.length,
+          )}
         />
-        {tab !== 'archive' && <PillTabs
+        {listing && <PillTabs
           label="Ce facturi se văd"
           value={chosen}
           onChange={chooseView}
@@ -178,7 +202,7 @@ export function ClientInvoicesPage() {
             label: data ? `${view.label} (${found.filter(view.includes).length})` : view.label,
           }))}
         />}
-        {tab !== 'archive' && invoices.length > 0 && (
+        {listing && invoices.length > 0 && (
           <InvoiceFilters
             id="list"
             state={list}
@@ -188,7 +212,7 @@ export function ClientInvoicesPage() {
             className="rounded-2xl border bg-card px-4.5 py-4"
           />
         )}
-        {tab !== 'archive' && narrowed && found.length > 0 && (
+        {listing && narrowed && found.length > 0 && (
           <div className="flex flex-wrap items-center gap-x-4">
             <p role="status" className="text-muted-foreground">{foundLine(inView.length, invoices.length)}</p>
             <Button type="button" variant="link" className="px-0" onClick={showAll}>Arată toate facturile</Button>
@@ -196,7 +220,18 @@ export function ClientInvoicesPage() {
         )}
       </div>
       {tab === 'archive' && <SagaArchive cui={cui} openImport={search.get('import')} onOpenImport={openImport} />}
-      {tab !== 'archive' && !error && (narrowed && invoices.length > 0 && found.length === 0 ? (
+      {tab === 'saga' && (
+        <SagaFilesTab
+          cui={cui}
+          waiting={waiting.data}
+          error={waiting.error}
+          received={received.data?.invoices}
+          issued={issued.data?.invoices}
+          stale={Boolean(ready && received.data && isStale(ready, received.data.saga))}
+          onLook={() => setLookedAt((times) => times + 1)}
+        />
+      )}
+      {listing && !error && (narrowed && invoices.length > 0 && found.length === 0 ? (
         <div className="rounded-2xl border bg-card px-6 py-5.5">
           <div role="status">
             <p className="text-lg font-semibold">Nicio factură nu se potrivește cu ce ați ales.</p>
@@ -216,11 +251,15 @@ export function ClientInvoicesPage() {
           }
         />
       ))}
-      {tab !== 'archive' && (
-        <>
-          <Pager page={page} label="Paginile listei de facturi" line={rangeLine(page, INVOICE_NOUN, narrowed ? 'găsite' : undefined)} onPage={turnPage} />
-          {ready && <ImportedInSagaCard cui={cui} ready={ready} saga={received.data?.saga} />}
-        </>
+      {listing && (
+        <Pager page={page} label="Paginile listei de facturi" line={rangeLine(page, INVOICE_NOUN, narrowed ? 'găsite' : undefined)} onPage={turnPage} />
+      )}
+      {/* Under the lists and under the files: the import is confirmed from wherever it was checked. */}
+      {tab !== 'archive' && ready && (
+        <ImportedInSagaCard
+          cui={cui} ready={ready} saga={received.data?.saga} lookedAt={lookedAt}
+          onShowFiles={tab === 'saga' ? undefined : () => { showingFiles.current = true }}
+        />
       )}
 
       <ClassifyAgainDialog clients={classifying && client ? [client] : null} onClose={() => setClassifying(false)} />

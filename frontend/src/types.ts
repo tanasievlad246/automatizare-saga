@@ -212,8 +212,29 @@ export type RuleFields = Omit<Rule, 'id'>
 
 /** Received by the client, or issued by it: each kind has its own accounts, rules and questions. */
 export type InvoiceKind = 'received' | 'issued'
-/** The tabs of a client's screen: its two lists of invoices, and the archive of its imports in SAGA. */
-export type ClientTab = InvoiceKind | 'archive'
+/** The tabs of a client's screen: its two lists of invoices, its files waiting for SAGA, and the archive of its imports. */
+export type ClientTab = InvoiceKind | 'saga' | 'archive'
+
+/** One of a client's files waiting for SAGA, as the program last wrote it. */
+export type WaitingFile = {
+  name: string
+  path: string
+  invoices: number
+  ids: string[] // its invoices, in the order the file has them
+  written_at: string | null
+  present: boolean // still in the client's folder
+}
+/** What waits for SAGA for one client: its folder, its files, and their version (a fingerprint of them on disk). */
+export type WaitingFiles = {
+  cui: string
+  client: string | null
+  file_per: SagaFilePer
+  folder: string
+  files: WaitingFile[]
+  invoices: number
+  up_to_date: boolean
+  version: string | null
+}
 
 /** Who confirmed an import in SAGA: the automation, through the API, or a person on this page. */
 export type SagaImportSource = 'api' | 'screen'

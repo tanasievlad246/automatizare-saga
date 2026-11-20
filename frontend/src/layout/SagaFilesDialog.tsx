@@ -55,7 +55,7 @@ export function SagaFilesDialog({ saved, onClose }: { saved: AppSettings; onClos
         <DialogHeader>
           <DialogTitle className="font-heading text-3xl">Fișierele pentru SAGA</DialogTitle>
           <DialogDescription className="text-lg">
-            Unde scrie programul fișierele pe care le importați în SAGA și cum le împarte. Fiecare client are folderul lui.
+            Unde scrie programul fișierele pe care le importați în SAGA și cum le împarte. Fiecare client are folderul lui, cu numele și CUI-ul clientului, de exemplu „Alfa Construct SRL - 12345674”. Pe acesta îl alegeți în SAGA, la „Import date”. Folderele numite doar cu CUI-ul, de la versiunile mai vechi, au fost redenumite așa.
           </DialogDescription>
         </DialogHeader>
         <form

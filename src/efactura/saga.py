@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -49,6 +50,16 @@ UNITS = {
 
 _UNSAFE_IN_FILE_NAME = re.compile(r"[^A-Za-z0-9.]+")
 
+# A client's folder inside the folder for SAGA is "<name> - <CUI>". The name is cut so the
+# whole path stays within what Windows takes (260 characters, unless a setting is changed).
+MAX_NAME_IN_FOLDER = 60
+_SLASHES = re.compile(r"[\\/]+")
+_REFUSED_BY_WINDOWS = re.compile(r'[:*?"<>|\x00-\x1f\x7f]+')
+# Names Windows keeps for devices, also when something follows a dot: "AUX.IT SRL".
+_DEVICE_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL"} | {f"{port}{number}" for port in ("COM", "LPT") for number in range(1, 10)}
+)
+
 
 @dataclass
 class _Row:
@@ -78,6 +89,30 @@ def file_name(invoice: Invoice, distinct: str | None = None) -> str:
         number,
         _date(invoice.issue_date, FILE_DATE_FORMAT) or "fara-data",
     )
+
+
+def client_folder_name(name: str | None, cui: str) -> str:
+    """The name of a client's folder inside the folder for SAGA: "Alfa Construct SRL - 12345674".
+
+    What Windows refuses in a name is taken out (a slash becomes a dash, the rest a space),
+    and a long name is cut. The folder always ends with the CUI, so it never ends with a dot
+    or a space, which Windows would drop, and it is found by its CUI. A name with nothing
+    usable in it gives the CUI alone.
+    """
+    text = unicodedata.normalize("NFC", name or "")  # one spelling for "Ș", however it was typed
+    text = _REFUSED_BY_WINDOWS.sub(" ", _SLASHES.sub("-", text))
+    text = " ".join(text.split()).lstrip(". ")[:MAX_NAME_IN_FOLDER].rstrip()
+    if not any(character.isalnum() for character in text):
+        return cui
+    folder = f"{text} - {cui}"
+    before_the_dot = folder.split(".", 1)[0].rstrip()
+    return f"_{folder}" if before_the_dot.upper() in _DEVICE_NAMES else folder
+
+
+def is_client_folder(folder_name: str, cui: str) -> bool:
+    """Whether a folder's name says it is this client's: the CUI alone, as earlier versions named it, or
+    a name that ends with it."""
+    return folder_name == cui or folder_name.endswith(f" - {cui}")
 
 
 @dataclass(frozen=True)

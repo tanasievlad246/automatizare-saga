@@ -1,6 +1,8 @@
 from decimal import Decimal
 from xml.etree import ElementTree
 
+import pytest
+
 from efactura import saga
 from efactura.invoice import parse_invoice
 
@@ -381,3 +383,72 @@ def test_an_invoice_on_its_own_carries_its_line_accounts_too():
     invoice = parse_invoice(rich_invoice_xml(lines=[line("A", "10.00"), line("B", "5.00")]))
 
     assert conts_of(saga.build_xml(invoice, "605", "5001", "3001", line_conts=((2, "6581"),))) == ["605", "6581"]
+
+
+# --- the client's folder: its name and its CUI ---------------------------------
+
+CUI = "12345674"
+
+
+def test_a_clients_folder_carries_its_name_and_its_cui():
+    assert saga.client_folder_name("Alfa Construct SRL", CUI) == "Alfa Construct SRL - 12345674"
+
+
+@pytest.mark.parametrize("name", [None, "", "   ", "///", '"?"', "..."])
+def test_a_client_without_a_usable_name_gets_a_folder_named_by_its_cui(name):
+    assert saga.client_folder_name(name, CUI) == CUI
+
+
+@pytest.mark.parametrize("name, folder", [
+    ("S.C. ALFA/BETA S.R.L.", "S.C. ALFA-BETA S.R.L. - 12345674"),
+    ("ALFA\\BETA", "ALFA-BETA - 12345674"),
+    ('Gamma "Trade": Est', "Gamma Trade Est - 12345674"),
+    ("A*B?C<D>E|F", "A B C D E F - 12345674"),
+    ("Alfa\tBeta\nSRL", "Alfa Beta SRL - 12345674"),
+    ("\u201eGamma\u201d \u0218tefan & Fiii", "\u201eGamma\u201d \u0218tefan & Fiii - 12345674"),
+])
+def test_what_windows_refuses_in_a_folder_name_is_taken_out(name, folder):
+    assert saga.client_folder_name(name, CUI) == folder
+
+
+@pytest.mark.parametrize("name, folder", [
+    ("  Alfa SRL  ", "Alfa SRL - 12345674"),
+    ("Alfa    Beta", "Alfa Beta - 12345674"),
+    ("..Alfa", "Alfa - 12345674"),
+    ("Alfa S.R.L.", "Alfa S.R.L. - 12345674"),  # the folder ends with the CUI, so this dot is never last
+])
+def test_spaces_around_a_name_and_dots_before_it_are_dropped(name, folder):
+    assert saga.client_folder_name(name, CUI) == folder
+
+
+def test_a_long_name_is_cut_so_the_path_stays_within_what_windows_takes():
+    assert saga.client_folder_name("X" * 200, CUI) == "X" * 60 + " - 12345674"
+    # Cut after a space: the space does not stay before the dash.
+    assert saga.client_folder_name("A" * 59 + " " + "B" * 30, CUI) == "A" * 59 + " - 12345674"
+
+
+@pytest.mark.parametrize("name, folder", [
+    ("AUX.IT SRL", "_AUX.IT SRL - 12345674"),
+    ("con.srl", "_con.srl - 12345674"),
+    ("COM1.RO", "_COM1.RO - 12345674"),
+    ("LPT9 .ro", "_LPT9 .ro - 12345674"),
+    ("CON", "CON - 12345674"),  # no dot: the whole name is "CON - 12345674", which is nobody's device
+    ("CONSTRUCT.RO", "CONSTRUCT.RO - 12345674"),
+])
+def test_a_name_windows_keeps_for_a_device_gets_an_underscore_in_front(name, folder):
+    assert saga.client_folder_name(name, CUI) == folder
+
+
+def test_the_same_name_written_with_combining_marks_gives_the_same_folder():
+    assert saga.client_folder_name("S\u0326tefan SRL", CUI) == saga.client_folder_name("\u0218tefan SRL", CUI)
+
+
+@pytest.mark.parametrize("folder, belongs", [
+    ("12345674", True),
+    ("Alfa Construct SRL - 12345674", True),
+    ("Alfa - 112345674", False),
+    ("Alfa - 12345674 vechi", False),
+    ("Alfa 12345674", False),
+])
+def test_a_clients_folder_is_known_by_the_cui_at_its_end(folder, belongs):
+    assert saga.is_client_folder(folder, CUI) is belongs

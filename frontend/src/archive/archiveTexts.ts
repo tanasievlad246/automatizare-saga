@@ -1,25 +1,31 @@
 import { countOf, formatFromWhen, formatWhen } from '../format'
 import type { ClientTab, SagaImportRef, SagaImportSource } from '../types'
 
-/** Which tab of a client's screen the address asks for: "?fel=emise", "?fel=arhiva", or the received invoices. */
+// What "?fel=" says for each tab; the received invoices are the tab of an address that says nothing.
+const TAB_IN_ADDRESS: Partial<Record<ClientTab, string>> = { issued: 'emise', saga: 'saga', archive: 'arhiva' }
+
+/** Which tab of a client's screen the address asks for: "?fel=emise", "?fel=saga", "?fel=arhiva", or the received invoices. */
 export function tabFrom(search: URLSearchParams): ClientTab {
   const asked = search.get('fel')
-  return asked === 'emise' ? 'issued' : asked === 'arhiva' ? 'archive' : 'received'
+  const found = Object.entries(TAB_IN_ADDRESS).find(([, written]) => written === asked)
+  return (found?.[0] as ClientTab | undefined) ?? 'received'
 }
 
 /** The address of a tab: each starts whole, at its first page. */
 export function searchForTab(tab: ClientTab): Record<string, string> {
-  return tab === 'issued' ? { fel: 'emise' } : tab === 'archive' ? { fel: 'arhiva' } : {}
+  const written = TAB_IN_ADDRESS[tab]
+  return written ? { fel: written } : {}
 }
 
-/** The three tabs, each counted once what it counts is known. */
+/** The four tabs, each counted once what it counts is known: invoices, files waiting for SAGA, confirmed imports. */
 export function clientTabs(
-  received: number | undefined, issued: number | undefined, imports: number | undefined,
+  received: number | undefined, issued: number | undefined, files: number | undefined, imports: number | undefined,
 ): { value: ClientTab; label: string }[] {
   const counted = (label: string, count: number | undefined) => (count === undefined ? label : `${label} (${count})`)
   return [
     { value: 'received', label: counted('Facturi primite', received) },
     { value: 'issued', label: counted('Facturi emise', issued) },
+    { value: 'saga', label: counted('Fișiere pentru SAGA', files) },
     { value: 'archive', label: counted('Arhivă', imports) },
   ]
 }

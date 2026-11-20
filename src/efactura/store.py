@@ -258,6 +258,10 @@ WIPED = (
 # What it keeps: the settings (folders, the keys typed on screen, the schedule, Jev's questions)
 # and the journal. A new table must be put in one list or the other; a test checks.
 KEPT_BY_WIPE = ("settings", "events")
+# One kind of row in `settings` is not a setting anyone chose but something the program knows
+# of a client: the name its folder for SAGA last had. Its name is this, then the CUI. It goes
+# with the clients at a wipe.
+SAGA_FOLDER_OF = "saga_folder:"
 # Left out of a table's fingerprint: large, and written once with the row, never changed.
 _NOT_FINGERPRINTED = {
     "messages": {"invoice_xml", "signature_xml", "raw_metadata_json"},
@@ -461,7 +465,8 @@ class Store:
 
     def wipe(self, expected: dict[str, tuple[int, str]]) -> dict[str, int]:
         """Empty every table in WIPED in one transaction, then put back the example accounts
-        and rules, as on the first day. The settings and the journal are not touched.
+        and rules, as on the first day. The settings and the journal are not touched, but for
+        the names kept for the clients' folders for SAGA, which go with the clients.
 
         `expected` is the fingerprints of the copy made just before. They are taken again
         here, under the write lock: a row saved or changed after the copy was made (a rule
@@ -480,6 +485,10 @@ class Store:
                 )
             for table in WIPED:
                 self._conn.execute(f"DELETE FROM {table}")
+            # Compared as written: in LIKE, the "_" of the name would stand for any character.
+            self._conn.execute(
+                "DELETE FROM settings WHERE substr(key, 1, ?) = ?", (len(SAGA_FOLDER_OF), SAGA_FOLDER_OF)
+            )
             self._add_examples()
             self._conn.executemany(
                 "INSERT OR IGNORE INTO issued_accounts (cont, description) VALUES (?, ?)",
@@ -687,6 +696,18 @@ class Store:
     def forget_saga_file(self, path: str) -> None:
         with self._conn:
             self._conn.execute("DELETE FROM saga_files WHERE path = ?", (path,))
+
+    def move_saga_files(self, cui: str, moved: dict[str, str]) -> None:
+        """This company's folder was renamed: each path in `moved` becomes the one beside it,
+        on record and on its invoices, and keeps the time it was written at. All or nothing."""
+        with self._conn:
+            for old, new in moved.items():
+                self._conn.execute(
+                    "UPDATE OR REPLACE saga_files SET path = ? WHERE path = ? AND cui = ?", (new, old, cui)
+                )
+                self._conn.execute(
+                    "UPDATE messages SET saga_xml_path = ? WHERE saga_xml_path = ? AND cui = ?", (new, old, cui)
+                )
 
     def place_in_saga_files(self, cui: str, placed: dict[str, str], when: str) -> None:
         """Which file each of this company's invoices is in: `placed` by message id, and no

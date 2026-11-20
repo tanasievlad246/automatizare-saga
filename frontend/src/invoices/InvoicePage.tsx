@@ -15,9 +15,9 @@ import { DecisionHistory } from './history/DecisionHistory'
 import { HISTORY_TAB } from './history/decisionTexts'
 import { InvoiceStateBadges } from './InvoiceStateBadges'
 import { isIssued } from './issuedInvoices'
-import { LineAccountDialog, type LineTarget } from './LineAccountDialog'
+import { LineAccountDialog } from './LineAccountDialog'
 import { LineAccountsCard } from './LineAccountsCard'
-import { largestLine } from './lineAccounts'
+import { lineTarget } from './lineAccounts'
 import { RenderedInvoice } from './RenderedInvoice'
 import { SagaFileCard } from './SagaFileCard'
 import { XmlViewer } from './XmlViewer'
@@ -63,20 +63,7 @@ export function InvoicePage() {
   // Only the accounts of the invoice's own kind can be chosen.
   const accounts = (issued ? rules?.issued_accounts : rules?.accounts) ?? {}
   const lineAccounts = invoice.line_accounts
-  const chosenLine = typeof choosing === 'number' ? document?.lines.find((line) => line.number === choosing) : undefined
-  const chosenEntry = lineAccounts?.find((entry) => entry.line === choosing)
-  // The lines that take the largest line's account change with it: its window says so.
-  const largest = document ? largestLine(document.lines) : null
-  const followers = (lineAccounts ?? []).filter((entry) => entry.method === 'follows').map((entry) => entry.line)
-  const target: LineTarget | null =
-    choosing === 'all'
-      ? 'all'
-      : chosenLine && chosenEntry
-        ? {
-            entry: chosenEntry, description: chosenLine.description, details: chosenLine.details, value: chosenLine.value,
-            followers: chosenLine.number === largest ? followers : [],
-          }
-        : null
+  const target = document ? lineTarget(document, lineAccounts, choosing) : null
   return (
     <div className="flex flex-col gap-5">
       {back}

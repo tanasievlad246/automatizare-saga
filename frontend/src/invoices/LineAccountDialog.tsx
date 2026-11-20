@@ -5,26 +5,28 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { api } from '../api'
 import { showError } from '../errorMessages'
 import { formatMoney, formatPercent } from '../format'
-import type { Invoice, LineAccount, TrialAsk } from '../types'
+import type { Invoice, TrialAsk } from '../types'
 import { AccountChooser, firstPhrase } from './AccountChooser'
 import { AFTER_A_DECISION } from './afterADecision'
 import { LINE_AGAIN, NO_JEV, followersNote } from './decideAgainTexts'
-
-/**
- * What the dialog is about: one line of the invoice, or all of them at once. `followers`: for the
- * largest line, the lines that take its account.
- */
-export type LineTarget =
-  | { entry: LineAccount; description: string; details: string | null; value: string | null; followers: number[] }
-  | 'all'
+import type { LineTarget } from './lineAccounts'
 
 /**
  * Choosing the account of one line, or one account for every line of the invoice; or one line
  * decided again, with the rules then Jev, or with Jev alone. `jevReady`: an OpenRouter key is set.
+ * `canDecideAgain` is false where only an account is chosen: among the files waiting for SAGA,
+ * where a line decided again and left without an account would take the invoice out of its file.
  */
 export function LineAccountDialog({
-  invoice, target, accounts, jevReady, onClose,
-}: { invoice: Invoice; target: LineTarget; accounts: Record<string, string>; jevReady: boolean; onClose: () => void }) {
+  invoice, target, accounts, jevReady, canDecideAgain = true, onClose,
+}: {
+  invoice: Invoice
+  target: LineTarget
+  accounts: Record<string, string>
+  jevReady: boolean
+  canDecideAgain?: boolean
+  onClose: () => void
+}) {
   const queryClient = useQueryClient()
   const entry = target === 'all' ? null : target.entry
   const done = {
@@ -47,7 +49,7 @@ export function LineAccountDialog({
   })
   const busy = accept.isPending || choose.isPending || decideAgain.isPending
   // A line that only takes the largest line's account has nothing of its own to decide.
-  const decidable = entry !== null && entry.method !== 'follows'
+  const decidable = canDecideAgain && entry !== null && entry.method !== 'follows'
   const followers = target === 'all' ? null : followersNote(target.followers)
   const proposed = entry?.suggested_cont && entry.suggested_cont !== entry.cont ? entry.suggested_cont : null
 

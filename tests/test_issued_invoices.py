@@ -279,7 +279,7 @@ def test_one_file_for_saga_holds_the_received_and_the_issued_invoices(service, a
 
     service.sync(VALID_CUI)
 
-    (path,) = (cfg.saga_dir / VALID_CUI).iterdir()
+    (path,) = (cfg.saga_dir / f"Alfa Construct SRL - {VALID_CUI}").iterdir()
     facturi = ElementTree.parse(path).getroot().findall("Factura")
     assert [factura.findtext("Antet/FurnizorCIF") for factura in facturi] == ["RO87654321", f"RO{VALID_CUI}"]
     assert [factura.findtext("Detalii/Continut/Linie/Cont") for factura in facturi] == ["6022", "704"]
@@ -292,7 +292,7 @@ def test_the_buyers_phone_and_e_mail_stay_out_of_the_file_for_saga(service, anaf
 
     service.sync(VALID_CUI)
 
-    (path,) = (cfg.saga_dir / VALID_CUI).iterdir()
+    (path,) = (cfg.saga_dir / f"Alfa Construct SRL - {VALID_CUI}").iterdir()
     antet = ElementTree.parse(path).getroot().find("Factura/Antet")
     assert (antet.findtext("ClientTelefon"), antet.findtext("ClientMail")) == ("", "")
     assert antet.findtext("ClientNume") == BUYER
@@ -305,7 +305,7 @@ def test_marking_the_file_as_imported_takes_both_kinds_out_of_it(service, anaf, 
 
     service.mark_uploaded(["3001", "3002"])
 
-    assert list((cfg.saga_dir / VALID_CUI).iterdir()) == []
+    assert list((cfg.saga_dir / f"Alfa Construct SRL - {VALID_CUI}").iterdir()) == []
 
 
 def test_the_journal_never_names_the_buyer_of_an_issued_invoice(service, anaf, openrouter, cfg):
@@ -401,6 +401,6 @@ def test_a_sale_listed_as_received_and_booked_by_a_person_leaves_the_buyers_cont
 
     service.set_cont("3001", cont="704")
 
-    (path,) = (cfg.saga_dir / VALID_CUI).iterdir()
+    (path,) = (cfg.saga_dir / f"Alfa Construct SRL - {VALID_CUI}").iterdir()
     antet = ElementTree.parse(path).getroot().find("Factura/Antet")
     assert (antet.findtext("ClientTelefon"), antet.findtext("ClientMail")) == ("", "")

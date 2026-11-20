@@ -724,6 +724,18 @@ def create_app(
     def saga_files_of(cui: str):
         return call(lambda s: s.saga_files(cui))
 
+    @router.get(
+        "/saga-files/{cui}/files/{name}", dependencies=documented_key,
+        summary="One of a client's files waiting for SAGA, as it is in its folder",
+    )
+    def saga_file(cui: str, name: str):
+        service = make_service(cfg)
+        try:
+            path = service.saga_file(cui, name)
+        finally:
+            service.close()
+        return FileResponse(path, media_type="application/xml", filename=path.name)
+
     @router.post(
         "/saga-files/{cui}/imported", dependencies=documented_key,
         summary="SAGA imported this client's files: mark their invoices and archive the files",

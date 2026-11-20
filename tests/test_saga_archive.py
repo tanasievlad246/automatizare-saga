@@ -89,7 +89,8 @@ def downloaded(service, anaf, *numbers, cui=VALID_CUI, first_id=3001):
 
 
 def folder(cfg, cui=VALID_CUI) -> Path:
-    return cfg.saga_dir / cui
+    name = {VALID_CUI: "Alfa Construct SRL", OTHER_VALID_CUI: "Beta Instal SRL"}[cui]
+    return cfg.saga_dir / f"{name} - {cui}"
 
 
 def files_in(path) -> list[str]:
@@ -112,8 +113,11 @@ def test_the_list_gives_each_client_with_a_file_its_path_count_and_version(servi
     assert [(entry["cui"], entry["client"], entry["invoices"]) for entry in listed] == [
         (VALID_CUI, "Alfa Construct SRL", 2), (OTHER_VALID_CUI, "Beta Instal SRL", 1)]
     first = listed[0]
-    assert first["files"] == [{"name": name_of("A1"), "path": str(folder(cfg) / name_of("A1")), "invoices": 2, "ids": ["3001", "3002"]}]
-    assert (first["file_per"], first["up_to_date"]) == ("client", True)
+    assert first["files"] == [{
+        "name": name_of("A1"), "path": str(folder(cfg) / name_of("A1")), "invoices": 2, "ids": ["3001", "3002"],
+        "written_at": NOW.isoformat(), "present": True,
+    }]
+    assert (first["file_per"], first["up_to_date"], first["folder"]) == ("client", True, str(folder(cfg)))
     assert len(first["version"]) == 16 and first["version"] != listed[1]["version"]
     assert service.saga_files(VALID_CUI) == {"ok": True, **first}
 
@@ -129,10 +133,10 @@ def test_the_version_changes_with_the_file_and_only_with_it(service, anaf, clock
     assert service.saga_files(VALID_CUI)["version"] != before
 
 
-def test_a_client_with_nothing_waiting_has_no_file_and_no_version(service):
+def test_a_client_with_nothing_waiting_has_no_file_and_no_version(service, cfg):
     assert service.saga_files(VALID_CUI) == {
-        "ok": True, "cui": VALID_CUI, "client": "Alfa Construct SRL", "file_per": "client", "files": [],
-        "invoices": 0, "up_to_date": True, "version": None,
+        "ok": True, "cui": VALID_CUI, "client": "Alfa Construct SRL", "file_per": "client",
+        "folder": str(folder(cfg)), "files": [], "invoices": 0, "up_to_date": True, "version": None,
     }
     assert service.saga_files()["clients"] == []
 
@@ -452,9 +456,23 @@ def test_a_changed_file_answers_409_over_the_api(api, service, anaf):
     lambda api: api.post("/saga-files/18547290/imported", headers=KEY, json={}),
     lambda api: api.get("/saga-archive/999", headers=KEY),
     lambda api: api.get("/saga-archive/999/files/F.xml", headers=KEY),
+    lambda api: api.get("/saga-files/18547290/files/F.xml", headers=KEY),
+    lambda api: api.get(f"/saga-files/{VALID_CUI}/files/F_nu-asteapta.xml", headers=KEY),
+    lambda api: api.get(f"/saga-files/{VALID_CUI}/files/..%2F..%2Fefactura.db", headers=KEY),
 ])
 def test_what_does_not_exist_is_404(api, call):
     assert call(api).status_code == 404
+
+
+def test_a_waiting_file_is_read_over_the_api_as_it_is_in_the_clients_folder(api, service, anaf, cfg):
+    downloaded(service, anaf, "A1", "A2")
+
+    file = api.get(f"/saga-files/{VALID_CUI}/files/{name_of('A1')}", headers=KEY)
+
+    assert file.status_code == 200
+    assert file.content == (folder(cfg) / name_of("A1")).read_bytes()
+    assert file.headers["content-type"].startswith("application/xml")
+    assert api.get(f"/saga-files/{VALID_CUI}/files/{name_of('A1')}").status_code == 401
 
 
 def test_the_routes_need_the_key(api):
