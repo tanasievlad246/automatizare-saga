@@ -257,13 +257,10 @@ _RICH_INVOICE = """<?xml version="1.0" encoding="UTF-8"?>
         <cbc:CountrySubentity>RO-CJ</cbc:CountrySubentity>
         <cac:Country><cbc:IdentificationCode>RO</cbc:IdentificationCode></cac:Country>
       </cac:PostalAddress>
-      <cac:PartyTaxScheme>
-        <cbc:CompanyID>RO{customer_cui}</cbc:CompanyID>
-        <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme>
-      </cac:PartyTaxScheme>
+      {customer_tax}
       <cac:PartyLegalEntity>
         <cbc:RegistrationName>{customer_name}</cbc:RegistrationName>
-        <cbc:CompanyID>J12/55/2015</cbc:CompanyID>
+        <cbc:CompanyID>{customer_legal_id}</cbc:CompanyID>
       </cac:PartyLegalEntity>
     </cac:Party>
   </cac:AccountingCustomerParty>
@@ -314,8 +311,11 @@ def rich_invoice_xml(lines=None, number="FV-1042", supplier_cui="RO87654321",
                      supplier_name="Furnizor SRL", currency="RON", adjustments=(),
                      vat_total=None, credit_note=False, vat_on_collection=False,
                      issue_date="2026-11-09", due_date="2026-12-09", customer_cui=VALID_CUI,
-                     customer_name="Client SRL", prepaid=None, rounding=None) -> bytes:
+                     customer_name="Client SRL", prepaid=None, rounding=None, customer_person=False) -> bytes:
     """A UBL invoice (or credit note) with addresses, a bank account and lines.
+
+    `customer_person`: the buyer is a person, as on a ride or a shop receipt: no VAT number,
+    and `customer_cui` (thirteen zeroes, when the seller does not write the CNP) as its only id.
 
     `prepaid` is the amount already paid (BT-113); some suppliers write an earlier unpaid
     balance there, with a minus. `rounding` is BT-114. With either, the invoice also names
@@ -374,6 +374,11 @@ def rich_invoice_xml(lines=None, number="FV-1042", supplier_cui="RO87654321",
     return _RICH_INVOICE.format(
         root=root, number=number, issue_date=issue_date, due_date=due_date,
         customer_cui=customer_cui, type_code="381" if credit_note else "380", currency=currency,
+        customer_tax="" if customer_person else (
+            f"<cac:PartyTaxScheme><cbc:CompanyID>RO{customer_cui}</cbc:CompanyID>"
+            "<cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:PartyTaxScheme>"
+        ),
+        customer_legal_id=customer_cui if customer_person else "J12/55/2015",
         supplier_cui=supplier_cui, supplier_name=supplier_name, customer_name=customer_name,
         period=("<cac:InvoicePeriod><cbc:DescriptionCode>432</cbc:DescriptionCode></cac:InvoicePeriod>"
                 if vat_on_collection else ""),

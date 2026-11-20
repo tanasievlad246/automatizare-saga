@@ -321,3 +321,41 @@ def test_a_zip_whose_message_file_cannot_be_read_is_anafs_error_for_that_message
         extract_zip(_damaged(how))
 
     assert info.value.code == "anaf_error"
+
+
+# --- the rows that get an account: the lines, then what is written on the whole invoice ---
+
+
+RIDE = [line("Tarif de calatorie", "16.10", unit="E48", percent="0", category="Z")]
+
+
+def test_the_rows_are_the_lines_then_each_discount_or_charge_on_the_whole_invoice():
+    invoice = parse_invoice(rich_invoice_xml(lines=RIDE, adjustments=[
+        adjustment("4.30", reason="Reducere", percent="0", category="Z"),
+        adjustment("2.00", charge=True, reason="Taxa de drum"),
+    ]))
+
+    fare, discount, charge = invoice.rows
+
+    assert fare == invoice.lines[0]
+    # Numbered after the lines, as SAGA's file numbers them; a discount has a minus.
+    assert (discount.number, discount.description, discount.value) == (2, "Reducere", Decimal("-4.30"))
+    assert (discount.quantity, discount.unit_price, discount.unit) == (Decimal(1), Decimal("-4.30"), None)
+    assert (discount.vat_percent, discount.vat_category) == (Decimal("0"), "Z")
+    assert (discount.seller_code, discount.barcode, discount.commodity_codes, discount.details) == (None, None, (), None)
+    assert (charge.number, charge.description, charge.value) == (3, "Taxa de drum", Decimal("2.00"))
+    assert [invoice.on_whole_invoice(row.number) for row in invoice.rows] == [False, True, True]
+
+
+def test_a_discount_or_charge_without_a_reason_is_named_for_what_it_is():
+    invoice = parse_invoice(rich_invoice_xml(lines=RIDE, adjustments=[
+        adjustment("4.30", reason=""), adjustment("2.00", charge=True, reason=""),
+    ]))
+
+    assert [row.description for row in invoice.rows[1:]] == ["Reducere", "Taxă suplimentară"]
+
+
+def test_an_invoice_without_discounts_has_only_its_lines_as_rows():
+    invoice = parse_invoice(rich_invoice_xml(lines=RIDE))
+
+    assert invoice.rows == invoice.lines

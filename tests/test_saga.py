@@ -96,6 +96,13 @@ def test_line_values_units_and_vat():
     assert (row["ProcTVA"], row["TVA"]) == ("19", "85.50")
 
 
+def test_a_service_unit_is_written_in_words():
+    # E48 is the code for "service unit": what a ride or a subscription is counted in.
+    (row,) = lines_of(export(lines=[line("Tarif de calatorie", "16.10", unit="E48")]))
+
+    assert row["UM"] == "SERV"
+
+
 def test_unknown_unit_codes_pass_through():
     (row,) = lines_of(export(lines=[line("Ceva", "10.00", unit="ZZ")]))
 
@@ -452,3 +459,29 @@ def test_the_same_name_written_with_combining_marks_gives_the_same_folder():
 ])
 def test_a_clients_folder_is_known_by_the_cui_at_its_end(folder, belongs):
     assert saga.is_client_folder(folder, CUI) is belongs
+
+
+# --- a discount on the whole invoice, with its own account ---------------------------------
+
+
+def ride_with_a_discount(**entry):
+    invoice = parse_invoice(rich_invoice_xml(
+        lines=[line("Tarif de calatorie", "16.10", unit="E48", percent="0", category="Z")],
+        adjustments=[adjustment("4.30", reason="Reducere", percent="0", category="Z")],
+    ))
+    return lines_of(ElementTree.fromstring(saga.build_xml(invoice, "704", "5001", "3001", **entry)))
+
+
+def test_a_discount_on_the_whole_invoice_is_booked_on_its_own_account():
+    # It is the line after the invoice's own, and is named by that number.
+    rows = ride_with_a_discount(line_conts=((1, "704"), (2, "729")))
+
+    assert [(row["LinieNrCrt"], row["Descriere"], row["Valoare"], row["Cont"]) for row in rows] == [
+        ("1", "Tarif de calatorie", "16.10", "704"), ("2", "Reducere", "-4.30", "729"),
+    ]
+
+
+def test_a_discount_without_an_account_of_its_own_is_booked_on_the_invoices():
+    rows = ride_with_a_discount(line_conts=((1, "701"),))
+
+    assert [row["Cont"] for row in rows] == ["701", "704"]

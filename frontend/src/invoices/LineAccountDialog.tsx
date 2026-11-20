@@ -9,6 +9,7 @@ import type { Invoice, TrialAsk } from '../types'
 import { AccountChooser, firstPhrase } from './AccountChooser'
 import { AFTER_A_DECISION } from './afterADecision'
 import { LINE_AGAIN, NO_JEV, followersNote } from './decideAgainTexts'
+import { wholeInvoiceNote } from './lineAccounts'
 import type { LineTarget } from './lineAccounts'
 
 /**
@@ -48,8 +49,10 @@ export function LineAccountDialog({
     onSuccess: () => done.onSuccess().then(() => entry && toast.success(LINE_AGAIN.done(entry.line))),
   })
   const busy = accept.isPending || choose.isPending || decideAgain.isPending
-  // A line that only takes the largest line's account has nothing of its own to decide.
-  const decidable = canDecideAgain && entry !== null && entry.method !== 'follows'
+  const wholeInvoice = target !== 'all' && target.wholeInvoice
+  // A line that only takes the largest line's account has nothing of its own to decide. A discount
+  // on the whole invoice does: it follows that line only on an invoice decided before it could have its own account.
+  const decidable = canDecideAgain && entry !== null && (entry.method !== 'follows' || wholeInvoice)
   const followers = target === 'all' ? null : followersNote(target.followers)
   const proposed = entry?.suggested_cont && entry.suggested_cont !== entry.cont ? entry.suggested_cont : null
 
@@ -66,6 +69,7 @@ export function LineAccountDialog({
               : `${target.description} · ${formatMoney(target.value, invoice.currency)}`}
           </DialogDescription>
           {target !== 'all' && target.details && <p className="text-muted-foreground">{target.details}</p>}
+          {target !== 'all' && wholeInvoice && <p className="text-muted-foreground">{wholeInvoiceNote(target.value)}</p>}
         </DialogHeader>
         {followers && <p>{followers}</p>}
         {proposed && entry && (

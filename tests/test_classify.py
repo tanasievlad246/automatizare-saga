@@ -11,7 +11,7 @@ from efactura.errors import EfacturaError
 from efactura.invoice import parse_invoice
 from efactura.rules import Rule, Rulebook, Subject, any_of
 
-from helpers import line, rich_invoice_xml
+from helpers import adjustment, line, rich_invoice_xml
 
 BOOK = Rulebook(
     accounts={
@@ -401,6 +401,49 @@ def test_on_an_invoice_with_negative_amounts_the_positive_line_follows():
     invoice = invoice_of(line("Storno ciment", "-840.00"), line("Storno discount", "40.00"))
 
     assert [classify.follows_largest(invoice, item) for item in invoice.lines] == [False, True]
+
+
+def test_the_rules_read_a_discount_on_the_whole_invoice_as_a_row_of_its_own():
+    book = Rulebook(accounts={}, rules=(Rule("reduceri", "729", keywords=("reducere",)),), instructions="")
+    invoice = invoice_of(line("Tarif de calatorie", "16.10"), adjustments=[adjustment("4.30", reason="Reducere")])
+
+    found = classify.rules_by_line(invoice, book)
+
+    assert {number: rule.cont for number, rule in found.items()} == {2: "729"}
+
+
+def test_a_rule_on_the_supplier_gives_a_discount_on_the_whole_invoice_its_account_too():
+    invoice = invoice_of(line("Chirie birou", "1000.00"), adjustments=[adjustment("50.00")], supplier_cui="RO11112222")
+
+    assert {number: rule.cont for number, rule in classify.rules_by_line(invoice, BOOK).items()} == {1: "612", 2: "612"}
+
+
+def test_a_discount_on_the_whole_invoice_is_decided_on_its_own_not_by_the_largest_line():
+    # Unlike a discount written as a line: the rules, then Jev, then a person choose for it.
+    invoice = invoice_of(
+        line("Tarif de calatorie", "16.10"), line("Discount", "-1.00"),
+        adjustments=[adjustment("4.30", reason="Reducere"), adjustment("2.00", charge=True, reason="Taxa")],
+    )
+
+    assert [classify.follows_largest(invoice, row) for row in invoice.rows] == [False, True, False, False]
+
+
+def test_the_request_about_a_discount_on_the_whole_invoice_says_what_it_is():
+    invoice = invoice_of(
+        line("Tarif de calatorie", "16.10"),
+        adjustments=[adjustment("4.30", reason="Reducere", percent="0"), adjustment("2.00", charge=True, reason="Taxa de drum")],
+    )
+    _, discount, charge = invoice.rows
+
+    request = classify.jev_line_request(invoice, discount, BOOK, "m")
+
+    assert request["state"]["linia"] == {
+        "nr": 2, "descriere": "Reducere", "cantitate": "1", "valoare_fara_tva": "-4.30", "cota_tva": "0",
+        "fel": "reducere pe toata factura",
+    }
+    assert "Tarif" not in json.dumps(request)  # the lines stay here, as for any line
+    assert classify.jev_line_request(invoice, charge, BOOK, "m")["state"]["linia"]["fel"] == "taxa pe toata factura"
+    assert "fel" not in classify.jev_line_request(invoice, invoice.lines[0], BOOK, "m")["state"]["linia"]
 
 
 def test_lines_with_the_same_text_are_one_question():

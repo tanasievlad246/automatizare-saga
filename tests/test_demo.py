@@ -7,6 +7,7 @@ from efactura.api import create_app
 from efactura.config import load_config
 from efactura.errors import EfacturaError
 from efactura.service import Service
+from efactura.store import Store
 
 
 def test_the_demo_is_built_with_settings_that_say_demo_and_a_filled_database(tmp_path):
@@ -15,7 +16,7 @@ def test_the_demo_is_built_with_settings_that_say_demo_and_a_filled_database(tmp
     assert cfg.demo is True and cfg.path == tmp_path / "demo" / "config.toml"
     assert cfg.api_port == 8770 and (cfg.data_dir / demo.MARKER).is_file()
     desk = Service(cfg, http=standins.FakeAnaf().client())
-    assert len(desk.clients()["clients"]) == 3
+    assert len(desk.clients()["clients"]) == 4
     assert len(desk.invoices()["invoices"]) >= 5
     assert desk.rule_suggestions()["count"] >= 1
     assert desk.auth_status()["state"] == "valid"
@@ -141,6 +142,78 @@ def test_every_second_download_also_brings_an_invoice_the_client_issued(cfg):
     (issued,) = [each for each in second["new"] if each["message_type"] == "FACTURA TRIMISA"]
     assert (issued["supplier_name"], issued["supplier_cui"]) == ("Alfa Construct SRL", CLIENT)
     assert issued["customer_name"] and issued["customer_cui"] != CLIENT
+
+
+RIDES = "44175209"  # Drum Bun Ride SRL
+
+
+def test_the_demo_has_a_ride_sharing_client_whose_discounts_get_their_own_account(cfg):
+    desk = demo.service(cfg)
+    rides = {each["invoice_number"]: each for each in desk.invoices(cui=RIDES, message_type="trimisa")["invoices"]}
+
+    # A fare and a "Reducere" on the whole invoice: Jev is sure of both.
+    sure = desk.invoice_view(rides["DB-5848"]["id"])
+    assert [(entry["line"], entry["cont"], entry["method"]) for entry in sure["invoice"]["line_accounts"]] == [
+        (1, "704", "jev"), (2, "729", "jev"),
+    ]
+    (fare,), (discount,) = sure["document"]["lines"], sure["document"]["adjustments"]
+    assert (fare["description"], fare["unit_name"], fare["value"]) == ("Tarif de călătorie", "SERV", "16.10")
+    assert (discount["number"], discount["description"], discount["value"]) == (2, "Reducere", "-4.30")
+    assert sure["document"]["customer"]["name"] == "Ana Popescu"
+    # A "Cod promoțional" Jev is unsure of: the invoice waits for a person, with Jev's proposal.
+    unsure = rides["DB-5849"]
+    assert unsure["classification_status"] == "review"
+    assert [(entry["cont"], entry["suggested_cont"]) for entry in unsure["line_accounts"]] == [("704", "704"), (None, "729")]
+    # A ride without a discount is one line and one account, as before.
+    assert (rides["DB-5850"]["cont"], rides["DB-5850"]["line_accounts"]) == ("704", None)
+    assert "729" in desk.rules_overview()["issued_accounts"]
+
+
+def test_the_demo_has_rides_with_more_lines_and_with_several_discounts(cfg):
+    desk = demo.service(cfg)
+    rides = {each["invoice_number"]: each for each in desk.invoices(cui=RIDES, message_type="trimisa")["invoices"]}
+
+    def rows(number):
+        """Each row of the invoice, its lines then its discounts: its name and its account."""
+        view = desk.invoice_view(rides[number]["id"])
+        names = [row["description"] for row in view["document"]["lines"] + view["document"]["adjustments"]]
+        return list(zip(names, [(entry["cont"], entry["method"]) for entry in view["invoice"]["line_accounts"]]))
+
+    # Three lines on two accounts, and one discount on the whole invoice.
+    assert rows("DB-5851") == [
+        ("Tarif de călătorie", ("704", "jev")), ("Timp de așteptare", ("704", "jev")),
+        ("Taxă de aeroport", ("708", "jev")), ("Reducere", ("729", "jev")),
+    ]
+    # Two discounts with different names: each is its own row and its own question.
+    assert rows("DB-5852") == [
+        ("Tarif de călătorie", ("704", "jev")), ("Reducere", ("729", "jev")), ("Reducere fidelitate", ("729", "jev")),
+    ]
+    # Two lines, the same discount twice and one Jev is unsure of: three discounts, one left to a person.
+    assert rows("DB-5853") == [
+        ("Tarif de călătorie", ("704", "jev")), ("Timp de așteptare", ("704", "jev")),
+        ("Reducere", ("729", "jev")), ("Reducere", ("729", "jev")), ("Cod promoțional", (None, None)),
+    ]
+    assert [rides[number]["classification_status"] for number in ("DB-5851", "DB-5852", "DB-5853")] == [
+        "classified", "classified", "review",
+    ]
+    # The discount written twice is one question to Jev: four questions for five rows.
+    store = Store(cfg.db_path)
+    try:
+        asked = [call for call in store.jev_calls() if call["message_id"] == rides["DB-5853"]["id"]]
+    finally:
+        store.close()
+    assert len(asked) == 4
+
+
+def test_every_second_download_brings_the_ride_sharing_client_a_ride_with_a_discount(cfg):
+    demo.service(cfg).sync(RIDES)
+    second = demo.service(cfg).sync(RIDES)
+
+    (ride,) = [each for each in second["new"] if each["message_type"] == "FACTURA TRIMISA"]
+    assert (ride["supplier_name"], ride["classification_status"]) == ("Drum Bun Ride SRL", "classified")
+    assert [(entry["line"], entry["cont"]) for entry in ride["line_accounts"]] == [(1, "704"), (2, "729")]
+    document = demo.service(cfg).invoice_view(ride["id"])["document"]
+    assert [row["description"] for row in document["lines"] + document["adjustments"]] == ["Tarif de călătorie", "Reducere"]
 
 
 def test_the_demo_archive_holds_last_weeks_confirmed_imports(cfg):

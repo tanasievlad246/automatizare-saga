@@ -1128,6 +1128,16 @@ def test_invoice_view_gathers_everything_the_screen_shows(service, anaf, cfg, in
     assert view["jev"]["cost_usd"] == 0.00002
 
 
+def test_the_screen_gets_a_service_unit_in_words(service, anaf, cfg):
+    # Shown as it came, the code reads as a number: "1 e48".
+    anaf.add("3001", xml=rich_invoice_xml(lines=[line("Tarif de calatorie", "16.10", unit="E48")]))
+    service.sync(VALID_CUI)
+
+    (shown,) = service.invoice_view("3001")["document"]["lines"]
+
+    assert (shown["quantity"], shown["unit"], shown["unit_name"]) == ("1", "E48", "SERV")
+
+
 def test_an_invoice_with_an_earlier_balance_is_listed_at_what_it_is_worth(service, anaf, cfg):
     anaf.add("3001", xml=rich_invoice_xml(lines=FUEL, prepaid="-3123.88"))
     (saved,) = service.sync(VALID_CUI)["new"]

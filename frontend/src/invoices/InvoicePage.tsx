@@ -17,7 +17,7 @@ import { InvoiceStateBadges } from './InvoiceStateBadges'
 import { isIssued } from './issuedInvoices'
 import { LineAccountDialog } from './LineAccountDialog'
 import { LineAccountsCard } from './LineAccountsCard'
-import { lineTarget } from './lineAccounts'
+import { lineTarget, rowNames } from './lineAccounts'
 import { RenderedInvoice } from './RenderedInvoice'
 import { SagaFileCard } from './SagaFileCard'
 import { XmlViewer } from './XmlViewer'
@@ -98,11 +98,7 @@ export function InvoicePage() {
                 goesToSaga
                 lineColumn={
                   lineAccounts
-                    ? {
-                        accounts: lineAccounts,
-                        invoiceCont: invoice.cont,
-                        onChoose: invoice.uploaded_to_accounting ? null : setChoosing,
-                      }
+                    ? { accounts: lineAccounts, onChoose: invoice.uploaded_to_accounting ? null : setChoosing }
                     : null
                 }
               />
@@ -119,7 +115,7 @@ export function InvoicePage() {
           {shown === 'istoric' && document && (
             <DecisionHistory
               invoiceId={invoice.id}
-              names={Object.fromEntries(document.lines.map((line) => [line.number, line.description]))}
+              names={rowNames(document)}
               accounts={accounts}
             />
           )}
@@ -148,7 +144,8 @@ export function InvoicePage() {
                 invoice={invoice}
                 jev={view.jev}
                 accounts={accounts}
-                lines={document.lines.length}
+                // A discount or a charge on the whole invoice is a row with an account too.
+                lines={document.lines.length + document.adjustments.length}
                 jevReady={jevReady}
               />
             )}
