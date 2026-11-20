@@ -267,7 +267,7 @@ uv run efactura demo
 
 Then open the address it prints. A top-bar label, "Date de probă", says the data is made up. Add `--fresh` to throw away what was done in it and build it again (stop a demo that is running first: on Windows its folder cannot be deleted while it is in use, and `--fresh` then says so), or `--port N` to use another port.
 
-What works: each download brings one or two made-up invoices; the ANAF login is finished by pasting the address the browser ends on; Jev answers from a table of words, and a line with "nimic" or "eroare" in it makes him decline or fail, so both can be seen. What is not covered: program updates and the Windows certificate login.
+What works: each download brings one or two made-up invoices; the ANAF login is finished by pasting the address the browser ends on; Jev answers from a table of words, and a line with "nimic" or "eroare" in it makes him decline or fail, so both can be seen. One of the clients, "Drum Bun Ride SRL", is a ride-sharing company: its issued invoices carry a discount written on the whole invoice ("Reducere", "Cod promoțional"), alone, beside several lines, and several on one invoice, each with its own account. What is not covered: program updates and the Windows certificate login.
 
 It cannot touch real data: it uses only its own `demo/` folder, which the program starts on only because of a marker file made in it, its settings say it is a demo, and it listens on port 8770, not the usual one. On settings that say demo, every part of the program talks to the stand-ins for ANAF and Jev, never to the real ones. It needs `uv`; `pnpm` is needed only to change the page (without it, the built page is served).
 

@@ -114,9 +114,14 @@ TODAY = {
 }
 
 
+def _ride(name: str, value: str) -> dict:
+    """A line of a ride's invoice: a service, not subject to VAT."""
+    return line(name, value, unit="E48", percent="0", category="Z")
+
+
 def _fare(value: str) -> list:
-    """The one line of a ride's invoice: a service, not subject to VAT."""
-    return [line("Tarif de călătorie", value, unit="E48", percent="0", category="Z")]
+    """The one line most rides have."""
+    return [_ride("Tarif de călătorie", value)]
 
 
 def _off(amount: str, reason: str = "Reducere") -> list:
@@ -145,6 +150,16 @@ ISSUED = {
         ("Mihai Ionescu", A_PERSON, "DB-5849", _fare("23.40"), _off("5.00", "Cod promoțional")),
         # No discount: one line, one account for the invoice.
         ("Elena Dumitru", A_PERSON, "DB-5850", _fare("31.75")),
+        # Three lines on two accounts, and one discount on the whole invoice.
+        ("Radu Marinescu", A_PERSON, "DB-5851", [
+            _ride("Tarif de călătorie", "42.00"), _ride("Timp de așteptare", "6.50"), _ride("Taxă de aeroport", "10.00"),
+        ], _off("8.00")),
+        # Two discounts with different names: each is a row of its own, and a question of its own.
+        ("Ioana Stan", A_PERSON, "DB-5852", _fare("38.20"), _off("5.00") + _off("2.50", "Reducere fidelitate")),
+        # Three discounts on two lines: the same one twice, asked about once, and one Jev is unsure of.
+        ("Andrei Popa", A_PERSON, "DB-5853", [
+            _ride("Tarif de călătorie", "27.60"), _ride("Timp de așteptare", "4.00"),
+        ], _off("3.00") + _off("1.50") + _off("2.00", "Cod promoțional")),
     ],
 }
 BUYERS = [(name, cui) for name, cui, _, _ in ISSUED["12345674"]]
@@ -167,6 +182,8 @@ JEV_ANSWERS = {
     "țeavă": {"choice": "707", "confidence": 0.91},
     # A ride, and what is taken off it on the whole invoice.
     "tarif": {"choice": "704", "confidence": 0.93},
+    "așteptare": {"choice": "704", "confidence": 0.88},
+    "aeroport": {"choice": "708", "confidence": 0.86, "probabilities_extra": {"704": 0.11}},
     "reducere": {"choice": "729", "confidence": 0.9, "probabilities_extra": {"704": 0.07}},
     "promoțional": {"choice": "729", "confidence": 0.48, "probabilities_extra": {"704": 0.41}},
     # Jev declines: the invoice goes to a person.
@@ -232,6 +249,9 @@ def build(folder: Path, now: datetime | None = None) -> Config:
     setup.save_rule(name="manoperă", cont="704", keywords=["manoperă", "montaj*", "lucrări"], direction="issued")
     setup.save_account(
         "729", "Reduceri acordate clienților: reducerea sau codul promoțional scris pe factură.", kind="issued",
+    )
+    setup.save_account(
+        "708", "Venituri din activități diverse: taxe refacturate călătorului (aeroport, parcare, drum).", kind="issued",
     )
 
     message_id = 3000

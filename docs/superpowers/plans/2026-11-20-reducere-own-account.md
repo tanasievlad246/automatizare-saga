@@ -37,7 +37,7 @@ Design: canvas https://claude.ai/artifact/VSxb2ocdWVd9UtMUcuWukH, board "Reducer
 7. **A discount written as a line of the invoice stays as it is**: it takes the largest line's account unless a rule matches it, and Jev is not asked. You spoke of the Reducere on the invoice; say if lines with a minus should go to Jev too.
 8. **"Testează regulile" stays as it is**: a trial is the invoice's lines, without what is written on the whole invoice. It tries received invoices only, so it could not try a ride's invoice anyway. To see what Jev alone makes of a Reducere, use "Sau hotărăște din nou această linie" → "Doar cu Jev" in its window.
 9. **"1 e48"**: `E48` is written `SERV`, on screen ("1 serv") and in SAGA's file (`<UM>SERV</UM>`).
-10. **The demo**: a fourth client, "Drum Bun Ride SRL", with issued ride invoices: with a Reducere Jev is sure of, with a "Cod promoțional" Jev is unsure of (it waits for you), and one without a discount. The account 729 is in the demo's list for issued invoices. Each second download brings it another ride invoice.
+10. **The demo**: a fourth client, "Drum Bun Ride SRL", with issued ride invoices: with a Reducere Jev is sure of, with a "Cod promoțional" Jev is unsure of (it waits for you), and one without a discount. The account 729 is in the demo's list for issued invoices. Each second download brings it another ride invoice. Asked for after the first round: a ride with three lines and one discount, one with two discounts of different names, and one with two lines and three discounts (the same one twice, asked of Jev once, and one Jev is unsure of).
 
 ## How it works
 

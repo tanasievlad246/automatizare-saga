@@ -7,6 +7,7 @@ from efactura.api import create_app
 from efactura.config import load_config
 from efactura.errors import EfacturaError
 from efactura.service import Service
+from efactura.store import Store
 
 
 def test_the_demo_is_built_with_settings_that_say_demo_and_a_filled_database(tmp_path):
@@ -166,6 +167,42 @@ def test_the_demo_has_a_ride_sharing_client_whose_discounts_get_their_own_accoun
     # A ride without a discount is one line and one account, as before.
     assert (rides["DB-5850"]["cont"], rides["DB-5850"]["line_accounts"]) == ("704", None)
     assert "729" in desk.rules_overview()["issued_accounts"]
+
+
+def test_the_demo_has_rides_with_more_lines_and_with_several_discounts(cfg):
+    desk = demo.service(cfg)
+    rides = {each["invoice_number"]: each for each in desk.invoices(cui=RIDES, message_type="trimisa")["invoices"]}
+
+    def rows(number):
+        """Each row of the invoice, its lines then its discounts: its name and its account."""
+        view = desk.invoice_view(rides[number]["id"])
+        names = [row["description"] for row in view["document"]["lines"] + view["document"]["adjustments"]]
+        return list(zip(names, [(entry["cont"], entry["method"]) for entry in view["invoice"]["line_accounts"]]))
+
+    # Three lines on two accounts, and one discount on the whole invoice.
+    assert rows("DB-5851") == [
+        ("Tarif de călătorie", ("704", "jev")), ("Timp de așteptare", ("704", "jev")),
+        ("Taxă de aeroport", ("708", "jev")), ("Reducere", ("729", "jev")),
+    ]
+    # Two discounts with different names: each is its own row and its own question.
+    assert rows("DB-5852") == [
+        ("Tarif de călătorie", ("704", "jev")), ("Reducere", ("729", "jev")), ("Reducere fidelitate", ("729", "jev")),
+    ]
+    # Two lines, the same discount twice and one Jev is unsure of: three discounts, one left to a person.
+    assert rows("DB-5853") == [
+        ("Tarif de călătorie", ("704", "jev")), ("Timp de așteptare", ("704", "jev")),
+        ("Reducere", ("729", "jev")), ("Reducere", ("729", "jev")), ("Cod promoțional", (None, None)),
+    ]
+    assert [rides[number]["classification_status"] for number in ("DB-5851", "DB-5852", "DB-5853")] == [
+        "classified", "classified", "review",
+    ]
+    # The discount written twice is one question to Jev: four questions for five rows.
+    store = Store(cfg.db_path)
+    try:
+        asked = [call for call in store.jev_calls() if call["message_id"] == rides["DB-5853"]["id"]]
+    finally:
+        store.close()
+    assert len(asked) == 4
 
 
 def test_every_second_download_brings_the_ride_sharing_client_a_ride_with_a_discount(cfg):
